@@ -44,9 +44,20 @@ def set_data_root(path: str | Path) -> None:
     _data_root = Path(path)
 
 
-def resolve_survey_path(survey_type: str, survey_name: str) -> Optional[Path]:
-    """Return ``{data_root}/{survey_type}/{survey_name}/`` or None."""
+def resolve_survey_path(
+    survey_type: str,
+    survey_name: str,
+    data_subpath: str = "",
+) -> Optional[Path]:
+    """Return the survey data directory or None.
+
+    If *data_subpath* is set (e.g. ``"spectroscopic/eboss/qso"``), it is used
+    directly under the data root.  Otherwise falls back to
+    ``{data_root}/{survey_type}/{survey_name}/``.
+    """
     root = get_data_root()
     if root is None:
         return None
+    if data_subpath:
+        return root / data_subpath
     return root / survey_type / survey_name

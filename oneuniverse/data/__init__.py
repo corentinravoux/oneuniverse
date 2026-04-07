@@ -35,6 +35,18 @@ from oneuniverse.data._registry import (  # noqa: F401
     list_surveys,
     list_survey_types,
 )
+from oneuniverse.data.converter import (  # noqa: F401
+    convert_survey,
+    convert_sightlines,
+    convert_healpix_map,
+    fetch_original_columns,
+    get_manifest,
+    get_geometry,
+    is_converted,
+    read_objects_table,
+)
+from oneuniverse.data.format_spec import DataGeometry  # noqa: F401
+from oneuniverse.data.database import OneuniverseDatabase  # noqa: F401
 
 
 def load_catalog(
@@ -82,4 +94,15 @@ __all__ = [
     # Configuration
     "get_data_root",
     "set_data_root",
+    # Conversion & format
+    "convert_survey",
+    "convert_sightlines",
+    "convert_healpix_map",
+    "fetch_original_columns",
+    "get_manifest",
+    "get_geometry",
+    "is_converted",
+    "read_objects_table",
+    "DataGeometry",
+    "OneuniverseDatabase",
 ]

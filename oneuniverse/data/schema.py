@@ -78,12 +78,63 @@ PV_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("mu_method", "U8", "", "TF/FP/SBF/SNIa", required=False),
 )
 
+QSO_COLUMNS: Tuple[ColumnDef, ...] = (
+    # Classification
+    ColumnDef("is_qso", "i1", "", "QSO classification flag (1=confirmed QSO)"),
+    ColumnDef("source_z", "U16", "", "Source of best redshift (VI, PIPE, etc.)", required=False),
+    ColumnDef("z_pipe", "f8", "", "Pipeline redshift", required=False),
+    ColumnDef("z_pca", "f8", "", "PCA redshift", required=False),
+    ColumnDef("z_vi", "f8", "", "Visual inspection redshift", required=False),
+    ColumnDef("z_conf", "i1", "", "Visual inspection confidence (0-3)", required=False),
+    ColumnDef("zwarning", "i4", "", "Pipeline ZWARNING flag (0=good)", required=False),
+    # BAL properties
+    ColumnDef("bal_prob", "f4", "", "BAL probability (0-1, -1=not assessed)", required=False),
+    ColumnDef("bi_civ", "f8", "km/s", "Balnicity index CIV", required=False),
+    # Emission line redshifts
+    ColumnDef("z_mgii", "f8", "", "MgII emission line redshift", required=False),
+    ColumnDef("z_ciii", "f8", "", "CIII] emission line redshift", required=False),
+    ColumnDef("z_civ", "f8", "", "CIV emission line redshift", required=False),
+    ColumnDef("z_lya", "f8", "", "Lyman-alpha emission line redshift", required=False),
+    # Photometry (ugriz PSF magnitudes)
+    ColumnDef("psfmag_u", "f4", "mag", "PSF magnitude u-band", required=False),
+    ColumnDef("psfmag_g", "f4", "mag", "PSF magnitude g-band", required=False),
+    ColumnDef("psfmag_r", "f4", "mag", "PSF magnitude r-band", required=False),
+    ColumnDef("psfmag_i", "f4", "mag", "PSF magnitude i-band", required=False),
+    ColumnDef("psfmag_z", "f4", "mag", "PSF magnitude z-band", required=False),
+    ColumnDef("extinction_u", "f4", "mag", "Galactic extinction u-band", required=False),
+    ColumnDef("extinction_g", "f4", "mag", "Galactic extinction g-band", required=False),
+    ColumnDef("extinction_r", "f4", "mag", "Galactic extinction r-band", required=False),
+    ColumnDef("extinction_i", "f4", "mag", "Galactic extinction i-band", required=False),
+    ColumnDef("extinction_z", "f4", "mag", "Galactic extinction z-band", required=False),
+    # Observation metadata
+    ColumnDef("plate", "i4", "", "SDSS plate number", required=False),
+    ColumnDef("mjd", "i4", "d", "Modified Julian Date of observation", required=False),
+    ColumnDef("fiberid", "i2", "", "SDSS fiber ID", required=False),
+    ColumnDef("sn_median", "f4", "", "Median S/N per pixel", required=False),
+    # DLA (stored as separate columns for up to N_DLA absorbers)
+    ColumnDef("n_dla", "i1", "", "Number of DLA systems detected", required=False),
+)
+
+SNIA_COLUMNS: Tuple[ColumnDef, ...] = (
+    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift"),
+    ColumnDef("mu", "f4", "mag", "Distance modulus"),
+    ColumnDef("mu_err", "f4", "mag", "Distance modulus uncertainty"),
+    ColumnDef("x1", "f4", "", "SALT2 stretch parameter", required=False),
+    ColumnDef("x1_err", "f4", "", "SALT2 stretch uncertainty", required=False),
+    ColumnDef("c", "f4", "", "SALT2 color parameter", required=False),
+    ColumnDef("c_err", "f4", "", "SALT2 color uncertainty", required=False),
+    ColumnDef("mb", "f4", "mag", "SALT2 peak B-band magnitude", required=False),
+    ColumnDef("mb_err", "f4", "mag", "SALT2 peak B-band magnitude uncertainty", required=False),
+)
+
 # Lookup by group name
 COLUMN_GROUPS: Dict[str, Tuple[ColumnDef, ...]] = {
     "core": CORE_COLUMNS,
     "spectroscopic": SPECTROSCOPIC_COLUMNS,
     "photometric": PHOTOMETRIC_COLUMNS,
     "peculiar_velocity": PV_COLUMNS,
+    "qso": QSO_COLUMNS,
+    "snia": SNIA_COLUMNS,
 }
 
 
