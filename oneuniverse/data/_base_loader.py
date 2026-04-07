@@ -58,6 +58,7 @@ class SurveyConfig:
     )
 
     # Data on disk
+    data_subpath: str = ""        # path relative to data root, e.g. "spectroscopic/eboss/qso"
     data_filename: str = ""       # expected filename inside the survey dir
     data_format: str = ""         # "fits", "parquet", "csv", "hdf5", …
 
@@ -154,10 +155,28 @@ class BaseSurveyLoader(abc.ABC):
             resolved = Path(data_path)
         else:
             resolved = resolve_survey_path(
-                self.config.survey_type, self.config.name
+                self.config.survey_type,
+                self.config.name,
+                self.config.data_subpath,
             )
 
-        df = self._load_raw(data_path=resolved, **kwargs)
+        # Prefer oneuniverse Parquet format if available
+        from oneuniverse.data.converter import is_converted, read_oneuniverse_parquet
+        force_native = kwargs.pop("force_native", False)
+        if (
+            resolved is not None
+            and is_converted(resolved)
+            and not force_native
+        ):
+            logger.info(
+                "[%s] Loading from oneuniverse Parquet (use force_native=True for original)",
+                self.survey_name,
+            )
+            # Read all columns if validating; else pushdown the subset.
+            read_cols = None if validate else columns
+            df = read_oneuniverse_parquet(resolved, columns=read_cols)
+        else:
+            df = self._load_raw(data_path=resolved, **kwargs)
 
         # Validate schema
         if validate:
@@ -207,7 +226,7 @@ class BaseSurveyLoader(abc.ABC):
         cols = self.available_columns()
         n_req = sum(1 for v in cols.values() if v.required)
         n_opt = sum(1 for v in cols.values() if not v.required)
-        data_path = resolve_survey_path(c.survey_type, c.name)
+        data_path = resolve_survey_path(c.survey_type, c.name, c.data_subpath)
 
         lines = [
             f"Survey:      {c.name}",

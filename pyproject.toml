@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oneuniverse"
+version = "0.1.0"
+description = "Unified galaxy survey catalog package for low-redshift cosmology"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Corentin Ravoux"},
+]
+
+dependencies = [
+    "numpy>=1.22",
+    "pandas>=1.5",
+    "astropy>=5.0",
+]
+
+[project.optional-dependencies]
+fits = ["fitsio>=1.1"]
+parquet = ["pyarrow>=12.0"]
+spatial = ["healpy>=1.16"]
+all = [
+    "fitsio>=1.1",
+    "pyarrow>=12.0",
+    "healpy>=1.16",
+    "matplotlib>=3.5",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "fitsio>=1.1",
+    "pyarrow>=12.0",
+    "healpy>=1.16",
+    "matplotlib>=3.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["oneuniverse*"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-v --tb=short"

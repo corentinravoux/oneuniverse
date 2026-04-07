@@ -14,6 +14,8 @@ from oneuniverse.data import (
     Shell,
     SkyPatch,
     set_data_root,
+    convert_survey,
+    fetch_original_columns,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "Shell",
     "SkyPatch",
     "set_data_root",
+    "convert_survey",
+    "fetch_original_columns",
 ]
