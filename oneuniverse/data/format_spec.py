@@ -57,9 +57,8 @@ to handle the data correctly without prior knowledge of the survey.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 
 # ── Data geometry ────────────────────────────────────────────────────────
@@ -88,68 +87,11 @@ class DataGeometry(str, Enum):
     No per-object redshift."""
 
 
-# ── Manifest schema ──────────────────────────────────────────────────────
+# ── Format version ───────────────────────────────────────────────────────
 
 
 # Current format version.  Bump when the manifest schema changes.
 FORMAT_VERSION: str = "1.0.0"
-
-
-@dataclass
-class ManifestSpec:
-    """Full manifest schema — the contract of an oneuniverse directory.
-
-    This is the Python representation of ``manifest.json``.  Every field
-    maps directly to a JSON key.
-    """
-
-    # ── Format identity ──────────────────────────────────────────────
-    format_version: str = FORMAT_VERSION
-    oneuniverse_version: str = ""
-
-    # ── Survey identity ──────────────────────────────────────────────
-    survey_name: str = ""
-    survey_type: str = ""
-
-    # ── Geometry ─────────────────────────────────────────────────────
-    geometry: str = DataGeometry.POINT.value
-
-    # SIGHTLINE-specific
-    n_sightlines: int = 0               # number of sightlines
-    sightline_id_column: str = "sightline_id"
-
-    # HEALPIX-specific
-    healpix_nside: int = 0              # 0 = not a HEALPix map
-    healpix_ordering: str = "nested"    # "nested" or "ring"
-    healpix_coordsys: str = "icrs"      # "icrs" or "galactic"
-
-    # ── Original file linkback ───────────────────────────────────────
-    original_files: List[str] = field(default_factory=list)
-    original_format: str = ""
-    original_n_rows: int = -1
-
-    # ── Converted data ───────────────────────────────────────────────
-    n_rows: int = 0                     # total rows in part_*.parquet
-    n_objects: int = 0                  # total rows in objects.parquet (or n_rows for POINT)
-    n_partitions: int = 0
-    partition_rows: int = 0
-    compression: str = "zstd"
-
-    # ── Tables present ───────────────────────────────────────────────
-    has_objects_table: bool = False      # True if objects.parquet exists
-    partitions: List[str] = field(default_factory=list)
-
-    # ── Columns ──────────────────────────────────────────────────────
-    object_columns: List[str] = field(default_factory=list)
-    data_columns: List[str] = field(default_factory=list)
-
-    # ── Provenance ───────────────────────────────────────────────────
-    conversion_kwargs: Dict = field(default_factory=dict)
-    created: str = ""
-
-    def to_dict(self) -> Dict:
-        """Serialize to a JSON-compatible dict."""
-        return {k: v for k, v in self.__dict__.items()}
 
 
 # ── Per-geometry column requirements ─────────────────────────────────────
