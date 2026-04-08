@@ -47,6 +47,13 @@ from oneuniverse.data.converter import (  # noqa: F401
 )
 from oneuniverse.data.format_spec import DataGeometry  # noqa: F401
 from oneuniverse.data.database import OneuniverseDatabase  # noqa: F401
+from oneuniverse.data.oneuid import (  # noqa: F401
+    OneuidIndex,
+    OneuidQuery,
+    build_oneuid_index,
+    load_oneuid_index,
+    load_universal,
+)
 
 
 def load_catalog(
@@ -105,4 +112,9 @@ __all__ = [
     "read_objects_table",
     "DataGeometry",
     "OneuniverseDatabase",
+    "OneuidIndex",
+    "OneuidQuery",
+    "build_oneuid_index",
+    "load_oneuid_index",
+    "load_universal",
 ]
