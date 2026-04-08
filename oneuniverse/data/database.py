@@ -396,6 +396,56 @@ class OneuniverseDatabase:
         """Shortcut: instantiate loader and call ``.load(**kwargs)``."""
         return self.get_loader(name).load(**kwargs)
 
+    # ── ONEUID — universal cross-survey identifier ───────────────────────
+
+    def build_oneuid(
+        self,
+        sky_tol_arcsec: float = 1.0,
+        dz_tol: Optional[float] = 1e-3,
+        persist: bool = True,
+    ):
+        """Build the ONEUID index across every discovered dataset.
+
+        Returns the :class:`oneuniverse.data.oneuid.OneuidIndex` and, by
+        default, persists it to ``{root}/_oneuid_index.parquet``.
+        """
+        from oneuniverse.data.oneuid import build_oneuid_index
+        return build_oneuid_index(
+            self, sky_tol_arcsec=sky_tol_arcsec, dz_tol=dz_tol, persist=persist,
+        )
+
+    def load_oneuid(self):
+        """Load a previously persisted ONEUID index."""
+        from oneuniverse.data.oneuid import load_oneuid_index
+        return load_oneuid_index(self)
+
+    def oneuid_query(self, index=None) -> "OneuidQuery":
+        """Return a tiered :class:`OneuidQuery` over the ONEUID index.
+
+        Pass *index* to reuse an in-memory :class:`OneuidIndex`; otherwise
+        the persisted sidecar is loaded from disk.
+        """
+        from oneuniverse.data.oneuid import OneuidQuery
+        return OneuidQuery(self, index=index)
+
+    def load_universal(
+        self,
+        columns: Optional[List[str]] = None,
+        datasets: Optional[List[str]] = None,
+        only_multi: bool = False,
+        index=None,
+    ) -> pd.DataFrame:
+        """Optimised cross-survey loader: returns one row per
+        (oneuid, dataset, original-row) with selected columns.
+
+        See :func:`oneuniverse.data.oneuid.load_universal`.
+        """
+        from oneuniverse.data.oneuid import load_universal as _load_universal
+        return _load_universal(
+            self, columns=columns, datasets=datasets,
+            only_multi=only_multi, index=index,
+        )
+
     def summary(self) -> str:
         """Human-readable summary of all discovered datasets."""
         if not self._loaders:
