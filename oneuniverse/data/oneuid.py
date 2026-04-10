@@ -279,9 +279,21 @@ def load_universal(
     pieces: List[pd.DataFrame] = []
     for ds, sub in table.groupby("dataset", sort=False):
         path = database.get_path(ds)
-        df = read_oneuniverse_parquet(path, columns=columns)
+        # Intersect requested columns with those in this dataset.
+        ds_columns = columns
+        if columns is not None:
+            from oneuniverse.data.converter import get_manifest
+            manifest = get_manifest(path)
+            available = set(manifest.get("data_columns", []))
+            ds_columns = [c for c in columns if c in available]
+        df = read_oneuniverse_parquet(path, columns=ds_columns or None)
         # Vectorised slice via row_index — single allocation, no loop.
         sliced = df.iloc[sub["row_index"].to_numpy()].reset_index(drop=True)
+        # Fill missing columns with NaN.
+        if columns is not None:
+            for c in columns:
+                if c not in sliced.columns:
+                    sliced[c] = np.nan
         sliced.insert(0, "oneuid", sub["oneuid"].to_numpy())
         sliced.insert(1, "dataset", ds)
         pieces.append(sliced)
@@ -449,13 +461,26 @@ class OneuidQuery:
         pieces: List[pd.DataFrame] = []
         for ds, grp in sub.groupby("dataset", sort=False):
             path = self.database.get_path(ds)
-            df = read_oneuniverse_parquet(path, columns=col_arg)
+            # Intersect requested columns with those available in this
+            # dataset so that missing survey-specific columns are filled
+            # with NaN rather than raising an error.
+            ds_col_arg = col_arg
+            if col_arg is not None:
+                manifest = self.database.get_manifest(ds)
+                available = set(manifest.get("data_columns", []))
+                ds_col_arg = [c for c in col_arg if c in available]
+            df = read_oneuniverse_parquet(path, columns=ds_col_arg or None)
             sliced = df.iloc[grp["row_index"].to_numpy()].reset_index(drop=True)
             # Drop any column that would collide with the index columns we
             # are about to prepend (ra/dec/z come from the dataset itself).
             sliced = sliced.drop(
                 columns=[c for c in ("ra", "dec", "z") if c in sliced.columns]
             )
+            # Add NaN columns for any requested column absent in this dataset.
+            if col_arg is not None:
+                for c in col_arg:
+                    if c not in sliced.columns and c not in ("ra", "dec", "z"):
+                        sliced[c] = np.nan
             sliced.insert(0, "oneuid", grp["oneuid"].to_numpy())
             sliced.insert(1, "dataset", ds)
             sliced.insert(2, "row_index", grp["row_index"].to_numpy())
