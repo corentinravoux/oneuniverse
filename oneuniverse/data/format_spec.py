@@ -91,7 +91,12 @@ class DataGeometry(str, Enum):
 
 
 # Current format version.  Bump when the manifest schema changes.
-FORMAT_VERSION: str = "1.0.0"
+FORMAT_VERSION: str = "2.0.0"
+
+# Logical data-schema version — tracks additions/removals to the CORE
+# columns required in each geometry.  Bumped independently of the
+# on-disk file-format version.
+SCHEMA_VERSION: str = "2.0.0"
 
 
 # ── Per-geometry column requirements ─────────────────────────────────────
@@ -101,7 +106,9 @@ FORMAT_VERSION: str = "1.0.0"
 # for each geometry.  Surveys add their own columns on top.
 
 POINT_REQUIRED_COLUMNS: Tuple[str, ...] = (
-    "ra", "dec", "z", "galaxy_id", "survey_id",
+    "ra", "dec", "z", "z_type", "z_err",
+    "galaxy_id", "survey_id",
+    "_original_row_index", "_healpix32",
 )
 
 SIGHTLINE_OBJECT_REQUIRED_COLUMNS: Tuple[str, ...] = (
@@ -160,42 +167,9 @@ ORIGINAL_INDEX_COL: str = "_original_row_index"
 # ── Validation helpers ───────────────────────────────────────────────────
 
 
-def validate_manifest(manifest: Dict) -> List[str]:
-    """Validate a manifest dict against the format spec.
-
-    Returns a list of error strings (empty if valid).
-    """
-    errors = []
-
-    # Required keys
-    for key in ("format_version", "geometry", "survey_name", "n_rows",
-                "partitions", "compression"):
-        if key not in manifest:
-            errors.append(f"Missing required key: '{key}'")
-
-    # Geometry
-    geo = manifest.get("geometry", "")
-    valid_geos = [g.value for g in DataGeometry]
-    if geo not in valid_geos:
-        errors.append(f"Invalid geometry '{geo}'. Must be one of {valid_geos}")
-
-    # Sightline-specific checks
-    if geo == DataGeometry.SIGHTLINE.value:
-        if not manifest.get("has_objects_table", False):
-            errors.append("SIGHTLINE geometry requires has_objects_table=true")
-        if manifest.get("n_sightlines", 0) <= 0:
-            errors.append("SIGHTLINE geometry requires n_sightlines > 0")
-
-    # HEALPix-specific checks
-    if geo == DataGeometry.HEALPIX.value:
-        nside = manifest.get("healpix_nside", 0)
-        if nside <= 0:
-            errors.append("HEALPIX geometry requires healpix_nside > 0")
-        ordering = manifest.get("healpix_ordering", "")
-        if ordering not in ("nested", "ring"):
-            errors.append(f"healpix_ordering must be 'nested' or 'ring', got '{ordering}'")
-
-    return errors
+# Manifest validation moved to :mod:`oneuniverse.data.manifest`
+# (see ``read_manifest`` / ``ManifestValidationError``).  The OUF 2.0
+# manifest is a typed dataclass — no dict validator here.
 
 
 def validate_columns(

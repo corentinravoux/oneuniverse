@@ -2,18 +2,18 @@
 oneuniverse.data.converter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Convert survey catalogs from their native format (FITS, CSV, …) into
-the standardized **oneuniverse file format** (OUF).
+the standardized **oneuniverse file format** (OUF) v2.
 
-See ``format_spec.py`` for the formal specification of the three
-supported geometries (POINT, SIGHTLINE, HEALPIX).
+See ``format_spec.py`` for the formal geometry specification
+(POINT, SIGHTLINE, HEALPIX) and ``manifest.py`` for the typed
+:class:`Manifest` dataclass that is the single source of truth for
+every converted dataset on disk.
 
-Directory layout after conversion
-----------------------------------
-::
+Directory layout after conversion::
 
     {survey_path}/oneuniverse/
-    ├── manifest.json               ← metadata + geometry + linkback
-    ├── objects.parquet              ← per-object metadata (SIGHTLINE only)
+    ├── manifest.json               ← typed Manifest (see manifest.py)
+    ├── objects.parquet             ← per-object metadata (SIGHTLINE only)
     ├── part_0000.parquet
     ├── part_0001.parquet
     └── ...
@@ -27,7 +27,6 @@ Usage
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,10 +35,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from oneuniverse.data._hashing import hash_file
 from oneuniverse.data.format_spec import (
     COMPRESSION,
     DEFAULT_PARTITION_ROWS,
-    FORMAT_VERSION,
     MANIFEST_FILENAME,
     OBJECTS_FILENAME,
     ONEUNIVERSE_SUBDIR,
@@ -47,8 +46,140 @@ from oneuniverse.data.format_spec import (
     DataGeometry,
     validate_columns,
 )
+from oneuniverse.data.manifest import (
+    FORMAT_VERSION,
+    SCHEMA_VERSION,
+    ColumnSpec,
+    LoaderSpec,
+    Manifest,
+    OriginalFileSpec,
+    PartitionSpec,
+    PartitionStats,
+    PartitioningSpec,
+    read_manifest,
+    write_manifest,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ── Unified writer ───────────────────────────────────────────────────────
+
+
+def write_ouf_dataset(
+    df: pd.DataFrame,
+    out_dir: Path,
+    survey_name: str,
+    survey_type: str,
+    geometry: DataGeometry,
+    *,
+    objects_df: Optional[pd.DataFrame] = None,
+    partition_rows: Optional[int] = None,
+    compression: str = COMPRESSION,
+    original_paths: Optional[List[Path]] = None,
+    original_format: str = "fits",
+    conversion_kwargs: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    partitioning: Optional[PartitioningSpec] = None,
+    loader: Optional[LoaderSpec] = None,
+    stats_builder=None,
+) -> Manifest:
+    """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
+
+    Writes Parquet partitions (and an optional ``objects.parquet``),
+    content-hashes every file, and atomically writes a typed
+    :class:`Manifest` describing the result.
+
+    Parameters
+    ----------
+    df
+        The data table (per-object for POINT, per-pixel for SIGHTLINE
+        and HEALPIX).
+    out_dir
+        The ``{survey_path}/oneuniverse/`` directory. Must already exist
+        and be empty.
+    objects_df
+        Only for SIGHTLINE geometry — one row per sightline.
+    partition_rows
+        Rows per Parquet partition. ``None`` = geometry default.
+    original_paths
+        Paths to original source files for audit linkback. Each gets
+        hashed and recorded in :attr:`Manifest.original_files`.
+    stats_builder
+        Optional callable ``(chunk_df) -> PartitionStats``.
+
+    Returns
+    -------
+    The :class:`Manifest` that was written.
+    """
+    out_dir = Path(out_dir)
+    if partition_rows is None:
+        partition_rows = DEFAULT_PARTITION_ROWS[geometry]
+    conversion_kwargs = dict(conversion_kwargs or {})
+    extra = dict(extra or {})
+    loader = loader or LoaderSpec(name="unknown", version="0.0.0")
+
+    # Column contract ----------------------------------------------------
+    missing = validate_columns(list(df.columns), geometry, "data")
+    if missing:
+        raise ValueError(f"data_df missing required columns: {missing}")
+    if geometry is DataGeometry.SIGHTLINE:
+        if objects_df is None:
+            raise ValueError("SIGHTLINE geometry requires objects_df")
+        missing_obj = validate_columns(list(objects_df.columns), geometry, "objects")
+        if missing_obj:
+            raise ValueError(f"objects_df missing required columns: {missing_obj}")
+
+    # Objects table (SIGHTLINE only) -------------------------------------
+    if objects_df is not None:
+        _write_single_parquet(objects_df, out_dir / OBJECTS_FILENAME, compression)
+        logger.info("  objects.parquet: %d sightlines", len(objects_df))
+
+    # Partitions ---------------------------------------------------------
+    partitions = _write_partitions(
+        df, out_dir, partition_rows, compression, stats_builder,
+    )
+
+    # Original-file specs ------------------------------------------------
+    original_files: List[OriginalFileSpec] = []
+    for p in original_paths or []:
+        p = Path(p)
+        if not p.is_file():
+            original_files.append(OriginalFileSpec(
+                path=str(p.name), sha256="", n_rows=None,
+                size_bytes=0, format=original_format,
+            ))
+            continue
+        original_files.append(OriginalFileSpec(
+            path=str(p.name),
+            sha256=hash_file(p),
+            n_rows=_count_rows(p, original_format),
+            size_bytes=p.stat().st_size,
+            format=original_format,
+        ))
+
+    # Schema from df dtypes ---------------------------------------------
+    schema_cols = [
+        ColumnSpec(name=str(c), dtype=str(df[c].dtype)) for c in df.columns
+    ]
+
+    manifest = Manifest(
+        oneuniverse_format_version=FORMAT_VERSION,
+        oneuniverse_schema_version=SCHEMA_VERSION,
+        geometry=geometry,
+        survey_name=survey_name,
+        survey_type=survey_type,
+        created_utc=datetime.now(timezone.utc).isoformat(),
+        original_files=original_files,
+        partitions=partitions,
+        partitioning=partitioning,
+        schema=schema_cols,
+        conversion_kwargs=conversion_kwargs,
+        loader=loader,
+        extra=extra,
+    )
+    write_manifest(out_dir / MANIFEST_FILENAME, manifest)
+    return manifest
 
 
 # ── Convert: POINT geometry ──────────────────────────────────────────────
@@ -64,27 +195,7 @@ def convert_survey(
     raw_path: Optional[str | Path] = None,
     **loader_kwargs: Any,
 ) -> Path:
-    """Convert a registered survey to oneuniverse POINT format.
-
-    Parameters
-    ----------
-    survey_name : str
-        Registered survey name (e.g. ``"eboss_qso"``).
-    data_root : str or Path or None
-        Override data root (default: use global setting).
-    partition_rows : int or None
-        Rows per Parquet file. None = use geometry default (200K for POINT).
-    compression : str
-        Parquet compression codec (default: ``"zstd"``).
-    overwrite : bool
-        If True, remove existing oneuniverse/ dir before converting.
-    **loader_kwargs
-        Passed to the survey loader (e.g. ``qso_only=True``).
-
-    Returns
-    -------
-    Path to the oneuniverse/ output directory.
-    """
+    """Convert a registered survey to OUF 2.0 POINT format."""
     from oneuniverse.data._config import resolve_survey_path, set_data_root
     from oneuniverse.data._registry import get_loader
 
@@ -110,48 +221,46 @@ def convert_survey(
     out_base = Path(output_dir) if output_dir is not None else survey_path
     out_base.mkdir(parents=True, exist_ok=True)
     out_dir = _prepare_output_dir(out_base, overwrite)
-    geometry = DataGeometry.POINT
-    if partition_rows is None:
-        partition_rows = DEFAULT_PARTITION_ROWS[geometry]
 
-    # Load the full DataFrame via the loader
     logger.info("Loading %s via loader...", survey_name)
     if raw_path is not None:
         loader_kwargs.setdefault("data_path", survey_path)
     df = loader.load(validate=False, force_native=True, **loader_kwargs)
 
-    # Add original row index for linkback
-    df[ORIGINAL_INDEX_COL] = np.arange(len(df), dtype=np.int64)
+    # Guarantee _original_row_index for linkback (CORE col).
+    if ORIGINAL_INDEX_COL not in df.columns:
+        df[ORIGINAL_INDEX_COL] = np.arange(len(df), dtype=np.int64)
 
-    # Write partitions
-    part_files = _write_partitions(df, out_dir, partition_rows, compression)
+    original_paths = []
+    if config.data_filename:
+        original_paths.append(survey_path / config.data_filename)
 
-    # Write manifest
-    manifest = {
-        "format_version": FORMAT_VERSION,
-        "oneuniverse_version": "0.1.0",
-        "survey_name": config.name,
-        "survey_type": config.survey_type,
-        "geometry": geometry.value,
-        "original_files": [config.data_filename],
-        "original_format": config.data_format,
-        "original_n_rows": _count_original_rows(survey_path, config),
-        "n_rows": len(df),
-        "n_objects": len(df),
-        "n_partitions": len(part_files),
-        "partition_rows": partition_rows,
-        "compression": compression,
-        "has_objects_table": False,
-        "partitions": part_files,
-        "data_columns": list(df.columns),
-        "object_columns": [],
-        "conversion_kwargs": loader_kwargs,
-        "created": datetime.now(timezone.utc).isoformat(),
-    }
+    def _point_stats(chunk: pd.DataFrame) -> PartitionStats:
+        return PartitionStats(
+            ra_min=float(chunk["ra"].min()) if "ra" in chunk else None,
+            ra_max=float(chunk["ra"].max()) if "ra" in chunk else None,
+            dec_min=float(chunk["dec"].min()) if "dec" in chunk else None,
+            dec_max=float(chunk["dec"].max()) if "dec" in chunk else None,
+            z_min=float(chunk["z"].min()) if "z" in chunk else None,
+            z_max=float(chunk["z"].max()) if "z" in chunk else None,
+        )
 
-    _write_manifest(out_dir, manifest)
-    _log_summary(out_dir, survey_path, config, manifest, part_files)
+    manifest = write_ouf_dataset(
+        df=df,
+        out_dir=out_dir,
+        survey_name=config.name,
+        survey_type=config.survey_type,
+        geometry=DataGeometry.POINT,
+        partition_rows=partition_rows,
+        compression=compression,
+        original_paths=original_paths,
+        original_format=config.data_format or "fits",
+        conversion_kwargs=loader_kwargs,
+        loader=LoaderSpec(name=survey_name, version="0.2.0"),
+        stats_builder=_point_stats,
+    )
 
+    _log_summary(out_dir, survey_path, config, manifest)
     return out_dir
 
 
@@ -172,79 +281,37 @@ def convert_sightlines(
     sightline_id_column: str = "sightline_id",
     **extra_manifest: Any,
 ) -> Path:
-    """Convert sightline data (e.g. Lya forest) to oneuniverse format.
+    """Convert sightline data (e.g. Lya forest) to OUF 2.0."""
+    out_dir = _prepare_output_dir(Path(survey_path), overwrite)
+    original_paths = [Path(survey_path) / f for f in (original_files or [])]
 
-    This writes a two-table layout:
-    - ``objects.parquet``: one row per sightline (ra, dec, z_source, …)
-    - ``part_*.parquet``:  one row per pixel (sightline_id, loglam, delta, …)
-
-    Parameters
-    ----------
-    objects_df : pd.DataFrame
-        Per-sightline metadata. Must contain: sightline_id, ra, dec, z_source.
-    data_df : pd.DataFrame
-        Per-pixel data. Must contain: sightline_id, loglam, delta, weight.
-    survey_path : Path
-        Directory where ``oneuniverse/`` will be created.
-    survey_name : str
-        Identifier for this dataset.
-    original_files : list[str] or None
-        Filenames of the original data for linkback.
-    partition_rows : int or None
-        Rows per data partition. None = 2M (SIGHTLINE default).
-    """
-    geometry = DataGeometry.SIGHTLINE
-    if partition_rows is None:
-        partition_rows = DEFAULT_PARTITION_ROWS[geometry]
-
-    # Validate required columns
-    missing_obj = validate_columns(list(objects_df.columns), geometry, "objects")
-    if missing_obj:
-        raise ValueError(f"objects_df missing required columns: {missing_obj}")
-    missing_data = validate_columns(list(data_df.columns), geometry, "data")
-    if missing_data:
-        raise ValueError(f"data_df missing required columns: {missing_data}")
-
-    out_dir = _prepare_output_dir(survey_path, overwrite)
-
-    # Write objects table
-    _write_single_parquet(objects_df, out_dir / OBJECTS_FILENAME, compression)
-    logger.info("  objects.parquet: %d sightlines", len(objects_df))
-
-    # Write pixel data partitions
-    part_files = _write_partitions(data_df, out_dir, partition_rows, compression)
-
-    manifest = {
-        "format_version": FORMAT_VERSION,
-        "oneuniverse_version": "0.1.0",
-        "survey_name": survey_name,
-        "survey_type": survey_type,
-        "geometry": geometry.value,
-        "n_sightlines": len(objects_df),
+    extra = {
+        "n_sightlines": int(len(objects_df)),
         "sightline_id_column": sightline_id_column,
-        "original_files": original_files or [],
-        "original_format": original_format,
-        "original_n_rows": -1,
-        "n_rows": len(data_df),
-        "n_objects": len(objects_df),
-        "n_partitions": len(part_files),
-        "partition_rows": partition_rows,
-        "compression": compression,
         "has_objects_table": True,
-        "partitions": part_files,
-        "data_columns": list(data_df.columns),
         "object_columns": list(objects_df.columns),
-        "conversion_kwargs": {},
-        "created": datetime.now(timezone.utc).isoformat(),
-        **extra_manifest,
     }
+    extra.update(extra_manifest)
 
-    _write_manifest(out_dir, manifest)
-    logger.info(
-        "SIGHTLINE conversion complete: %d sightlines, %d pixels → %d files",
-        len(objects_df), len(data_df), len(part_files),
+    write_ouf_dataset(
+        df=data_df,
+        out_dir=out_dir,
+        survey_name=survey_name,
+        survey_type=survey_type,
+        geometry=DataGeometry.SIGHTLINE,
+        objects_df=objects_df,
+        partition_rows=partition_rows,
+        compression=compression,
+        original_paths=original_paths,
+        original_format=original_format,
+        extra=extra,
+        loader=LoaderSpec(name=survey_name, version="0.2.0"),
     )
 
+    logger.info(
+        "SIGHTLINE conversion complete: %d sightlines, %d pixels",
+        len(objects_df), len(data_df),
+    )
     return out_dir
 
 
@@ -266,64 +333,34 @@ def convert_healpix_map(
     overwrite: bool = False,
     **extra_manifest: Any,
 ) -> Path:
-    """Convert a HEALPix map to oneuniverse format.
+    """Convert a HEALPix map to OUF 2.0."""
+    out_dir = _prepare_output_dir(Path(survey_path), overwrite)
+    original_paths = [Path(survey_path) / f for f in (original_files or [])]
 
-    Parameters
-    ----------
-    data_df : pd.DataFrame
-        Must contain: healpix_index, value. Optionally: weight, etc.
-    survey_path : Path
-        Directory where ``oneuniverse/`` will be created.
-    nside : int
-        HEALPix nside parameter.
-    ordering : str
-        "nested" or "ring".
-    coordsys : str
-        "icrs" or "galactic".
-    """
-    geometry = DataGeometry.HEALPIX
-    if partition_rows is None:
-        partition_rows = DEFAULT_PARTITION_ROWS[geometry]
-
-    missing = validate_columns(list(data_df.columns), geometry, "data")
-    if missing:
-        raise ValueError(f"data_df missing required columns: {missing}")
-
-    out_dir = _prepare_output_dir(survey_path, overwrite)
-    part_files = _write_partitions(data_df, out_dir, partition_rows, compression)
-
-    manifest = {
-        "format_version": FORMAT_VERSION,
-        "oneuniverse_version": "0.1.0",
-        "survey_name": survey_name,
-        "survey_type": survey_type,
-        "geometry": geometry.value,
-        "healpix_nside": nside,
+    extra = {
+        "healpix_nside": int(nside),
         "healpix_ordering": ordering,
         "healpix_coordsys": coordsys,
-        "original_files": original_files or [],
-        "original_format": original_format,
-        "original_n_rows": -1,
-        "n_rows": len(data_df),
-        "n_objects": len(data_df),
-        "n_partitions": len(part_files),
-        "partition_rows": partition_rows,
-        "compression": compression,
-        "has_objects_table": False,
-        "partitions": part_files,
-        "data_columns": list(data_df.columns),
-        "object_columns": [],
-        "conversion_kwargs": {},
-        "created": datetime.now(timezone.utc).isoformat(),
-        **extra_manifest,
     }
+    extra.update(extra_manifest)
 
-    _write_manifest(out_dir, manifest)
-    logger.info(
-        "HEALPIX conversion complete: nside=%d, %d pixels → %d files",
-        nside, len(data_df), len(part_files),
+    write_ouf_dataset(
+        df=data_df,
+        out_dir=out_dir,
+        survey_name=survey_name,
+        survey_type=survey_type,
+        geometry=DataGeometry.HEALPIX,
+        partition_rows=partition_rows,
+        compression=compression,
+        original_paths=original_paths,
+        original_format=original_format,
+        extra=extra,
+        loader=LoaderSpec(name=survey_name, version="0.2.0"),
     )
 
+    logger.info(
+        "HEALPIX conversion complete: nside=%d, %d pixels", nside, len(data_df),
+    )
     return out_dir
 
 
@@ -335,20 +372,15 @@ def read_oneuniverse_parquet(
     columns: Optional[List[str]] = None,
     filters: Optional[List] = None,
 ) -> pd.DataFrame:
-    """Read data partitions from a converted oneuniverse directory.
-
-    Works for any geometry — returns the part_*.parquet data.
-    For SIGHTLINE geometry, use ``read_objects_table()`` to get
-    the per-sightline metadata separately.
-    """
+    """Read data partitions from a converted oneuniverse directory."""
     import pyarrow.parquet as pq
 
-    ou_dir = survey_path / ONEUNIVERSE_SUBDIR
-    manifest = _read_manifest(ou_dir)
+    ou_dir = Path(survey_path) / ONEUNIVERSE_SUBDIR
+    manifest = _load_manifest(ou_dir)
 
     dfs = []
-    for part_name in manifest["partitions"]:
-        part_path = ou_dir / part_name
+    for part in manifest.partitions:
+        part_path = ou_dir / part.name
         table = pq.read_table(part_path, columns=columns, filters=filters)
         dfs.append(table.to_pandas())
 
@@ -356,19 +388,16 @@ def read_oneuniverse_parquet(
 
 
 def read_objects_table(survey_path: Path) -> pd.DataFrame:
-    """Read the objects.parquet table (SIGHTLINE geometry only).
-
-    Returns one row per sightline with metadata (ra, dec, z_source, …).
-    """
+    """Read the objects.parquet table (SIGHTLINE geometry only)."""
     import pyarrow.parquet as pq
 
-    ou_dir = survey_path / ONEUNIVERSE_SUBDIR
-    manifest = _read_manifest(ou_dir)
+    ou_dir = Path(survey_path) / ONEUNIVERSE_SUBDIR
+    manifest = _load_manifest(ou_dir)
 
-    if not manifest.get("has_objects_table", False):
+    if not manifest.extra.get("has_objects_table", False):
         raise ValueError(
-            f"No objects table for '{manifest.get('survey_name', '?')}' "
-            f"(geometry={manifest.get('geometry', '?')}). "
+            f"No objects table for '{manifest.survey_name}' "
+            f"(geometry={manifest.geometry.value}). "
             "Objects table is only present for SIGHTLINE geometry."
         )
 
@@ -380,49 +409,43 @@ def fetch_original_columns(
     original_columns: List[str],
     row_indices: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
-    """Fetch columns from the original file via linkback.
+    """Fetch columns from the original file via linkback."""
+    ou_dir = Path(survey_path) / ONEUNIVERSE_SUBDIR
+    manifest = _load_manifest(ou_dir)
 
-    Uses the ``_original_row_index`` column in the Parquet data to
-    map back to rows in the original FITS/CSV file.
-    """
-    ou_dir = survey_path / ONEUNIVERSE_SUBDIR
-    manifest = _read_manifest(ou_dir)
-
-    original_files = manifest.get("original_files", [])
-    if not original_files:
-        # Backward compat with old manifests
-        original_files = [manifest.get("original_file", "")]
-    original_format = manifest["original_format"]
-    original_file = survey_path / original_files[0]
-
-    if original_format == "fits":
-        return _fetch_from_fits(original_file, original_columns, row_indices)
-    elif original_format == "csv":
-        return _fetch_from_csv(original_file, original_columns, row_indices)
-    else:
-        raise NotImplementedError(
-            f"Linkback not implemented for format '{original_format}'"
+    if not manifest.original_files:
+        raise ValueError(
+            f"No original files recorded in manifest for "
+            f"'{manifest.survey_name}'."
         )
+    spec = manifest.original_files[0]
+    original_file = Path(survey_path) / spec.path
+
+    if spec.format == "fits":
+        return _fetch_from_fits(original_file, original_columns, row_indices)
+    if spec.format == "csv":
+        return _fetch_from_csv(original_file, original_columns, row_indices)
+    raise NotImplementedError(
+        f"Linkback not implemented for format '{spec.format}'"
+    )
 
 
 # ── Introspection ────────────────────────────────────────────────────────
 
 
-def get_manifest(survey_path: Path) -> Dict:
-    """Read and return the manifest for a converted survey."""
-    return _read_manifest(survey_path / ONEUNIVERSE_SUBDIR)
+def get_manifest(survey_path: Path) -> Manifest:
+    """Read and return the typed :class:`Manifest` for a converted dataset."""
+    return _load_manifest(Path(survey_path) / ONEUNIVERSE_SUBDIR)
 
 
 def is_converted(survey_path: Path) -> bool:
-    """Check whether oneuniverse Parquet files exist for this survey."""
-    ou_dir = survey_path / ONEUNIVERSE_SUBDIR
-    return (ou_dir / MANIFEST_FILENAME).exists()
+    """Check whether an OUF manifest exists for this survey."""
+    return (Path(survey_path) / ONEUNIVERSE_SUBDIR / MANIFEST_FILENAME).exists()
 
 
 def get_geometry(survey_path: Path) -> DataGeometry:
     """Return the geometry of a converted survey."""
-    manifest = get_manifest(survey_path)
-    return DataGeometry(manifest["geometry"])
+    return get_manifest(survey_path).geometry
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────
@@ -430,7 +453,7 @@ def get_geometry(survey_path: Path) -> DataGeometry:
 
 def _prepare_output_dir(survey_path: Path, overwrite: bool) -> Path:
     """Create the oneuniverse/ output directory."""
-    out_dir = survey_path / ONEUNIVERSE_SUBDIR
+    out_dir = Path(survey_path) / ONEUNIVERSE_SUBDIR
     if out_dir.exists():
         if overwrite:
             import shutil
@@ -449,15 +472,15 @@ def _write_partitions(
     out_dir: Path,
     partition_rows: int,
     compression: str,
-) -> List[str]:
-    """Write a DataFrame as fixed-size Parquet partitions."""
+    stats_builder=None,
+) -> List[PartitionSpec]:
+    """Write *df* as fixed-size Parquet partitions + return typed specs."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     n_total = len(df)
     n_parts = max(1, int(np.ceil(n_total / partition_rows)))
-
-    part_files = []
+    specs: List[PartitionSpec] = []
     for i in range(n_parts):
         start = i * partition_rows
         end = min(start + partition_rows, n_total)
@@ -465,78 +488,79 @@ def _write_partitions(
 
         part_name = f"part_{i:04d}.parquet"
         part_path = out_dir / part_name
-
         table = pa.Table.from_pandas(chunk, preserve_index=False)
         pq.write_table(table, part_path, compression=compression)
-        part_files.append(part_name)
 
-        size_mb = part_path.stat().st_size / 1e6
+        stats = stats_builder(chunk) if stats_builder else PartitionStats()
+        specs.append(PartitionSpec(
+            name=part_name,
+            n_rows=int(end - start),
+            sha256=hash_file(part_path),
+            size_bytes=part_path.stat().st_size,
+            stats=stats,
+        ))
         logger.info(
             "  %s: rows %d–%d (%d rows, %.1f MB)",
-            part_name, start, end - 1, end - start, size_mb,
+            part_name, start, end - 1, end - start,
+            part_path.stat().st_size / 1e6,
         )
-
-    return part_files
+    return specs
 
 
 def _write_single_parquet(
-    df: pd.DataFrame,
-    filepath: Path,
-    compression: str,
+    df: pd.DataFrame, filepath: Path, compression: str,
 ) -> None:
     """Write a single Parquet file."""
     import pyarrow as pa
     import pyarrow.parquet as pq
-
     table = pa.Table.from_pandas(df, preserve_index=False)
     pq.write_table(table, filepath, compression=compression)
 
 
-def _write_manifest(out_dir: Path, manifest: Dict) -> None:
-    """Write manifest.json."""
-    manifest_path = out_dir / MANIFEST_FILENAME
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2, default=str)
-
-
-def _read_manifest(ou_dir: Path) -> Dict:
-    """Read the manifest.json from an oneuniverse directory."""
+def _load_manifest(ou_dir: Path) -> Manifest:
+    """Read the typed Manifest from an oneuniverse directory."""
     manifest_path = ou_dir / MANIFEST_FILENAME
     if not manifest_path.exists():
         raise FileNotFoundError(
             f"No manifest found at {manifest_path}. Run a convert function first."
         )
-    with open(manifest_path) as f:
-        return json.load(f)
+    return read_manifest(manifest_path)
 
 
-def _count_original_rows(survey_path: Path, config) -> int:
-    """Count rows in the original file (without reading all data)."""
-    original = survey_path / config.data_filename
-    if not original.exists():
-        return -1
-    if config.data_format == "fits":
-        import fitsio
-        with fitsio.FITS(original) as f:
-            return f[1].get_nrows()
-    return -1
+def _count_rows(path: Path, fmt: str) -> Optional[int]:
+    """Count rows in an original source file without loading all data."""
+    if fmt == "fits":
+        try:
+            import fitsio
+            with fitsio.FITS(path) as f:
+                return int(f[1].get_nrows())
+        except Exception:
+            return None
+    if fmt == "csv":
+        try:
+            with open(path) as f:
+                return sum(1 for _ in f) - 1  # minus header
+        except Exception:
+            return None
+    return None
 
 
-def _log_summary(out_dir, survey_path, config, manifest, part_files):
+def _log_summary(out_dir, survey_path, config, manifest: Manifest):
     """Log a human-readable summary of the conversion."""
-    total_size = sum((out_dir / p).stat().st_size for p in part_files)
-    original_path = survey_path / config.data_filename
-    if original_path.exists():
+    total_size = sum(p.size_bytes for p in manifest.partitions)
+    original_path = Path(survey_path) / (config.data_filename or "")
+    if config.data_filename and original_path.exists():
         original_size = original_path.stat().st_size
         logger.info(
-            "Conversion complete: %d rows → %d files (%.1f MB, %.1fx compression vs original %.1f MB)",
-            manifest["n_rows"], len(part_files), total_size / 1e6,
-            original_size / total_size, original_size / 1e6,
+            "Conversion complete: %d rows → %d files (%.1f MB, "
+            "%.1fx compression vs original %.1f MB)",
+            manifest.n_rows, manifest.n_partitions, total_size / 1e6,
+            original_size / max(total_size, 1), original_size / 1e6,
         )
     else:
         logger.info(
             "Conversion complete: %d rows → %d files (%.1f MB)",
-            manifest["n_rows"], len(part_files), total_size / 1e6,
+            manifest.n_rows, manifest.n_partitions, total_size / 1e6,
         )
 
 

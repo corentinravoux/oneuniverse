@@ -64,14 +64,23 @@ def synth_point_loader():
 
 
 def _make_synth_csv(dir_: Path, n: int = 100) -> Path:
+    import healpy as hp
     dir_.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0)
+    ra = rng.uniform(0, 360, n)
+    dec = np.degrees(np.arcsin(rng.uniform(-1, 1, n)))
     df = pd.DataFrame({
-        "ra": rng.uniform(0, 360, n),
-        "dec": np.degrees(np.arcsin(rng.uniform(-1, 1, n))),
+        "ra": ra,
+        "dec": dec,
         "z": rng.uniform(0.01, 0.5, n),
+        "z_type": ["spec"] * n,
+        "z_err": np.full(n, 1e-4, dtype=np.float32),
         "galaxy_id": np.arange(n, dtype=np.int64),
         "survey_id": "synth",
+        "_original_row_index": np.arange(n, dtype=np.int64),
+        "_healpix32": hp.ang2pix(
+            32, np.radians(90.0 - dec), np.radians(ra), nest=True,
+        ).astype(np.int32),
     })
     csv = dir_ / "synth.csv"
     df.to_csv(csv, index=False)
@@ -181,9 +190,9 @@ class TestLoaderColumnsAndForceNative:
         df_native = loader.load(
             data_path=raw_dir, validate=False, force_native=True,
         )
-        # Native path does not add _original_row_index
+        # OUF 2.0 requires _original_row_index on both paths (CORE col).
         assert "_original_row_index" in df_parq.columns
-        assert "_original_row_index" not in df_native.columns
+        assert "_original_row_index" in df_native.columns
         assert len(df_parq) == len(df_native) == 100
 
 

@@ -284,7 +284,7 @@ def load_universal(
         if columns is not None:
             from oneuniverse.data.converter import get_manifest
             manifest = get_manifest(path)
-            available = set(manifest.get("data_columns", []))
+            available = {c.name for c in manifest.schema}
             ds_columns = [c for c in columns if c in available]
         df = read_oneuniverse_parquet(path, columns=ds_columns or None)
         # Vectorised slice via row_index — single allocation, no loop.
@@ -467,7 +467,7 @@ class OneuidQuery:
             ds_col_arg = col_arg
             if col_arg is not None:
                 manifest = self.database.get_manifest(ds)
-                available = set(manifest.get("data_columns", []))
+                available = {c.name for c in manifest.schema}
                 ds_col_arg = [c for c in col_arg if c in available]
             df = read_oneuniverse_parquet(path, columns=ds_col_arg or None)
             sliced = df.iloc[grp["row_index"].to_numpy()].reset_index(drop=True)

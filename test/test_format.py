@@ -26,7 +26,6 @@ from oneuniverse.data.format_spec import (
     FORMAT_VERSION,
     DataGeometry,
     validate_columns,
-    validate_manifest,
 )
 
 
@@ -49,7 +48,11 @@ class TestFormatSpec:
 
     def test_validate_columns_point(self):
         missing = validate_columns(
-            ["ra", "dec", "z", "galaxy_id", "survey_id"],
+            [
+                "ra", "dec", "z", "z_type", "z_err",
+                "galaxy_id", "survey_id",
+                "_original_row_index", "_healpix32",
+            ],
             DataGeometry.POINT,
         )
         assert missing == []
@@ -58,6 +61,8 @@ class TestFormatSpec:
         missing = validate_columns(["ra", "dec"], DataGeometry.POINT)
         assert "z" in missing
         assert "galaxy_id" in missing
+        assert "z_type" in missing
+        assert "_healpix32" in missing
 
     def test_validate_columns_sightline_objects(self):
         cols = ["sightline_id", "ra", "dec", "z_source", "survey_id", "n_pixels"]
@@ -72,55 +77,6 @@ class TestFormatSpec:
     def test_validate_columns_healpix(self):
         missing = validate_columns(["healpix_index", "value"], DataGeometry.HEALPIX)
         assert missing == []
-
-    def test_validate_manifest_good(self):
-        m = {
-            "format_version": FORMAT_VERSION,
-            "geometry": "point",
-            "survey_name": "test",
-            "n_rows": 100,
-            "partitions": ["part_0000.parquet"],
-            "compression": "zstd",
-        }
-        assert validate_manifest(m) == []
-
-    def test_validate_manifest_bad_geometry(self):
-        m = {
-            "format_version": FORMAT_VERSION,
-            "geometry": "invalid",
-            "survey_name": "test",
-            "n_rows": 100,
-            "partitions": [],
-            "compression": "zstd",
-        }
-        errors = validate_manifest(m)
-        assert any("Invalid geometry" in e for e in errors)
-
-    def test_validate_manifest_sightline_needs_objects(self):
-        m = {
-            "format_version": FORMAT_VERSION,
-            "geometry": "sightline",
-            "survey_name": "test",
-            "n_rows": 100,
-            "partitions": [],
-            "compression": "zstd",
-            "has_objects_table": False,
-            "n_sightlines": 0,
-        }
-        errors = validate_manifest(m)
-        assert len(errors) >= 1
-
-    def test_validate_manifest_healpix_needs_nside(self):
-        m = {
-            "format_version": FORMAT_VERSION,
-            "geometry": "healpix",
-            "survey_name": "test",
-            "n_rows": 100,
-            "partitions": [],
-            "compression": "zstd",
-        }
-        errors = validate_manifest(m)
-        assert any("healpix_nside" in e for e in errors)
 
 
 # ── SIGHTLINE converter ─────────────────────────────────────────────────
@@ -171,10 +127,10 @@ class TestSightlineConverter:
             self.objects, self.data, self.tmp, "test_lya", overwrite=True,
         )
         m = get_manifest(self.tmp)
-        assert m["geometry"] == "sightline"
-        assert m["n_sightlines"] == 50
-        assert m["has_objects_table"] is True
-        assert m["format_version"] == FORMAT_VERSION
+        assert m.geometry.value == "sightline"
+        assert m.extra["n_sightlines"] == 50
+        assert m.extra["has_objects_table"] is True
+        assert m.oneuniverse_format_version == FORMAT_VERSION
 
     def test_missing_columns_raises(self):
         bad_data = self.data.drop(columns=["delta"])
@@ -227,9 +183,9 @@ class TestHealpixConverter:
             nside=self.nside, ordering="ring", overwrite=True,
         )
         m = get_manifest(self.tmp)
-        assert m["geometry"] == "healpix"
-        assert m["healpix_nside"] == self.nside
-        assert m["healpix_ordering"] == "ring"
+        assert m.geometry.value == "healpix"
+        assert m.extra["healpix_nside"] == self.nside
+        assert m.extra["healpix_ordering"] == "ring"
 
     def test_missing_columns_raises(self):
         bad = self.data.drop(columns=["value"])
