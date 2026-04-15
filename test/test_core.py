@@ -91,8 +91,12 @@ class TestSchema:
             "ra": [1.0, 2.0],
             "dec": [3.0, 4.0],
             "z": np.array([0.1, 0.2], dtype=np.float32),
+            "z_type": ["spec", "spec"],
+            "z_err": np.array([0.001, 0.001], dtype=np.float32),
             "galaxy_id": np.array([0, 1], dtype=np.int64),
             "survey_id": ["test", "test"],
+            "_original_row_index": np.array([0, 1], dtype=np.int64),
+            "_healpix32": np.array([0, 1], dtype=np.int32),
         })
         warnings = validate_dataframe(df, ["core"])
         assert len(warnings) == 0

@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import healpy as hp
 import numpy as np
 import pandas as pd
 
@@ -86,14 +87,25 @@ class DummyLoader(BaseSurveyLoader):
         mu = (5.0 * np.log10(np.maximum(d_l_mpc, 1e-10)) + 25.0).astype(np.float32)
         mu_err = np.full(n, _SIGMA_MU_TF, dtype=np.float32)
 
+        # HEALPix NSIDE=32 NESTED index (OUF 2.0 spatial partition key)
+        healpix32 = hp.ang2pix(
+            32,
+            np.radians(90.0 - dec),
+            np.radians(ra),
+            nest=True,
+        ).astype(np.int32)
+
         return pd.DataFrame({
             # Core
             "ra": ra,
             "dec": dec,
             "z": z,
-            "z_type": np.zeros(n, dtype=np.int8),
+            "z_type": np.array(["spec"] * n),
+            "z_err": z_spec_err,
             "galaxy_id": np.arange(n, dtype=np.int64),
             "survey_id": np.array(["dummy"] * n),
+            "_original_row_index": np.arange(n, dtype=np.int64),
+            "_healpix32": healpix32,
             # Spectroscopic
             "z_spec": z_spec,
             "z_spec_err": z_spec_err,

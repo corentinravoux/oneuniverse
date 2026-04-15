@@ -18,7 +18,12 @@ than any one of them alone.
 
 ## Vision
 
-`oneuniverse` is built around three goals of increasing ambition:
+`oneuniverse` is built around three goals of increasing ambition. Across
+all three, the package is a **data, interface and orchestration layer**:
+it does not implement cross-correlation estimators, forward models,
+samplers, or simulation codes. Those live in existing mature packages
+(pypower, NaMaster, `flip`, BORG, FlowPM, pmwd, MUSIC, Nyx, AREPO, RAMSES,
+SWIFT), chosen and wired in by the user.
 
 ### 1. Unified data access
 
@@ -57,28 +62,36 @@ using an Astropy ball-tree + scipy connected-components algorithm, and assigns
 a single integer identifier to each physical object regardless of how many
 surveys observed it.
 
-This makes cross-correlation studies straightforward. With ONEUID in hand:
+`oneuniverse` does **not** implement cross-correlation estimators or power
+spectrum codes — that is the job of dedicated packages (pypower, nbodykit,
+NaMaster, `flip`). Instead, it prepares the **data products** those codes
+need so that cross-survey analyses become straightforward:
+
+- **Cross-matched catalogs with ONEUID**: know which objects are shared
+  between surveys, enabling multi-tracer analyses and duplicate removal.
+- **Selection functions and angular masks**: n(z) per tracer class and
+  HEALPix completeness maps — the inputs every estimator requires but that
+  are painful to build from heterogeneous survey files.
+- **Random catalogs**: drawn from each tracer's mask + n(z), ready to feed
+  into pypower or nbodykit.
+- **Weighted, combined catalogs**: per-survey weights (FKP, inverse-variance,
+  completeness, quality masks) and combination strategies (`best_only`,
+  `ivar_average`, hyperparameter) that preserve the inverse-variance
+  interpretation downstream codes rely on.
+
+With these data products in hand, cross-correlation studies become one-liners:
 
 - **Redshift calibration**: compare spectroscopic z from DESI with eBOSS for
   the ~200k quasars observed by both, quantify systematic offsets per pipeline.
-- **Multi-tracer power spectra**: the optimal estimator for the matter power
-  spectrum P(k) uses all available tracers simultaneously, with survey-specific
-  bias and shot noise — but requires knowing which objects are shared.
+- **Multi-tracer power spectra**: feed the weighted catalogs + randoms into
+  pypower with per-tracer bias and shot noise.
 - **Peculiar velocity + density joint analysis**: `flip` needs both a density
-  field (from spectroscopic galaxy positions) and a velocity field (from
-  distance indicators); `oneuniverse` provides both in a single weighted
-  catalog, with the cross-match handling overlapping footprints.
-- **Photo-z training and validation**: photometric surveys calibrate their
-  redshifts against spectroscopic truth tables — ONEUID automates the
-  spectro-photo match.
+  field and a velocity field; `oneuniverse` provides both in a single
+  weighted catalog, with the cross-match handling overlapping footprints.
+- **Photo-z training and validation**: ONEUID automates the spectro-photo
+  match needed for calibration truth tables.
 
-The `weight` subpackage handles the statistical subtleties: per-survey weights
-(FKP, inverse-variance, completeness, quality masks), and combination
-strategies (`best_only`, `ivar_average`, hyperparameter weighting) that
-preserve the inverse-variance interpretation downstream codes like `flip`
-rely on.
-
-### 3. Digital twin of the Universe
+### 3. Digital twin of the Universe — the microsimulation method
 
 This is the most ambitious goal, and the reason the package is called
 _oneuniverse_.
@@ -87,6 +100,56 @@ The idea: given enough observations from enough surveys, reconstruct the
 **actual three-dimensional matter density field and velocity field of our
 Universe** — not a statistical average, not a random realisation from a
 cosmological prior, but the specific cosmic web that we inhabit.
+
+`oneuniverse` does **not** implement the forward model, the HMC sampler,
+or the hydrodynamic code. BORG, FlowPM, pmwd, MUSIC, Nyx, AREPO, and
+SWIFT already exist and are mature. Which simulation code is used — for
+both the global reconstruction and the local re-simulations — is a
+**user choice**, selected by whoever interfaces `oneuniverse` with their
+simulation stack through the package's input/output adapters.
+
+The distinctive scientific contribution sits on top of this: the
+**microsimulation method** — a two-tier forward-modelling strategy for
+field-level inference.
+
+**Tier A — global reconstruction.** A single large-scale run (e.g.
+BORG/Manticore-style, roughly annually or on major DR arrival) fixes the
+**large-scale gravitational potential** and long-wavelength tidal /
+density field. This run is expensive, but infrequent.
+
+**Tier B — microsimulations.** For any local region of scientific
+interest, a fast, high-resolution local simulation is run **conditioned
+on the global field as a tidal + density boundary condition**. Local
+initial conditions ("best seeds") are inferred from the local survey
+data (DESI BGS, PV, local SNe, Lyα sightlines in the volume) through a
+local field-level inference loop. Because the local volume is small and
+the long-wavelength modes are fixed, each forward evaluation is orders
+of magnitude cheaper than a global run — enabling iterative FLI at
+resolutions that global reconstructions cannot afford.
+
+The role of `oneuniverse` in this picture:
+
+1. **Provide the observation-side inputs** the reconstruction codes need
+   — cross-matched catalogs, selection functions, angular masks, survey
+   geometry, per-tracer bias metadata — in a standardised format.
+2. **Detect change**: monitor the survey database for new or modified
+   data (new DR, reprocessing, new survey ingested) and identify which
+   sub-volumes have stale inputs.
+3. **Dispatch microsimulations**: extract the appropriate boundary
+   conditions from the global reconstruction, assemble the local input
+   catalog, and hand the job to whichever simulation code the user has
+   configured. The simulation format is not imposed by `oneuniverse` —
+   the user (or the person writing an interface for their group's
+   preferred code) chooses.
+4. **Store results** back into a **digital twin database** — OUF-style
+   partitioned storage with 3D field data and metadata linking each
+   volume to the survey data, global reconstruction, and simulation code
+   that produced it.
+
+The package is therefore a **data and orchestration layer** sitting
+above the forward-modelling stack, not a reimplementation of it. The
+scientific novelty is the microsimulation methodology; the engineering
+contribution is the data infrastructure that makes it tractable.
 
 #### Why is this possible?
 
@@ -111,53 +174,127 @@ spectroscopic cross-calibration sharpens it. CMB lensing and galaxy lensing
 have different redshift kernels, so their cross-correlation constrains the
 growth of structure D(z) as a function of time.
 
-#### The reconstruction pipeline
+#### External reconstruction tooling (user-selectable)
 
-The digital twin is built through **constrained Bayesian forward modelling**:
+The reconstruction work itself — global or local — is done by external
+codes chosen by the user. The mature global-reconstruction stack centres
+on the **BORG** algorithm (Jasche & Wandelt 2013) and its successors; the
+latest result, **Manticore** (McAlpine et al. 2025, arXiv:2505.10682),
+ingests ~69,000 galaxies from the 2M++ catalogue and produces 50
+posterior realisations of the local cosmic web out to 350 Mpc at ~4 Mpc
+resolution. The **Velocity Field Olympics** (Stiskalek et al. 2026,
+arXiv:2502.00121) benchmarked all major reconstruction methods and found
+that non-linear Bayesian forward models consistently outperform
+linear/Wiener-filter alternatives.
 
-1. **Prior**: a Gaussian random field with the theoretical power spectrum
-   P(k, z) from LCDM (or extensions). This encodes our knowledge of
-   cosmological initial conditions.
+For microsimulations (the local Tier-B runs), the user chooses the
+simulation code appropriate for their science: differentiable PM codes
+(**FlowPM**, **pmwd**) are well-suited for local FLI loops; AMR / SPH
+codes (**Nyx**, **AREPO**, **RAMSES**) for hydrodynamic local physics;
+**SWIFT** for cosmological DM-only sub-volumes. `oneuniverse` provides
+the input/output adapters; the choice of code is made by whoever writes
+the interface for their group's workflow.
 
-2. **Forward model**: evolve initial conditions through gravitational
-   dynamics — either full N-body, approximate methods (2LPT, COLA,
-   particle-mesh), or learned surrogates — to predict the present-day
-   density and velocity fields.
+`oneuniverse` interfaces with this external stack at two points — inputs
+and outputs — without reimplementing it:
 
-3. **Observation model**: for each survey in the `oneuniverse` database,
-   apply the appropriate bias model, selection function, survey geometry
-   (mask, completeness), and noise model to produce mock observables that
-   can be compared to the real data.
+**What `oneuniverse` feeds in:**
 
-4. **Likelihood**: compare mock and real data. For Gaussian fields this is
-   the standard multivariate Gaussian (what `flip` already implements);
-   for the full non-linear field, simulation-based inference or
-   Hamiltonian Monte Carlo on the initial conditions (a la BORG, ELUCID,
-   LEX).
+- Cross-matched, weighted catalogs (galaxies, PV, SNe, QSOs) with ONEUID
+- Per-tracer selection functions n(z, ra, dec) and angular masks
+- Random catalogs matching each tracer's mask + n(z)
+- Fiducial cosmology and comoving-distance grids
+- Tracer classification labels for bias modelling
+- For microsimulations: global-field boundary conditions (long-wavelength
+  tidal + density field) extracted from the current Tier-A reconstruction
 
-5. **Posterior**: the constrained realisation that maximises the posterior
-   is the digital twin — a 3D map of delta(x) and v(x) that is
-   simultaneously consistent with all survey data.
+**What the external stack does** (not implemented here):
 
-#### Multi-scale re-simulation
+- Prior over initial conditions (Gaussian random field, P(k,z) from LCDM)
+- Forward model (2LPT, COLA, PM, neural surrogates)
+- Observation model (bias, selection, noise) applied to mock observables
+- Likelihood + HMC sampling of initial conditions, or SELFI-style SBI
 
-Once the large-scale structure is fixed by the global reconstruction, specific
-regions can be **re-simulated at higher resolution** without rerunning the
-entire volume. This is the "mini-simulation" concept:
+**What `oneuniverse` stores back:**
 
-- **Boundary conditions from the global field**: the large-scale tidal field
-  and bulk flow at the boundary of the zoom region come from the
-  reconstruction.
-- **Hydrodynamic physics inside**: baryonic processes (cooling, star
-  formation, AGN feedback, chemical enrichment) are modelled with
-  SPH/AMR codes (e.g. Nyx, Arepo, RAMSES) only within the zoom volume.
-- **Incremental updates**: when new survey data arrives for a specific sky
-  region (e.g. a new DESI tile), only the affected local volume needs to be
-  re-constrained and re-simulated — not the full 1 Gpc/h box.
+- 3D posterior realisations (delta(x), v(x)) in a new OUF variant for
+  field data, with metadata linking each volume to its input survey
+  version.
+- White-noise realisations needed by MUSIC/monofonIC for downstream zooms.
+- Provenance: which survey DR, which ONEUID index version, which fiducial
+  cosmology, which external code + version produced the reconstruction,
+  and — for Tier-B outputs — which Tier-A reconstruction provided the
+  boundary conditions.
 
-This hierarchical approach makes the digital twin **maintainable**: as the
-`oneuniverse` database grows (new surveys, new data releases), the
-reconstruction improves locally without requiring a monolithic re-analysis.
+#### What data types matter most?
+
+Research across five domains converges on a clear hierarchy:
+
+1. **Galaxy redshift surveys** — the backbone. Galaxy positions constrain the
+   density field on scales > 4 Mpc. This is the minimum viable input (2M++
+   with ~69K galaxies suffices for Manticore).
+2. **Peculiar velocities** — add critical dynamical information. Break the
+   density-velocity degeneracy. Hamlet-PM (arXiv:2602.03699) shows PV-only
+   reconstructions from CosmicFlows-4 are already competitive.
+3. **CMB lensing** — projected mass map, breaks galaxy bias degeneracy.
+   Multi-probe FLI combining CMB lensing + galaxy density is an active
+   frontier but not yet in production constrained realisations.
+4. **Lyman-alpha forest** — probes high-z (z = 2-5) density. cosmosTNG
+   (arXiv:2409.19047) demonstrated constrained Lya simulations for specific
+   sky patches using TARDIS + CLAMATO tomography data.
+
+#### Change-driven microsimulation: the orchestration layer
+
+The engineering contribution of `oneuniverse` is the **orchestration**:
+deciding what needs to be re-simulated when the database changes, and
+maintaining a consistent digital twin as new survey data arrives — while
+leaving all actual simulation work to user-selected external codes.
+
+**The change-detection loop:**
+
+1. **Inventory** — for every sub-volume of the digital twin database,
+   record which surveys, which DRs, which ONEUID index version, which
+   fiducial cosmology, and which Tier-A global reconstruction constrained
+   it.
+2. **Diff** — on database update (new DR, reprocessing, new survey, new
+   ONEUID run), compute which sub-volumes have stale inputs. A new DESI
+   tile in one patch of sky should not invalidate microsimulations on
+   the opposite hemisphere.
+3. **Dispatch microsimulation** — extract the long-wavelength tidal +
+   density boundary conditions for the affected sub-volume from the
+   current Tier-A reconstruction, assemble the relevant local survey
+   data, and hand the job to whichever simulation code the user has
+   configured through the interface. The microsimulation format and
+   code are user-selectable; `oneuniverse` is agnostic.
+4. **Ingest** — write the returned 3D fields back into the digital twin
+   database with updated provenance, so the next diff round is correct.
+
+Tier A (the global reconstruction itself) is typically refreshed on a
+much slower cadence (roughly annually, or on major DR arrival). Tier B
+microsimulations are where the frequent, change-driven dispatch happens.
+
+**External tooling the dispatcher can call** (non-exhaustive; chosen by
+the user):
+
+- Global (Tier A) constrained ICs: BORG, Manticore (arXiv:2505.10682)
+- Multi-scale IC generation: MUSIC/monofonIC with nested grids; output
+  plugins exist for Nyx, AREPO, RAMSES, Gadget, Enzo
+- Microsimulation (Tier B) candidates: FlowPM (arXiv:2010.11847) and
+  pmwd (arXiv:2211.09958) for differentiable local FLI; Nyx for
+  Lyα-optimised hydro; AREPO for galaxy formation; RAMSES for general
+  AMR; SWIFT for cosmological DM-only
+- Targeted field modifications: GenetIC (arXiv:2006.01841)
+
+Proven end-to-end examples of observation → constrained ICs → high-res
+simulation pipelines include HESTIA (arXiv:2008.04926, AREPO into CLUES
+ICs) and SIBELIUS-DARK (arXiv:2202.04099, SWIFT into BORG ICs). Neither
+is inferential at the local level, and neither automates change-driven
+dispatch — those are the gaps the microsimulation method + `oneuniverse`
+orchestration layer address.
+
+Resolution targets that determine which external code is appropriate for
+a given microsimulation: LSS/PV ~1-2 Mpc/h (DM-only), Lyα forest
+20-50 kpc/h (hydro), galaxy formation < 1 kpc (full sub-grid).
 
 ---
 
@@ -200,18 +337,37 @@ survey-specific.
 
 ### Cross-match physics
 
-The ONEUID cross-match (`oneuid.py`) is physically motivated:
+The ONEUID cross-match (`oneuid.py`) is physically motivated, and the current
+design choices are well-aligned with the literature (Budavari & Szalay 2008,
+arXiv:0707.1611; Marrese et al. 2019, A&A 621, A144):
 
 - **Sky tolerance** (default 2 arcsec): accounts for astrometric differences
   between surveys. SDSS and DESI have ~0.1 arcsec precision, so 2 arcsec is
-  conservative and handles extended sources.
+  conservative and handles extended sources. The optimal match radius is
+  3-5× sqrt(sigma_1^2 + sigma_2^2); for optical-optical this gives 0.5-1",
+  for optical-WISE 2-3", for X-ray-optical 6-15" (Salvato et al. 2018,
+  arXiv:1705.10711). Future versions should support **survey-pair-specific
+  tolerances**.
 - **Redshift tolerance** (default dz = 5e-3): accounts for pipeline
   differences, catastrophic redshift failures, and the physical velocity
-  dispersion of cluster members (~1000 km/s ~ dz ~ 0.003).
+  dispersion of cluster members (~1000 km/s ~ dz ~ 0.003). Note that DESI QSO
+  redshifts carry z-dependent systematic offsets of ~200 km/s (Bault et al.
+  2025, arXiv:2402.18009), motivating a looser dz_tol ~ 5e-3 for QSOs vs
+  ~1e-3 for galaxies.
 - **Transitivity**: the connected-components algorithm makes the match
   transitive — if A~B in survey 1 and B~C in survey 2, then A, B, C share
-  one ONEUID. This is correct for linking heterogeneous surveys through an
-  intermediate.
+  one ONEUID. This is the graph-theoretic approach recommended by Budavari &
+  Szalay (2008). A planned safeguard is to flag ONEUID groups where not all
+  pairwise separations satisfy the tolerance (potential blends or close pairs),
+  using a maximum group diameter check.
+- **Cross-survey-only linking**: same-survey pairs are excluded, avoiding
+  spurious merging of close pairs within a single catalog.
+- **Match quality metadata** (planned): store pairwise angular separation and
+  delta-z in the ONEUID index, enabling downstream quality filtering.
+
+For surveys with very different positional uncertainties (eROSITA, WISE),
+the long-term path is **NWAY** probabilistic matching (Salvato et al. 2018),
+which provides Bayesian multi-catalog matching with magnitude priors.
 
 ### Weighting and combination
 
@@ -221,7 +377,11 @@ large-scale structure analyses:
 - **FKP weights** (Feldman, Kaiser & Peacock 1994):
   w_FKP(z) = 1 / (1 + n_bar(z) P_0), where n_bar(z) is the survey number
   density and P_0 is the reference power. This minimises the variance of
-  the power spectrum estimator.
+  the power spectrum estimator. In the multi-tracer generalisation
+  (Abramo & Leonard 2013, arXiv:1302.5444), the optimal weights depend on
+  the bias ratio b_A/b_B and the per-tracer number densities — splitting a
+  sample into sub-populations with different biases always improves
+  constraints on bias-sensitive parameters like f_NL and f*sigma_8.
 - **Inverse-variance weights** with an optional non-linear velocity dispersion
   floor sigma_* (Howlett 2019): w = 1 / (sigma^2 + sigma_*^2). For peculiar
   velocities, the floor absorbs small-scale non-linear motions that the
@@ -235,6 +395,15 @@ large-scale structure analyses:
   the BLUE inverse-variance weighted mean (valid if errors are independent).
   `hyperparameter` (Lahav 2000) applies per-survey multipliers alpha_s that
   encode subjective trust without corrupting individual error bars.
+
+**What is still needed for multi-tracer science** (Seljak 2009,
+arXiv:0807.1770; pypower/nbodykit implementations):
+
+- Per-tracer n(z) selection functions (the single most critical gap)
+- Tracer classification labels (LRG, ELG, QSO, BGS) beyond `survey_id`
+- Angular masks / survey geometry (HEALPix completeness maps)
+- Random catalog generation matching each tracer's mask + n(z)
+- Per-class linear bias estimates b(z) for optimal multi-tracer weighting
 
 ---
 
@@ -381,6 +550,11 @@ CosmicFlows-4, DESI PV, Pantheon+.
 
 ## Roadmap
 
+Priority labels (P0-P3) are derived from a gap analysis cross-validated
+across five independent research domains: constrained realisations,
+multi-tracer statistics, cross-matching, field-level inference, and zoom-in
+simulations. P0 gaps were flagged by >= 3 domains; P1 by 2; P2 by 1.
+
 ### Phase 1 — Data layer (current)
 
 - [x] Standardised schema with column groups
@@ -399,23 +573,79 @@ CosmicFlows-4, DESI PV, Pantheon+.
 - [ ] Lyman-alpha forest sightline loader (SIGHTLINE geometry)
 - [ ] CMB lensing kappa map loader (HEALPIX geometry)
 
-### Phase 2 — Cross-correlation infrastructure
+### Phase 2 — Data products for cross-correlation (no estimators here)
 
-- [ ] Survey window functions and angular selection functions
-- [ ] Angular cross-power spectra C_l between any pair of tracers
-- [ ] 3D cross-correlation functions for overlapping spectroscopic surveys
-- [ ] Photo-z calibration module (spectroscopic truth table matching)
-- [ ] Direct interface to `flip` DataVector and CovMatrix
-- [ ] Multi-tracer optimal power spectrum estimator
+`oneuniverse` produces the inputs that external estimators (pypower,
+nbodykit, NaMaster, TreeCorr, `flip`) need. Estimator implementations
+stay in those packages.
 
-### Phase 3 — Digital twin
+*P0 critical gaps (needed by multi-tracer, FLI, and constrained realisations):*
 
-- [ ] Initial conditions parametrisation (Fourier modes, wavelet basis)
-- [ ] Forward model interface (N-body / 2LPT / COLA / learned surrogates)
-- [ ] Per-survey observation model (bias, selection, noise)
-- [ ] Constrained realisation sampler (HMC on initial conditions)
-- [ ] Zoom-in re-simulation boundary condition extractor
-- [ ] Incremental update: re-constrain local volumes from new data
+- [ ] **Per-tracer n(z) selection functions** — smooth radial selection for
+  each tracer class. The single most critical missing piece.
+- [ ] **Angular masks / survey geometry** — HEALPix or MOC per-pixel
+  completeness, exportable to NaMaster/pypower mask formats.
+- [ ] **Random catalog generation** — draw randoms matching each tracer's
+  mask + n(z); writeable in pypower/nbodykit input format.
+
+*P1 gaps:*
+
+- [ ] Tracer classification labels (LRG/ELG/QSO/BGS) within each survey
+- [ ] Survey-pair-specific cross-match tolerances (optical-optical vs
+  optical-IR vs X-ray-optical; Salvato et al. 2018)
+- [ ] Match quality metadata in ONEUID index (pairwise sep, delta-z)
+- [ ] Thin export adapters to `flip` DataVector, pypower catalog, SACC
+
+*P2 gaps:*
+
+- [ ] Per-class linear bias estimates b(z) metadata (informational, not
+  used to fit)
+- [ ] Fiber/targeting metadata for forward-modelling incompleteness
+- [ ] Comoving distance grids under fiducial cosmology
+- [ ] Transitivity safeguards (max ONEUID group diameter check)
+- [ ] Cosmological parameter provenance (fiducial cosmology, swappable)
+- [ ] Photo-z calibration data products (spectroscopic truth tables)
+
+### Phase 3 — Digital twin interface and microsimulation orchestration
+
+`oneuniverse` orchestrates, stores, and exposes interfaces; the external
+simulation code (global and microsimulation) is chosen by the user.
+
+*Storage and provenance:*
+
+- [ ] Field-data OUF variant for 3D delta(x), v(x) grids (Tier A and B)
+- [ ] White-noise realisation storage (MUSIC/monofonIC input)
+- [ ] Reconstruction manifest: survey DR versions, ONEUID index hash,
+  fiducial cosmology, external code + version
+- [ ] Sub-volume index (spatial partitioning of the digital twin)
+- [ ] Tier-B provenance link: microsimulation → Tier-A reconstruction
+  that supplied its boundary conditions
+
+*Generic interfaces (code-agnostic, user-configured):*
+
+- [ ] Export adapter spec: catalogs + selection + mask → global-reconstruction input
+- [ ] Export adapter spec: sub-volume boundary conditions + local catalog
+  → microsimulation input
+- [ ] Import adapter spec: external simulation output → field-data OUF
+- [ ] Adapter registry: users declare which codes they have wired in
+
+*Microsimulation method (the distinctive scientific contribution):*
+
+- [ ] Boundary-condition extractor: long-wavelength tidal + density field
+  from a Tier-A reconstruction on an arbitrary sub-volume
+- [ ] Buffer-zone computation: account for long-range mode coupling
+  between global and local modes
+- [ ] Local-catalog assembler: gather all survey data intersecting a
+  sub-volume through the ONEUID layer
+- [ ] Consistency checks between Tier-A and Tier-B posteriors at sub-volume
+  boundaries
+
+*Change-driven orchestration:*
+
+- [ ] Diff engine: detect which sub-volumes have stale inputs on DB update
+- [ ] Dispatcher: submit affected sub-volumes to the user-configured
+  microsimulation code
+- [ ] Ingest: write returned fields back with updated provenance
 
 ---
 
@@ -438,9 +668,44 @@ Raw survey files
     -> f*sigma_8, b*sigma_8, sigma_v, ...
 ```
 
-The digital twin extends this chain: the constrained density and velocity
-fields become the **prior** for a forward-modelled likelihood, replacing the
-Gaussian random field assumption with the actual reconstructed cosmic web.
+### flip as a special case of field-level inference
+
+`flip` performs **Gaussian field-level inference**: a multivariate Gaussian
+likelihood over the velocity and/or density field with a covariance matrix
+C(fs8, bs8, sigv) assembled from Hankel-transformed power spectra. This is
+formally equivalent to FLI with a linear forward model and Gaussian field
+assumption. The Gaussian approximation is well-justified for velocities —
+the velocity field is a spatial integral of delta, which averages out
+non-Gaussianity even at low redshift.
+
+Full forward-model FLI (BORG, FlowPM, pmwd) would add: (i) non-Gaussian
+information from the velocity divergence field; (ii) joint 3D velocity
+field reconstruction for map-level cross-correlations; (iii) self-consistent
+non-linear bias for joint density-velocity analyses. Nguyen et al.
+(arXiv:2407.14289) estimate factors of 2-3 improvement on f*sigma_8 for
+DESI-sized PV catalogs. Stadler et al. (arXiv:2509.09673) find ~20%
+tighter constraints on {A_s, omega_cdm, H_0} from FLI vs. P(k)+bispectrum.
+
+These full-FLI codes live outside `oneuniverse` — the package's role is to
+supply them with the cross-matched, weighted catalogs, selection functions,
+and masks they need, and to store their posterior realisations back into
+the digital twin database.
+
+---
+
+## Scientific context and key references
+
+The design of `oneuniverse` draws on established methodology and recent
+advances across several fields. A detailed research synthesis is available in
+[research/digital_twin_research.md](research/digital_twin_research.md).
+
+| Domain | Key references |
+|--------|---------------|
+| Constrained realisations | BORG (Jasche & Wandelt 2013, arXiv:1306.1821), Manticore (McAlpine et al. 2025, arXiv:2505.10682), Velocity Field Olympics (Stiskalek et al. 2026, arXiv:2502.00121), CSiBORG (arXiv:2203.14724), Hamlet-PM (arXiv:2602.03699) |
+| Multi-tracer statistics | Seljak 2009 (arXiv:0807.1770), Abramo & Leonard 2013 (arXiv:1302.5444), DESI combined-tracer BAO (arXiv:2508.05467) |
+| Cross-matching | Budavari & Szalay 2008 (arXiv:0707.1611), NWAY (Salvato et al. 2018, arXiv:1705.10711) |
+| Field-level inference | flip (Ravoux et al. 2025, arXiv:2501.16852), FlowPM (arXiv:2010.11847), pmwd (arXiv:2211.09958), SELFI (Leclercq et al. 2019) |
+| Zoom-in simulations | MUSIC (arXiv:1103.6031), monofonIC (arXiv:2008.09124), HESTIA (arXiv:2008.04926), SIBELIUS (arXiv:2202.04099), GenetIC (arXiv:2006.01841), Nyx (arXiv:1301.4498) |
 
 ---
 

@@ -40,13 +40,22 @@ CORE_COLUMNS: Tuple[ColumnDef, ...] = (
     # Position — float64 for sub-arcsecond precision
     ColumnDef("ra", "f8", "deg", "Right ascension ICRS J2000"),
     ColumnDef("dec", "f8", "deg", "Declination ICRS J2000"),
-    # Redshift
+    # Redshift — required string tag: "spec" | "phot" | "pv" | "none"
     ColumnDef("z", "f4", "", "Best available redshift"),
-    ColumnDef("z_type", "i1", "", "Redshift type: 0=spec, 1=phot, 2=other", required=False),
+    ColumnDef("z_type", "U8", "", "Redshift type: spec | phot | pv | none"),
+    ColumnDef("z_err", "f4", "", "Best-redshift 1-sigma uncertainty"),
     # Identifiers
     ColumnDef("galaxy_id", "i8", "", "Unique ID in oneuniverse"),
     ColumnDef("survey_id", "U32", "", "Source survey name"),
+    # Technical / bookkeeping
+    ColumnDef("_original_row_index", "i8", "",
+              "Row index in the original survey file (for audit/join-back)"),
+    ColumnDef("_healpix32", "i4", "",
+              "HEALPix NESTED index at NSIDE=32 (spatial partition key)"),
 )
+
+# Allowed tags for the required ``z_type`` CORE column.
+Z_TYPE_VALUES: Tuple[str, ...] = ("spec", "phot", "pv", "none")
 
 SPECTROSCOPIC_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("z_spec", "f4", "", "Spectroscopic redshift"),

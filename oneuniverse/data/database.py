@@ -47,6 +47,7 @@ from oneuniverse.data.format_spec import (
     ONEUNIVERSE_SUBDIR,
     DataGeometry,
 )
+from oneuniverse.data.manifest import Manifest
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class OneuniverseDatabase:
         self._max_depth = max_depth
         self._register_global = register_global
         self._loaders: Dict[str, type] = {}
-        self._manifests: Dict[str, dict] = {}
+        self._manifests: Dict[str, "Manifest"] = {}
         self._paths: Dict[str, Path] = {}
         self.scan()
 
@@ -324,13 +325,13 @@ class OneuniverseDatabase:
         name: str,
         survey_type: str,
         relpath: Path,
-        manifest: dict,
+        manifest: Manifest,
     ) -> SurveyConfig:
-        """Build a :class:`SurveyConfig` from a manifest dict."""
-        geometry = manifest.get("geometry", DataGeometry.POINT.value)
-        n_rows = int(manifest.get("n_rows", 0))
-        survey_name_m = manifest.get("survey_name") or name
-        survey_type_m = manifest.get("survey_type") or survey_type
+        """Build a :class:`SurveyConfig` from a typed :class:`Manifest`."""
+        geometry = manifest.geometry.value
+        n_rows = manifest.n_rows
+        survey_name_m = manifest.survey_name or name
+        survey_type_m = manifest.survey_type or survey_type
         description = (
             f"{survey_name_m} ({geometry}, {n_rows:,} rows)"
             if n_rows
@@ -379,10 +380,10 @@ class OneuniverseDatabase:
             raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
         return self._loaders[name]()
 
-    def get_manifest(self, name: str) -> dict:
+    def get_manifest(self, name: str) -> Manifest:
         if name not in self._manifests:
             raise KeyError(name)
-        return dict(self._manifests[name])
+        return self._manifests[name]
 
     def get_path(self, name: str) -> Path:
         if name not in self._paths:
@@ -456,8 +457,8 @@ class OneuniverseDatabase:
             mf = self._manifests[name]
             lines.append(
                 f"  - {name:40s}  [{cfg.survey_type:15s}] "
-                f"{mf.get('geometry', '?'):9s} "
-                f"n_rows={mf.get('n_rows', 0):>10,}"
+                f"{mf.geometry.value:9s} "
+                f"n_rows={mf.n_rows:>10,}"
             )
         return "\n".join(lines)
 
