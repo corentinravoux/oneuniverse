@@ -256,6 +256,15 @@ def build_oneuid_index(
     ]]
     table = table.sort_values(["oneuid", "dataset"]).reset_index(drop=True)
 
+    # Phase 6: compact dtypes. `dataset` and `survey_type` are low-cardinality
+    # strings — categorical saves memory on wide tables and speeds up groupby.
+    # `row_index` fits in int32 unless a single dataset has >2.1 B rows.
+    table["dataset"] = pd.Categorical(table["dataset"])
+    table["survey_type"] = pd.Categorical(table["survey_type"])
+    table["z_type"] = pd.Categorical(table["z_type"])
+    if len(table) and int(table["row_index"].max()) < np.iinfo(np.int32).max:
+        table["row_index"] = table["row_index"].astype(np.int32)
+
     index = OneuidIndex(
         table=table,
         n_unique=res.n_groups,
