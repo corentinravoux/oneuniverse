@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import json
 import logging
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,7 +65,6 @@ logger = logging.getLogger(__name__)
 
 
 ONEUID_DIR = "_oneuid"
-ONEUID_INDEX_FILENAME_LEGACY = "_oneuid_index.parquet"
 ONEUID_MANIFEST_FORMAT_VERSION = 1
 
 
@@ -291,19 +289,6 @@ def load_oneuid_index(
     if new_path.is_file():
         return _read_index(database.root, name)
 
-    # Back-compat: legacy single-file layout.
-    legacy = database.root / ONEUID_INDEX_FILENAME_LEGACY
-    if legacy.is_file() and name == "default":
-        warnings.warn(
-            f"Loading legacy ONEUID index at {legacy}. This path is "
-            "deprecated and will be removed in Phase 6; rebuild the "
-            "index with `database.build_oneuid()` to adopt the new "
-            f"{ONEUID_DIR}/<name>.parquet layout.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _read_legacy_index(legacy)
-
     raise FileNotFoundError(
         f"No ONEUID index '{name}' at {new_path}. "
         f"Run database.build_oneuid(name={name!r})."
@@ -314,9 +299,6 @@ def list_oneuids(database) -> List[str]:
     """Return the names of persisted ONEUID indices under *database*."""
     d = database.root / ONEUID_DIR
     if not d.is_dir():
-        # Legacy fallback.
-        if (database.root / ONEUID_INDEX_FILENAME_LEGACY).is_file():
-            return ["default"]
         return []
     return sorted(p.stem for p in d.glob("*.parquet"))
 
@@ -400,36 +382,6 @@ def _read_index(root: Path, name: str) -> OneuidIndex:
     )
 
 
-def _read_legacy_index(path: Path) -> OneuidIndex:
-    import pyarrow.parquet as pq
-
-    pq_table = pq.read_table(path)
-    df = pq_table.to_pandas()
-    md = pq_table.schema.metadata or {}
-    sky_tol = float(md[b"oneuniverse.sky_tol_arcsec"]) \
-        if b"oneuniverse.sky_tol_arcsec" in md else 1.0
-    dz_val = None
-    if b"oneuniverse.dz_tol" in md:
-        v = md[b"oneuniverse.dz_tol"].decode()
-        dz_val = float(v) if v else None
-    rules = CrossMatchRules(sky_tol_arcsec=sky_tol, dz_tol_default=dz_val)
-
-    # Ensure audit columns present.
-    if "z_type" not in df.columns:
-        df["z_type"] = "none"
-    if "survey_type" not in df.columns:
-        df["survey_type"] = "unknown"
-
-    n_unique = int(df["oneuid"].max()) + 1 if len(df) else 0
-    n_multi = int(
-        (df.groupby("oneuid")["dataset"].nunique() > 1).sum()
-    ) if len(df) else 0
-    return OneuidIndex(
-        table=df, n_unique=n_unique, n_multi=n_multi,
-        name="default", rules=rules,
-    )
-
-
 def _rules_from_manifest(d: dict) -> CrossMatchRules:
     pairs = {
         tuple(k): float(v)
@@ -442,49 +394,6 @@ def _rules_from_manifest(d: dict) -> CrossMatchRules:
         dz_tol_by_ztype=pairs,
         reject_ztype=rejects,
     )
-
-
-# ── Optimised cross-survey loader ────────────────────────────────────────
-
-
-def load_universal(
-    database,
-    columns: Optional[List[str]] = None,
-    datasets: Optional[List[str]] = None,
-    only_multi: bool = False,
-    index: Optional[OneuidIndex] = None,
-) -> pd.DataFrame:
-    """Load and stack rows from selected datasets, with the ``oneuid`` column."""
-    if index is None:
-        index = load_oneuid_index(database)
-
-    table = index.multi_only() if only_multi else index.table
-    if datasets is not None:
-        table = table[table["dataset"].isin(datasets)]
-
-    pieces: List[pd.DataFrame] = []
-    for ds, sub in table.groupby("dataset", sort=False):
-        path = database.get_path(ds)
-        ds_columns = columns
-        if columns is not None:
-            from oneuniverse.data.converter import get_manifest
-            manifest = get_manifest(path)
-            available = {c.name for c in manifest.schema}
-            ds_columns = [c for c in columns if c in available]
-        df = read_oneuniverse_parquet(path, columns=ds_columns or None)
-        sliced = df.iloc[sub["row_index"].to_numpy()].reset_index(drop=True)
-        if columns is not None:
-            for c in columns:
-                if c not in sliced.columns:
-                    sliced[c] = np.nan
-        sliced.insert(0, "oneuid", sub["oneuid"].to_numpy())
-        sliced.insert(1, "dataset", ds)
-        pieces.append(sliced)
-
-    if not pieces:
-        cols = ["oneuid", "dataset"] + (columns or [])
-        return pd.DataFrame(columns=cols)
-    return pd.concat(pieces, ignore_index=True)
 
 
 # ── Tiered query API ─────────────────────────────────────────────────────

@@ -68,7 +68,6 @@ from oneuniverse.data.oneuid import (  # noqa: F401
     OneuidQuery,
     build_oneuid_index,
     load_oneuid_index,
-    load_universal,
 )
 
 
@@ -147,5 +146,4 @@ __all__ = [
     "OneuidQuery",
     "build_oneuid_index",
     "load_oneuid_index",
-    "load_universal",
 ]

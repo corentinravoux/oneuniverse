@@ -449,32 +449,18 @@ class OneuniverseDatabase:
         from oneuniverse.data.oneuid import OneuidQuery
         return OneuidQuery(self, index=index, name=name)
 
-    def load_universal(
-        self,
-        columns: Optional[List[str]] = None,
-        datasets: Optional[List[str]] = None,
-        only_multi: bool = False,
-        index=None,
-    ) -> pd.DataFrame:
-        """Optimised cross-survey loader: returns one row per
-        (oneuid, dataset, original-row) with selected columns.
-
-        See :func:`oneuniverse.data.oneuid.load_universal`.
-        """
-        from oneuniverse.data.oneuid import load_universal as _load_universal
-        return _load_universal(
-            self, columns=columns, datasets=datasets,
-            only_multi=only_multi, index=index,
-        )
-
     def summary(self) -> str:
         """Human-readable summary of all discovered datasets."""
-        if not self._loaders:
+        if not self._entries:
             return f"OneuniverseDatabase @ {self.root}\n  (no datasets found)"
-        lines = [f"OneuniverseDatabase @ {self.root}", f"  {len(self._loaders)} dataset(s):"]
-        for name in sorted(self._loaders):
-            cfg = self._loaders[name].config
-            mf = self._manifests[name]
+        lines = [
+            f"OneuniverseDatabase @ {self.root}",
+            f"  {len(self._entries)} dataset(s):",
+        ]
+        for name in sorted(self._entries):
+            e = self._entries[name]
+            cfg = e.loader.config
+            mf = e.manifest
             lines.append(
                 f"  - {name:40s}  [{cfg.survey_type:15s}] "
                 f"{mf.geometry.value:9s} "
