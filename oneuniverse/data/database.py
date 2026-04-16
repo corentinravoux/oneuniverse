@@ -31,7 +31,7 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 
@@ -47,6 +47,7 @@ from oneuniverse.data.format_spec import (
     ONEUNIVERSE_SUBDIR,
     DataGeometry,
 )
+from oneuniverse.data.dataset_view import DatasetView
 from oneuniverse.data.manifest import Manifest
 
 logger = logging.getLogger(__name__)
@@ -370,11 +371,19 @@ class OneuniverseDatabase:
     def __iter__(self):
         return iter(self._loaders)
 
-    def __getitem__(self, name: str) -> BaseSurveyLoader:
-        return self.get_loader(name)
+    def __getitem__(self, name: str) -> DatasetView:
+        return self.view(name)
+
+    def view(self, name: str) -> DatasetView:
+        """Return a lazy :class:`DatasetView` for *name*."""
+        if name not in self._paths:
+            available = ", ".join(sorted(self._paths)) or "(none)"
+            raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
+        ou_dir = self._paths[name] / ONEUNIVERSE_SUBDIR
+        return DatasetView(ou_dir=ou_dir, manifest=self._manifests[name])
 
     def get_loader(self, name: str) -> BaseSurveyLoader:
-        """Instantiate the dynamic loader for *name*."""
+        """Instantiate the dynamic loader for *name* (legacy path)."""
         if name not in self._loaders:
             available = ", ".join(sorted(self._loaders)) or "(none)"
             raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
@@ -401,33 +410,47 @@ class OneuniverseDatabase:
 
     def build_oneuid(
         self,
-        sky_tol_arcsec: float = 1.0,
-        dz_tol: Optional[float] = 1e-3,
+        sky_tol_arcsec: Optional[float] = None,
+        dz_tol: Optional[float] = None,
+        *,
+        datasets: Optional[Sequence[str]] = None,
+        rules=None,
+        name: str = "default",
         persist: bool = True,
     ):
         """Build the ONEUID index across every discovered dataset.
 
         Returns the :class:`oneuniverse.data.oneuid.OneuidIndex` and, by
-        default, persists it to ``{root}/_oneuid_index.parquet``.
+        default, persists it to ``{root}/_oneuid/<name>.parquet``.
+
+        Pass ``rules=CrossMatchRules(...)`` for the full policy; the
+        ``sky_tol_arcsec`` / ``dz_tol`` args are kept for back-compat.
         """
         from oneuniverse.data.oneuid import build_oneuid_index
         return build_oneuid_index(
-            self, sky_tol_arcsec=sky_tol_arcsec, dz_tol=dz_tol, persist=persist,
+            self,
+            datasets=datasets, rules=rules, name=name, persist=persist,
+            sky_tol_arcsec=sky_tol_arcsec, dz_tol=dz_tol,
         )
 
-    def load_oneuid(self):
-        """Load a previously persisted ONEUID index."""
+    def load_oneuid(self, name: str = "default"):
+        """Load a previously persisted ONEUID index by *name*."""
         from oneuniverse.data.oneuid import load_oneuid_index
-        return load_oneuid_index(self)
+        return load_oneuid_index(self, name=name)
 
-    def oneuid_query(self, index=None) -> "OneuidQuery":
+    def list_oneuids(self) -> List[str]:
+        """Return the names of persisted ONEUID indices."""
+        from oneuniverse.data.oneuid import list_oneuids
+        return list_oneuids(self)
+
+    def oneuid_query(self, index=None, *, name: str = "default") -> "OneuidQuery":
         """Return a tiered :class:`OneuidQuery` over the ONEUID index.
 
         Pass *index* to reuse an in-memory :class:`OneuidIndex`; otherwise
-        the persisted sidecar is loaded from disk.
+        the persisted sidecar *name* is loaded from disk.
         """
         from oneuniverse.data.oneuid import OneuidQuery
-        return OneuidQuery(self, index=index)
+        return OneuidQuery(self, index=index, name=name)
 
     def load_universal(
         self,

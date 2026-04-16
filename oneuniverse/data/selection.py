@@ -66,6 +66,15 @@ class Cone(Selection):
     def mask(self, ra: np.ndarray, dec: np.ndarray, z: np.ndarray) -> np.ndarray:
         return _angular_separation(self.ra, self.dec, ra, dec) <= self.radius
 
+    def healpix_cells(self, nside: int, nest: bool = True) -> np.ndarray:
+        """Return HEALPix cells covering this cone (inclusive)."""
+        import healpy as hp
+        vec = hp.ang2vec(np.radians(90.0 - self.dec), np.radians(self.ra))
+        return hp.query_disc(
+            nside, vec, radius=np.radians(self.radius),
+            inclusive=True, nest=nest,
+        ).astype(np.int64)
+
 
 @dataclass
 class Shell(Selection):
@@ -110,6 +119,38 @@ class SkyPatch(Selection):
             # Wrap-around: e.g. 350 → 10 means (ra >= 350) | (ra <= 10)
             ra_ok = (ra >= self.ra_min) | (ra <= self.ra_max)
         return dec_ok & ra_ok
+
+    def healpix_cells(self, nside: int, nest: bool = True) -> np.ndarray:
+        """Return HEALPix cells covering this rectangular patch (inclusive).
+
+        Handles RA wrap-around by splitting into two polygons when
+        ``ra_min > ra_max``.
+        """
+        import healpy as hp
+
+        def _polygon(ra_lo: float, ra_hi: float) -> np.ndarray:
+            corners = [
+                (ra_lo, self.dec_min),
+                (ra_hi, self.dec_min),
+                (ra_hi, self.dec_max),
+                (ra_lo, self.dec_max),
+            ]
+            vecs = np.array([
+                hp.ang2vec(np.radians(90.0 - d), np.radians(r))
+                for r, d in corners
+            ])
+            return hp.query_polygon(
+                nside, vecs, inclusive=True, nest=nest,
+            )
+
+        if self.ra_min <= self.ra_max:
+            cells = _polygon(self.ra_min, self.ra_max)
+        else:
+            cells = np.concatenate([
+                _polygon(self.ra_min, 360.0),
+                _polygon(0.0, self.ra_max),
+            ])
+        return np.unique(cells).astype(np.int64)
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────

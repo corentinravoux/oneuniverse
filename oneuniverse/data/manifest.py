@@ -73,6 +73,7 @@ class PartitionSpec:
     sha256: str
     size_bytes: int
     stats: PartitionStats = field(default_factory=PartitionStats)
+    healpix_cell: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ def write_manifest(path: Union[str, Path], manifest: Manifest) -> None:
     """Atomically write a manifest to *path* (…/manifest.json)."""
     path = Path(path)
     payload = _to_dict(manifest)
-    text = json.dumps(payload, indent=2, sort_keys=False)
+    text = json.dumps(payload, indent=2, sort_keys=False, default=str)
     atomic_write_text(path, text)
 
 
@@ -208,6 +209,11 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
             sha256=p["sha256"],
             size_bytes=int(p["size_bytes"]),
             stats=PartitionStats(**p.get("stats", {})),
+            healpix_cell=(
+                int(p["healpix_cell"])
+                if p.get("healpix_cell") is not None
+                else None
+            ),
         )
         for p in raw["partitions"]
     ]

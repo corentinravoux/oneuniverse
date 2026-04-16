@@ -172,13 +172,100 @@ Delivers: `OneuidQuery.iter_partial(uids, columns, batch_size)`
 generator. `partial_for` becomes a list-collecting wrapper. Keeps peak
 memory bounded for huge queries.
 
-### Phase 6 — Housekeeping
+### Phase 6 — Housekeeping + `weight/` → `combine/` redesign
 
-Delivers: `DatasetEntry` dataclass consolidating the three parallel
-dicts in `OneuniverseDatabase`; categorical dtype on ONEUID `dataset`
-column; int32 `row_index` where safe; per-database `data_root` (remove
-module-level mutable state from `_config.py`); registry frozen after
-import.
+Runs **after** the `data/` sub-package (Phases 1–5) is finished and
+stable. Two concerns: leftover data-layer cleanups, and a focused
+redesign of the `weight/` sub-package.
+
+**Data-layer cleanups**
+
+- `DatasetEntry` dataclass consolidating the three parallel dicts in
+  `OneuniverseDatabase` (`_loaders`, `_manifests`, `_paths`).
+- Categorical dtype on ONEUID `dataset` column; `int32 row_index`
+  where safe.
+- Per-database `data_root` (remove module-level mutable state from
+  `_config.py`).
+- Registry frozen after import.
+
+**`weight/` → `combine/` redesign**
+
+`weight/` is renamed and restructured so that a *principled weighting
+scheme is the foundation of multi-survey combination* — every user
+gets a sensible default without hand-picking weights per survey.
+
+Rationale:
+
+1. After Phase 4, `weight/crossmatch.py` is dead code (ONEUID owns
+   cross-matching). What remains is weights + combination strategies.
+2. "Weight" as a package name undersells the job: the package is
+   about combining same-object measurements from multiple surveys
+   *through a principled weighting scheme*. The new name `combine`
+   names the action; the weighting scheme stays front-and-centre
+   inside.
+
+Target layout:
+
+```
+oneuniverse/combine/
+├── __init__.py
+├── weights/                  # weighting schemes — the backbone
+│   ├── __init__.py
+│   ├── base.py               # Weight, ProductWeight
+│   ├── ivar.py               # InverseVarianceWeight (canonical default)
+│   ├── fkp.py                # FKPWeight
+│   ├── quality.py            # QualityMaskWeight, ColumnWeight,
+│   │                         # ConstantWeight
+│   └── registry.py           # default_weight_for(survey, ztype)
+├── strategies.py             # ivar_average, hyperparameter, …
+├── catalog.py                # WeightedCatalog (name kept)
+└── measurements.py           # CombinedMeasurements result container
+```
+
+Deliverables:
+
+- Rename package `oneuniverse.weight` → `oneuniverse.combine`;
+  delete `crossmatch.py` (superseded by Phase 4 ONEUID).
+- Split `base.py` by weight family (one file per concept); keep
+  `WeightedCatalog` class name — weighting remains the user-facing
+  contract.
+- New `weights/registry.py` exposing `default_weight_for(survey,
+  ztype)` returning the canonical baseline weight per
+  `(survey_type, ztype)` pair. So a new user writes:
+
+  ```python
+  from oneuniverse.combine import default_weight_for, WeightedCatalog
+  wc = WeightedCatalog(oneuid_index=idx)
+  for name in db:
+      wc.add_weight(name, default_weight_for(db.get_config(name).survey_type,
+                                             ztype="spec"))
+  combined = wc.combine(value_col="z", variance_col="z_err",
+                        strategy="ivar_average")
+  ```
+
+  …instead of hand-picking `InverseVarianceWeight("z_err")` per
+  survey. Overrides remain trivial.
+- `WeightedCatalog` constructor accepts an `OneuidIndex` (no self-
+  built crossmatch; enforced after Phase 4).
+- Rename `CombinedMeasurements` → keep as-is (already well-named).
+- Update `oneuniverse/__init__.py` exports; remove stale
+  `oneuniverse.weight` top-level re-exports.
+
+Open design questions to resolve at plan-writing time:
+
+- Should `default_weight_for` dispatch on `survey_type` alone, on
+  `(survey_type, ztype)`, or be data-driven (read from a small
+  registry table)? Likely the middle option — same survey with
+  `ztype="spec"` vs `"phot"` usually wants different weights.
+- Does `WeightedCatalog` own a `default_scheme` so
+  `wc.fill_defaults(db)` auto-populates weights for every dataset it
+  will consume? (Probably yes — ergonomic win.)
+- Which of the existing `crossmatch.py` pieces, if any, need to
+  survive as utilities? (Expected: none — ONEUID is the sole path.)
+
+Tests: full parity with existing `test_weight.py` (28 cases) plus
+new tests for `default_weight_for` and for `WeightedCatalog` failing
+fast when given raw DataFrames instead of an `OneuidIndex`.
 
 ## Out of scope
 

@@ -141,9 +141,9 @@ class TestConvertSurveyNewParams:
             output_dir=out_dir, overwrite=True,
         )
         m = get_manifest(out_dir)
-        assert m["geometry"] == "point"
-        assert m["n_rows"] == 250
-        assert m["has_objects_table"] is False
+        assert m.geometry.value == "point"
+        assert m.n_rows == 250
+        assert m.extra.get("has_objects_table", False) is False
 
 
 # ── BaseSurveyLoader: columns, force_native ─────────────────────────────
@@ -249,7 +249,7 @@ class TestOneuniverseDatabase:
         )
         key = next(iter(db))
         m = db.get_manifest(key)
-        assert "geometry" in m
+        assert m.geometry is not None
         assert db.get_path(key).is_dir()
 
 

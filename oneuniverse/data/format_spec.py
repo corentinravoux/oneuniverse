@@ -158,6 +158,12 @@ DEFAULT_PARTITION_ROWS: Dict[DataGeometry, int] = {
 
 COMPRESSION: str = "zstd"
 
+# ── HEALPix on-disk partitioning (POINT geometry, Phase 3) ───────────────
+
+HEALPIX_PARTITION_NSIDE: int = 32
+HEALPIX_PARTITION_NEST: bool = True
+HEALPIX_SUBDIR_FMT: str = "healpix32={cell:05d}"  # under data/
+
 ONEUNIVERSE_SUBDIR: str = "oneuniverse"
 MANIFEST_FILENAME: str = "manifest.json"
 OBJECTS_FILENAME: str = "objects.parquet"
