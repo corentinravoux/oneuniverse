@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -278,3 +280,121 @@ class TestWeightedCatalog:
     def test_unknown_survey_raises(self):
         with pytest.raises(KeyError):
             self.wc.add_weight("nope", ConstantWeight(1.0))
+
+    def test_crossmatch_emits_deprecation(self):
+        with pytest.warns(DeprecationWarning, match="from_oneuid"):
+            self.wc.crossmatch(sky_tol_arcsec=5.0, dz_tol=1e-2)
+
+
+# ── WeightedCatalog.from_oneuid (Phase 4) ───────────────────────────────
+
+
+@pytest.fixture
+def _db_with_oneuid(tmp_path):
+    """Tiny DB with two datasets sharing 2 objects — builds ONEUID."""
+    import shutil
+    import uuid
+
+    import healpy as hp
+
+    from oneuniverse.data import OneuniverseDatabase, convert_survey
+    from oneuniverse.data._base_loader import BaseSurveyLoader, SurveyConfig
+    from oneuniverse.data._registry import _REGISTRY
+
+    tag = uuid.uuid4().hex[:8]
+    names = [f"wcat_a_{tag}", f"wcat_b_{tag}"]
+    for name in names:
+        class _Loader(BaseSurveyLoader):
+            config = SurveyConfig(
+                name=name, survey_type="spectroscopic",
+                description=name,
+                data_subpath=f"spectroscopic/{name}",
+                data_filename="synth.csv", data_format="csv",
+            )
+
+            def _load_raw(self, data_path=None, **kwargs):
+                from pathlib import Path
+                return pd.read_csv(Path(data_path) / self.config.data_filename)
+        _REGISTRY[name] = _Loader
+
+    def _make(dir_, ras, decs, zs, vs, verrs):
+        dir_.mkdir(parents=True, exist_ok=True)
+        n = len(ras)
+        ras, decs = np.asarray(ras), np.asarray(decs)
+        df = pd.DataFrame({
+            "ra": ras, "dec": decs, "z": zs,
+            "z_type": ["spec"] * n,
+            "z_err": np.full(n, 1e-4, dtype=np.float32),
+            "galaxy_id": np.arange(n, dtype=np.int64),
+            "survey_id": "synth",
+            "_original_row_index": np.arange(n, dtype=np.int64),
+            "_healpix32": hp.ang2pix(
+                32, np.radians(90.0 - decs), np.radians(ras), nest=True,
+            ).astype(np.int32),
+            "v": vs,
+            "v_err": verrs,
+        })
+        csv = dir_ / "synth.csv"
+        df.to_csv(csv, index=False)
+        return csv
+
+    raw_a = tmp_path / "raw_a"
+    raw_b = tmp_path / "raw_b"
+    _make(raw_a, [10.0, 20.0, 30.0], [-5.0, 0.0, 15.0],
+          [0.10, 0.20, 0.30], [100.0, 200.0, 300.0], [10.0, 20.0, 30.0])
+    _make(raw_b, [10.0 + 1e-5, 30.0 + 1e-5, 50.0],
+          [-5.0 + 1e-5, 15.0 + 1e-5, 5.0],
+          [0.1 + 1e-6, 0.3 + 1e-6, 0.4],
+          [110.0, 290.0, 999.0], [5.0, 50.0, 5.0])
+
+    db_root = tmp_path / "db"
+    for name, raw in zip(names, (raw_a, raw_b)):
+        convert_survey(survey_name=name, raw_path=raw,
+                       output_dir=db_root / f"spectroscopic/{name}",
+                       overwrite=True)
+    db = OneuniverseDatabase(db_root)
+    ds_a = f"spectroscopic_{names[0]}"
+    ds_b = f"spectroscopic_{names[1]}"
+    from oneuniverse.data.oneuid_rules import CrossMatchRules
+    index = db.build_oneuid(
+        rules=CrossMatchRules(sky_tol_arcsec=2.0, dz_tol_default=1e-3),
+    )
+    yield db, index, ds_a, ds_b
+    for name in names:
+        _REGISTRY.pop(name, None)
+    shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+class TestWeightedCatalogFromOneuid:
+    def test_from_oneuid_loads_catalogs(self, _db_with_oneuid):
+        db, index, ds_a, ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        assert set(wc.catalogs) == {ds_a, ds_b}
+        assert wc._match is not None
+        assert wc._match.n_groups == index.n_unique
+        assert wc._match.n_multi == index.n_multi
+
+    def test_from_oneuid_no_deprecation(self, _db_with_oneuid):
+        db, index, _ds_a, _ds_b = _db_with_oneuid
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            WeightedCatalog.from_oneuid(index, db)
+
+    def test_combine_via_from_oneuid(self, _db_with_oneuid):
+        db, index, ds_a, ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        wc.add_weight(ds_a, InverseVarianceWeight("v_err"))
+        wc.add_weight(ds_b, InverseVarianceWeight("v_err"))
+        wc._weighted_long = None  # force rebuild via _ensure_long_table
+        wc._ensure_long_table()
+        long = wc._weighted_long
+        assert "weight" in long.columns
+        assert (long["weight"] > 0).all()
+        # Combine: best_only picks the lowest-variance survey for shared uids.
+        long["v_var"] = long["v_err"] ** 2
+        wc._weighted_long = long
+        out = wc.combine(value_col="v", variance_col="v_var",
+                         strategy="best_only")
+        assert len(out) == index.n_unique
+
+
