@@ -1,5 +1,5 @@
-"""Tests for ONEUID — universal cross-survey identifier and the optimised
-load_universal path."""
+"""Tests for ONEUID — universal cross-survey identifier and the tiered
+OneuidQuery API."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from oneuniverse.data.oneuid import (
     OneuidIndex,
     build_oneuid_index,
     load_oneuid_index,
-    load_universal,
 )
 
 
@@ -215,34 +214,21 @@ class TestDtypeCompaction:
         assert idx.table["row_index"].dtype == np.int32
 
 
-# ── Optimised load_universal ─────────────────────────────────────────────
+# ── Legacy shims gone (Phase 6 Task 3) ───────────────────────────────────
 
 
-class TestLoadUniversal:
-    def test_returns_oneuid_dataset_columns(self, two_overlapping_databases):
-        db = two_overlapping_databases
-        db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
-        df = db.load_universal(columns=["ra", "dec", "z", "value", "value_err"])
-        # 4 (A) + 3 (B) = 7 rows
-        assert len(df) == 7
-        assert set(df.columns) >= {"oneuid", "dataset", "ra", "dec", "z", "value"}
+class TestLegacyShimsGone:
+    def test_load_universal_removed(self):
+        from oneuniverse.data import oneuid as mod
+        assert not hasattr(mod, "load_universal")
 
-    def test_only_multi_filters(self, two_overlapping_databases):
-        db = two_overlapping_databases
-        db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
-        df = db.load_universal(columns=["value", "value_err"], only_multi=True)
-        # 2 multi ONEUIDs × 2 datasets = 4 rows
-        assert len(df) == 4
-        assert df["oneuid"].nunique() == 2
+    def test_database_load_universal_removed(self, two_overlapping_databases):
+        assert not hasattr(two_overlapping_databases, "load_universal")
 
-    def test_dataset_filter(self, two_overlapping_databases):
-        db = two_overlapping_databases
-        db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
-        df = db.load_universal(
-            columns=["value"], datasets=["test_oneuid_a"],
-        )
-        assert set(df["dataset"]) == {"test_oneuid_a"}
-        assert len(df) == 4
+    def test_legacy_filename_constant_removed(self):
+        from oneuniverse.data import oneuid as mod
+        assert not hasattr(mod, "ONEUID_INDEX_FILENAME_LEGACY")
+        assert not hasattr(mod, "_read_legacy_index")
 
     def test_oneuid_query_factory(self, two_overlapping_databases):
         from oneuniverse.data.oneuid import OneuidQuery
@@ -251,24 +237,6 @@ class TestLoadUniversal:
         q = db.oneuid_query()
         assert isinstance(q, OneuidQuery)
         assert q.index.n_unique == 5
-
-    def test_combine_with_weight_subpackage(self, two_overlapping_databases):
-        """Hand off the universal table to oneuniverse.weight.combine_weights."""
-        from oneuniverse.weight import combine_weights
-        db = two_overlapping_databases
-        db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
-        df = db.load_universal(columns=["value", "value_err"])
-        df["variance"] = df["value_err"] ** 2
-        out = combine_weights(
-            df.rename(columns={"oneuid": "universal_id", "dataset": "survey"}),
-            value_col="value", variance_col="variance",
-            strategy="best_only",
-        )
-        # 5 unique universal objects
-        assert len(out) == 5
-        # For multi-survey ones, B's smaller error should win.
-        multi = out.table[out.table["n_surveys"] == 2]
-        assert (multi["variance"] == 9.0).all()  # 3² = 9
 
 
 # ── Tiered query API: selectors × hydration levels ──────────────────────
