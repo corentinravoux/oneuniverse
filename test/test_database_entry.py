@@ -76,6 +76,34 @@ def test_entry_frozen():
         e.loader = object()  # type: ignore[misc]
 
 
+def test_database_data_root_kwarg(tmp_path_clean):
+    root = tmp_path_clean / "db"
+    root.mkdir()
+    data = tmp_path_clean / "data"
+    data.mkdir()
+    db = OneuniverseDatabase(root, data_root=data)
+    assert db.data_root == data.resolve()
+
+
+def test_database_data_root_defaults_to_env(tmp_path_clean, monkeypatch):
+    import os
+    root = tmp_path_clean / "db"
+    root.mkdir()
+    data = tmp_path_clean / "envdata"
+    data.mkdir()
+    monkeypatch.setenv("ONEUNIVERSE_DATA_ROOT", str(data))
+    db = OneuniverseDatabase(root)
+    assert db.data_root == data
+
+
+def test_database_data_root_none(tmp_path_clean, monkeypatch):
+    root = tmp_path_clean / "db"
+    root.mkdir()
+    monkeypatch.delenv("ONEUNIVERSE_DATA_ROOT", raising=False)
+    db = OneuniverseDatabase(root)
+    assert db.data_root is None
+
+
 def test_entry_matches_legacy_accessors(tmp_path_clean):
     name = "ds_entry_synth"
     _register_synth(name)
