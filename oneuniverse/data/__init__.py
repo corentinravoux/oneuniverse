@@ -44,9 +44,25 @@ from oneuniverse.data.converter import (  # noqa: F401
     get_geometry,
     is_converted,
     read_objects_table,
+    write_ouf_dataset,
 )
 from oneuniverse.data.format_spec import DataGeometry  # noqa: F401
+from oneuniverse.data.manifest import (  # noqa: F401
+    FORMAT_VERSION,
+    SCHEMA_VERSION,
+    ColumnSpec,
+    LoaderSpec,
+    Manifest,
+    ManifestValidationError,
+    OriginalFileSpec,
+    PartitionSpec,
+    PartitionStats,
+    PartitioningSpec,
+    read_manifest,
+    write_manifest,
+)
 from oneuniverse.data.database import OneuniverseDatabase  # noqa: F401
+from oneuniverse.data.dataset_view import DatasetView  # noqa: F401
 from oneuniverse.data.oneuid import (  # noqa: F401
     OneuidIndex,
     OneuidQuery,
@@ -110,8 +126,23 @@ __all__ = [
     "get_geometry",
     "is_converted",
     "read_objects_table",
+    "write_ouf_dataset",
     "DataGeometry",
+    # OUF 2.0 typed manifest
+    "FORMAT_VERSION",
+    "SCHEMA_VERSION",
+    "ColumnSpec",
+    "LoaderSpec",
+    "Manifest",
+    "ManifestValidationError",
+    "OriginalFileSpec",
+    "PartitionSpec",
+    "PartitionStats",
+    "PartitioningSpec",
+    "read_manifest",
+    "write_manifest",
     "OneuniverseDatabase",
+    "DatasetView",
     "OneuidIndex",
     "OneuidQuery",
     "build_oneuid_index",

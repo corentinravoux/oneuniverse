@@ -15,7 +15,7 @@ from oneuniverse.data import OneuniverseDatabase, convert_survey
 from oneuniverse.data._base_loader import BaseSurveyLoader, SurveyConfig
 from oneuniverse.data._registry import _REGISTRY
 from oneuniverse.data.oneuid import (
-    ONEUID_INDEX_FILENAME,
+    ONEUID_DIR,
     OneuidIndex,
     build_oneuid_index,
     load_oneuid_index,
@@ -52,14 +52,23 @@ def _register_synth(name: str) -> str:
 
 
 def _make_csv(dir_: Path, ras, decs, zs, extra=None) -> Path:
+    import healpy as hp
     dir_.mkdir(parents=True, exist_ok=True)
     n = len(ras)
+    ras = np.asarray(ras)
+    decs = np.asarray(decs)
     df = pd.DataFrame({
         "ra": ras,
         "dec": decs,
         "z": zs,
+        "z_type": ["spec"] * n,
+        "z_err": np.full(n, 1e-4, dtype=np.float32),
         "galaxy_id": np.arange(n, dtype=np.int64),
         "survey_id": "synth",
+        "_original_row_index": np.arange(n, dtype=np.int64),
+        "_healpix32": hp.ang2pix(
+            32, np.radians(90.0 - decs), np.radians(ras), nest=True,
+        ).astype(np.int32),
     })
     if extra is not None:
         for k, v in extra.items():
@@ -128,8 +137,10 @@ class TestBuildOneuid:
     def test_index_persisted_to_disk(self, two_overlapping_databases):
         db = two_overlapping_databases
         db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
-        f = db.root / ONEUID_INDEX_FILENAME
+        f = db.root / ONEUID_DIR / "default.parquet"
         assert f.is_file()
+        mf = db.root / ONEUID_DIR / "default.manifest.json"
+        assert mf.is_file()
 
     def test_load_oneuid_round_trip(self, two_overlapping_databases):
         db = two_overlapping_databases
@@ -148,7 +159,7 @@ class TestBuildOneuid:
     def test_build_no_persist(self, two_overlapping_databases):
         db = two_overlapping_databases
         db.build_oneuid(persist=False, sky_tol_arcsec=2.0, dz_tol=1e-3)
-        assert not (db.root / ONEUID_INDEX_FILENAME).exists()
+        assert not (db.root / ONEUID_DIR / "default.parquet").exists()
 
 
 # ── Index query API ──────────────────────────────────────────────────────

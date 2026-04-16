@@ -39,6 +39,8 @@ from oneuniverse.data._hashing import hash_file
 from oneuniverse.data.format_spec import (
     COMPRESSION,
     DEFAULT_PARTITION_ROWS,
+    HEALPIX_PARTITION_NSIDE,
+    HEALPIX_SUBDIR_FMT,
     MANIFEST_FILENAME,
     OBJECTS_FILENAME,
     ONEUNIVERSE_SUBDIR,
@@ -136,9 +138,20 @@ def write_ouf_dataset(
         logger.info("  objects.parquet: %d sightlines", len(objects_df))
 
     # Partitions ---------------------------------------------------------
-    partitions = _write_partitions(
-        df, out_dir, partition_rows, compression, stats_builder,
-    )
+    if geometry is DataGeometry.POINT:
+        partitions = _write_partitions_by_healpix(
+            df, out_dir, compression, stats_builder,
+        )
+        if partitioning is None:
+            partitioning = PartitioningSpec(
+                scheme="healpix",
+                column="_healpix32",
+                extra={"nside": HEALPIX_PARTITION_NSIDE, "nest": True},
+            )
+    else:
+        partitions = _write_partitions(
+            df, out_dir, partition_rows, compression, stats_builder,
+        )
 
     # Original-file specs ------------------------------------------------
     original_files: List[OriginalFileSpec] = []
@@ -503,6 +516,53 @@ def _write_partitions(
             "  %s: rows %d–%d (%d rows, %.1f MB)",
             part_name, start, end - 1, end - start,
             part_path.stat().st_size / 1e6,
+        )
+    return specs
+
+
+def _write_partitions_by_healpix(
+    df: pd.DataFrame,
+    out_dir: Path,
+    compression: str,
+    stats_builder=None,
+) -> List[PartitionSpec]:
+    """Write *df* as one Parquet file per ``_healpix32`` cell.
+
+    Layout: ``{out_dir}/data/healpix32={cell:05d}/part_0000.parquet``.
+    ``PartitionSpec.healpix_cell`` records the cell id for later
+    pruning.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    if "_healpix32" not in df.columns:
+        raise ValueError("POINT df missing required _healpix32 column")
+
+    data_root = out_dir / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    specs: List[PartitionSpec] = []
+    for cell, chunk in df.groupby("_healpix32", sort=True):
+        cell = int(cell)
+        cell_dir = data_root / HEALPIX_SUBDIR_FMT.format(cell=cell)
+        cell_dir.mkdir(parents=True, exist_ok=True)
+        rel_name = f"data/{cell_dir.name}/part_0000.parquet"
+        part_path = out_dir / rel_name
+        table = pa.Table.from_pandas(chunk, preserve_index=False)
+        pq.write_table(table, part_path, compression=compression)
+
+        stats = stats_builder(chunk) if stats_builder else PartitionStats()
+        specs.append(PartitionSpec(
+            name=rel_name,
+            n_rows=len(chunk),
+            sha256=hash_file(part_path),
+            size_bytes=part_path.stat().st_size,
+            stats=stats,
+            healpix_cell=cell,
+        ))
+        logger.info(
+            "  %s: %d rows (%.1f MB)",
+            rel_name, len(chunk), part_path.stat().st_size / 1e6,
         )
     return specs
 
