@@ -44,10 +44,12 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Union
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
 
 from oneuniverse.data.converter import read_oneuniverse_parquet
 from oneuniverse.data.oneuid_crossmatch import cross_match_surveys
@@ -554,6 +556,31 @@ class OneuidQuery:
         mask = np.isin(self._uid_arr, uids)
         return self.index.table[mask].reset_index(drop=True)
 
+    def iter_partial(
+        self,
+        oneuids: Iterable[int],
+        columns: Optional[Sequence[str]] = None,
+        datasets: Optional[Sequence[str]] = None,
+        batch_size: Optional[int] = None,
+    ) -> Iterator[pd.DataFrame]:
+        """Stream hydrated rows batch-by-batch.
+
+        Yields one :class:`pandas.DataFrame` per batch of up to
+        ``batch_size`` ONEUIDs. Peak memory is proportional to
+        ``batch_size``, not to ``len(oneuids)``. ``batch_size=None``
+        yields a single batch covering every requested ONEUID.
+        """
+        uids = np.asarray(list(oneuids), dtype=np.int64)
+        if uids.size == 0:
+            return
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError("batch_size must be positive or None")
+        step = batch_size if batch_size is not None else uids.size
+        for start in range(0, uids.size, step):
+            chunk = uids[start:start + step]
+            sub = self.index.table[np.isin(self._uid_arr, chunk)]
+            yield self._hydrate_batch(sub, columns, datasets)
+
     def partial_for(
         self,
         oneuids: Iterable[int],
@@ -561,41 +588,14 @@ class OneuidQuery:
         datasets: Optional[Sequence[str]] = None,
     ) -> pd.DataFrame:
         uids = np.asarray(list(oneuids), dtype=np.int64)
-        sub = self.index.table[np.isin(self._uid_arr, uids)]
-        if datasets is not None:
-            sub = sub[sub["dataset"].isin(datasets)]
-        if sub.empty:
-            extra_cols = list(columns) if columns is not None else []
+        pieces = list(
+            self.iter_partial(uids, columns=columns, datasets=datasets)
+        )
+        if not pieces:
+            extra = list(columns) if columns is not None else []
             return pd.DataFrame(columns=[
-                "oneuid", "dataset", "row_index", "ra", "dec", "z", *extra_cols,
+                "oneuid", "dataset", "row_index", "ra", "dec", "z", *extra,
             ])
-
-        col_arg = list(columns) if columns is not None else None
-        pieces: List[pd.DataFrame] = []
-        for ds, grp in sub.groupby("dataset", sort=False):
-            path = self.database.get_path(ds)
-            ds_col_arg = col_arg
-            if col_arg is not None:
-                manifest = self.database.get_manifest(ds)
-                available = {c.name for c in manifest.schema}
-                ds_col_arg = [c for c in col_arg if c in available]
-            df = read_oneuniverse_parquet(path, columns=ds_col_arg or None)
-            sliced = df.iloc[grp["row_index"].to_numpy()].reset_index(drop=True)
-            sliced = sliced.drop(
-                columns=[c for c in ("ra", "dec", "z") if c in sliced.columns]
-            )
-            if col_arg is not None:
-                for c in col_arg:
-                    if c not in sliced.columns and c not in ("ra", "dec", "z"):
-                        sliced[c] = np.nan
-            sliced.insert(0, "oneuid", grp["oneuid"].to_numpy())
-            sliced.insert(1, "dataset", ds)
-            sliced.insert(2, "row_index", grp["row_index"].to_numpy())
-            sliced.insert(3, "ra", grp["ra"].to_numpy())
-            sliced.insert(4, "dec", grp["dec"].to_numpy())
-            sliced.insert(5, "z", grp["z"].to_numpy())
-            pieces.append(sliced)
-
         return pd.concat(pieces, ignore_index=True)
 
     def full_for(
@@ -603,6 +603,74 @@ class OneuidQuery:
         datasets: Optional[Sequence[str]] = None,
     ) -> pd.DataFrame:
         return self.partial_for(oneuids, columns=None, datasets=datasets)
+
+    # ── Internals ──────────────────────────────────────────────────────
+
+    def _hydrate_batch(
+        self,
+        sub: pd.DataFrame,
+        columns: Optional[Sequence[str]],
+        datasets: Optional[Sequence[str]],
+    ) -> pd.DataFrame:
+        """Hydrate the ``(dataset, row_index)`` pairs in *sub* into one
+        frame via :meth:`DatasetView.scan` with an
+        ``_original_row_index`` pushdown filter.
+        """
+        if datasets is not None:
+            sub = sub[sub["dataset"].isin(list(datasets))]
+        if sub.empty:
+            extra = list(columns) if columns is not None else []
+            return pd.DataFrame(columns=[
+                "oneuid", "dataset", "row_index", "ra", "dec", "z", *extra,
+            ])
+
+        col_arg = list(columns) if columns is not None else None
+        pieces: List[pd.DataFrame] = []
+        for ds_name, grp in sub.groupby("dataset", sort=False):
+            view = self.database[ds_name]
+            available = set(view.columns)
+            want: Optional[List[str]] = None
+            if col_arg is not None:
+                want = [c for c in col_arg if c in available]
+                if "_original_row_index" not in want:
+                    want = want + ["_original_row_index"]
+            rows = grp["row_index"].to_numpy()
+            expr = pc.field("_original_row_index").isin(
+                pa.array(rows, type=pa.int64()),
+            )
+            tbl = view.scan(columns=want, filter=expr)
+            part = tbl.to_pandas()
+            if "_original_row_index" in part.columns:
+                part = (
+                    part.set_index("_original_row_index")
+                    .reindex(rows)
+                    .reset_index()
+                )
+                # Drop only if we added _original_row_index internally
+                # (caller didn't explicitly request it).
+                added_internally = (
+                    col_arg is not None
+                    and "_original_row_index" not in col_arg
+                )
+                if added_internally:
+                    part = part.drop(columns=["_original_row_index"])
+            part = part.drop(
+                columns=[c for c in ("ra", "dec", "z") if c in part.columns],
+                errors="ignore",
+            )
+            if col_arg is not None:
+                for c in col_arg:
+                    if c not in part.columns and c not in ("ra", "dec", "z"):
+                        part[c] = np.nan
+            part.insert(0, "oneuid", grp["oneuid"].to_numpy())
+            part.insert(1, "dataset", ds_name)
+            part.insert(2, "row_index", grp["row_index"].to_numpy())
+            part.insert(3, "ra", grp["ra"].to_numpy())
+            part.insert(4, "dec", grp["dec"].to_numpy())
+            part.insert(5, "z", grp["z"].to_numpy())
+            pieces.append(part)
+
+        return pd.concat(pieces, ignore_index=True)
 
     def concurrences(self, oneuid: int) -> pd.DataFrame:
         return self.index_for([oneuid])
