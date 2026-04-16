@@ -10,9 +10,14 @@ to this registry.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Type
+from types import MappingProxyType
+from typing import Dict, List, Mapping, Optional, Type
 
 _REGISTRY: Dict[str, Type] = {}
+
+#: Read-only public view of the registry. Writes go through
+#: :func:`register` (or directly to ``_REGISTRY`` in tests only).
+REGISTRY: Mapping[str, Type] = MappingProxyType(_REGISTRY)
 
 
 def register(cls):
