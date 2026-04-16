@@ -191,6 +191,30 @@ class TestIndexQueries:
             db.load_oneuid()
 
 
+# ── Compact dtypes (Phase 6 Task 2) ──────────────────────────────────────
+
+
+class TestDtypeCompaction:
+    def test_dataset_column_categorical(self, two_overlapping_databases):
+        db = two_overlapping_databases
+        idx = db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
+        assert idx.table["dataset"].dtype.name == "category"
+        assert idx.table["survey_type"].dtype.name == "category"
+        assert idx.table["z_type"].dtype.name == "category"
+
+    def test_row_index_int32_when_small(self, two_overlapping_databases):
+        db = two_overlapping_databases
+        idx = db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3)
+        assert idx.table["row_index"].dtype == np.int32
+
+    def test_dtypes_survive_disk_roundtrip(self, two_overlapping_databases):
+        db = two_overlapping_databases
+        db.build_oneuid(sky_tol_arcsec=2.0, dz_tol=1e-3, name="compacted")
+        idx = db.load_oneuid(name="compacted")
+        assert idx.table["dataset"].dtype.name == "category"
+        assert idx.table["row_index"].dtype == np.int32
+
+
 # ── Optimised load_universal ─────────────────────────────────────────────
 
 
