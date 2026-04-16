@@ -28,18 +28,35 @@ _ENV_VAR = "ONEUNIVERSE_DATA_ROOT"
 _data_root: Optional[Path] = None
 
 
+def env_data_root() -> Optional[Path]:
+    """Return the data root from :envvar:`ONEUNIVERSE_DATA_ROOT`, or None.
+
+    Prefer this over :func:`get_data_root` in new code — it is the per-
+    database kwarg's natural default and has no mutable module state.
+    """
+    env = os.environ.get(_ENV_VAR)
+    return Path(env) if env else None
+
+
 def get_data_root() -> Optional[Path]:
-    """Return the current data root, or None if unset."""
+    """Return the current data root, or None if unset.
+
+    .. deprecated::
+        Pass ``data_root=`` to :class:`OneuniverseDatabase` instead.
+        Module-level state is retained only for backward compatibility
+        and will be removed in a future major release.
+    """
     if _data_root is not None:
         return _data_root
-    env = os.environ.get(_ENV_VAR)
-    if env:
-        return Path(env)
-    return None
+    return env_data_root()
 
 
 def set_data_root(path: str | Path) -> None:
-    """Override the data root for this session."""
+    """Override the data root for this session.
+
+    .. deprecated::
+        Pass ``data_root=`` to :class:`OneuniverseDatabase` instead.
+    """
     global _data_root
     _data_root = Path(path)
 

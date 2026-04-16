@@ -141,10 +141,16 @@ class OneuniverseDatabase:
         name_from_path: Optional[Callable[[Path], Tuple[str, str]]] = None,
         max_depth: int = 6,
         register_global: bool = False,
+        data_root: Optional[Union[str, Path]] = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         if not self.root.is_dir():
             raise FileNotFoundError(f"Root directory does not exist: {self.root}")
+        from oneuniverse.data._config import env_data_root
+        self.data_root: Optional[Path] = (
+            Path(data_root).expanduser().resolve() if data_root is not None
+            else env_data_root()
+        )
         self._name_from_path = name_from_path or _default_name_from_path
         self._max_depth = max_depth
         self._register_global = register_global
