@@ -36,6 +36,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 import pandas as pd
 
 from oneuniverse.data._base_loader import BaseSurveyLoader, SurveyConfig
+from oneuniverse.data._dataset_entry import DatasetEntry
 from oneuniverse.data._registry import _REGISTRY, register
 from oneuniverse.data.converter import (
     get_manifest,
@@ -147,9 +148,7 @@ class OneuniverseDatabase:
         self._name_from_path = name_from_path or _default_name_from_path
         self._max_depth = max_depth
         self._register_global = register_global
-        self._loaders: Dict[str, type] = {}
-        self._manifests: Dict[str, "Manifest"] = {}
-        self._paths: Dict[str, Path] = {}
+        self._entries: Dict[str, DatasetEntry] = {}
         self.scan()
 
     # ── Construction helpers ─────────────────────────────────────────────
@@ -253,9 +252,7 @@ class OneuniverseDatabase:
 
     def scan(self) -> None:
         """Walk :attr:`root` and (re)build the in-memory registry."""
-        self._loaders.clear()
-        self._manifests.clear()
-        self._paths.clear()
+        self._entries.clear()
 
         for manifest_path in self._find_manifests():
             survey_dir = manifest_path.parent.parent  # …/<survey_dir>/oneuniverse/manifest.json
@@ -279,9 +276,11 @@ class OneuniverseDatabase:
                 manifest=manifest,
             )
             loader_cls = _make_loader_class(name, config, survey_dir)
-            self._loaders[name] = loader_cls
-            self._manifests[name] = manifest
-            self._paths[name] = survey_dir
+            self._entries[name] = DatasetEntry(
+                loader=loader_cls,
+                manifest=manifest,
+                path=survey_dir,
+            )
 
             if self._register_global and name not in _REGISTRY:
                 try:
@@ -291,7 +290,7 @@ class OneuniverseDatabase:
 
         logger.info(
             "OneuniverseDatabase: discovered %d dataset(s) under %s",
-            len(self._loaders),
+            len(self._entries),
             self.root,
         )
 
@@ -352,55 +351,53 @@ class OneuniverseDatabase:
     def list(self, survey_type: Optional[str] = None) -> Dict[str, str]:
         """Return ``{name: description}`` for discovered datasets."""
         out = {}
-        for n, cls in sorted(self._loaders.items()):
-            cfg = cls.config
+        for n, entry in sorted(self._entries.items()):
+            cfg = entry.loader.config
             if survey_type is not None and cfg.survey_type != survey_type:
                 continue
             out[n] = cfg.description
         return out
 
     def types(self) -> List[str]:
-        return sorted({c.config.survey_type for c in self._loaders.values()})
+        return sorted({e.loader.config.survey_type for e in self._entries.values()})
 
     def __contains__(self, name: str) -> bool:
-        return name in self._loaders
+        return name in self._entries
 
     def __len__(self) -> int:
-        return len(self._loaders)
+        return len(self._entries)
 
     def __iter__(self):
-        return iter(self._loaders)
+        return iter(self._entries)
 
     def __getitem__(self, name: str) -> DatasetView:
         return self.view(name)
 
+    def entry(self, name: str) -> DatasetEntry:
+        """Return the full :class:`DatasetEntry` for *name*."""
+        if name not in self._entries:
+            available = ", ".join(sorted(self._entries)) or "(none)"
+            raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
+        return self._entries[name]
+
     def view(self, name: str) -> DatasetView:
         """Return a lazy :class:`DatasetView` for *name*."""
-        if name not in self._paths:
-            available = ", ".join(sorted(self._paths)) or "(none)"
-            raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
-        ou_dir = self._paths[name] / ONEUNIVERSE_SUBDIR
-        return DatasetView(ou_dir=ou_dir, manifest=self._manifests[name])
+        entry = self.entry(name)
+        ou_dir = entry.path / ONEUNIVERSE_SUBDIR
+        return DatasetView(ou_dir=ou_dir, manifest=entry.manifest)
 
     def get_loader(self, name: str) -> BaseSurveyLoader:
         """Instantiate the dynamic loader for *name* (legacy path)."""
-        if name not in self._loaders:
-            available = ", ".join(sorted(self._loaders)) or "(none)"
-            raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
-        return self._loaders[name]()
+        return self.entry(name).loader()
 
     def get_manifest(self, name: str) -> Manifest:
-        if name not in self._manifests:
-            raise KeyError(name)
-        return self._manifests[name]
+        return self.entry(name).manifest
 
     def get_path(self, name: str) -> Path:
-        if name not in self._paths:
-            raise KeyError(name)
-        return self._paths[name]
+        return self.entry(name).path
 
     def get_config(self, name: str) -> SurveyConfig:
-        return self._loaders[name].config
+        return self.entry(name).loader.config
 
     def load(self, name: str, **kwargs) -> pd.DataFrame:
         """Shortcut: instantiate loader and call ``.load(**kwargs)``."""
