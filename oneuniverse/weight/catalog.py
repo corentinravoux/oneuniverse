@@ -3,15 +3,18 @@ oneuniverse.weight.catalog
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 :class:`WeightedCatalog` — high-level facade for cross-survey weighting.
 
-Workflow
---------
-1. Build a :class:`WeightedCatalog` from a dict of survey DataFrames.
-2. Register one or more :class:`Weight` per survey via :meth:`add_weight`.
-3. Call :meth:`crossmatch` to assign ``universal_id`` to each (survey, row).
-4. Call :meth:`combine` to merge concurrences with the chosen strategy.
-5. Query a single object with :meth:`concurrences`.
+Recommended workflow (Phase 4+)
+-------------------------------
+1. Build a ONEUID index once via ``database.build_oneuid()``.
+2. Construct :class:`WeightedCatalog` with :meth:`from_oneuid`.
+3. Register :class:`Weight` per survey via :meth:`add_weight`.
+4. Call :meth:`combine` to merge concurrences.
 
-This is the public entry point of :mod:`oneuniverse.weight`.
+Legacy workflow
+---------------
+:meth:`crossmatch` self-builds a match on raw DataFrames; it is kept
+for back-compat and emits a :class:`DeprecationWarning`. Removal is
+scheduled for Phase 6.
 """
 
 from __future__ import annotations
@@ -23,9 +26,11 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from oneuniverse.data.oneuid import OneuidIndex
+from oneuniverse.data.oneuid_crossmatch import CrossMatchResult
 from oneuniverse.weight.base import Weight
 from oneuniverse.weight.combine import CombinedMeasurements, combine_weights
-from oneuniverse.weight.crossmatch import CrossMatchResult, cross_match_surveys
+from oneuniverse.weight.crossmatch import cross_match_surveys
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,36 @@ class WeightedCatalog:
             out *= w(df)
         return out
 
+    # ── Constructors ────────────────────────────────────────────────────
+
+    @classmethod
+    def from_oneuid(
+        cls, index: OneuidIndex, database,
+    ) -> "WeightedCatalog":
+        """Build a :class:`WeightedCatalog` from a prebuilt ONEUID index.
+
+        The catalog is already keyed on ``index.oneuid``; no self-managed
+        cross-match runs. Register weights with :meth:`add_weight` then
+        call :meth:`combine`.
+        """
+        from oneuniverse.data.converter import read_oneuniverse_parquet
+
+        datasets = index.datasets()
+        catalogs: Dict[str, pd.DataFrame] = {
+            ds: read_oneuniverse_parquet(database.get_path(ds))
+            for ds in datasets
+        }
+        wc = cls(catalogs)
+        match_tbl = index.table.rename(
+            columns={"oneuid": "universal_id", "dataset": "survey"},
+        ).copy()
+        wc._match = CrossMatchResult(
+            table=match_tbl,
+            n_groups=index.n_unique,
+            n_multi=index.n_multi,
+        )
+        return wc
+
     # ── Pipeline ────────────────────────────────────────────────────────
 
     def crossmatch(
@@ -79,7 +114,20 @@ class WeightedCatalog:
         sky_tol_arcsec: float = 1.0,
         dz_tol: Optional[float] = 1e-3,
     ) -> CrossMatchResult:
-        """Run the sky+z cross-match across all registered surveys."""
+        """Run the sky+z cross-match across all registered surveys.
+
+        .. deprecated:: Phase 4
+            Use :meth:`from_oneuid` with an index built via
+            ``database.build_oneuid()``. Removal scheduled for Phase 6.
+        """
+        warnings.warn(
+            "WeightedCatalog.crossmatch() is deprecated. Build a ONEUID "
+            "index with `database.build_oneuid()` and use "
+            "`WeightedCatalog.from_oneuid(index, database)` instead. "
+            "This path will be removed in Phase 6.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._match = cross_match_surveys(
             self.catalogs,
             sky_tol_arcsec=sky_tol_arcsec,
@@ -118,8 +166,7 @@ class WeightedCatalog:
         See :func:`oneuniverse.weight.combine.combine_weights` for the
         strategy semantics.
         """
-        if self._weighted_long is None:
-            self.crossmatch()
+        self._ensure_long_table()
         return combine_weights(
             self._weighted_long,
             value_col=value_col,
@@ -133,8 +180,7 @@ class WeightedCatalog:
     def concurrences(self, universal_id: int) -> pd.DataFrame:
         """Return all rows (one per survey) for a given universal object,
         with the per-survey weight already applied as a ``weight`` column."""
-        if self._weighted_long is None:
-            self.crossmatch()
+        self._ensure_long_table()
         return self._weighted_long[
             self._weighted_long["universal_id"] == universal_id
         ].reset_index(drop=True)
@@ -148,6 +194,19 @@ class WeightedCatalog:
         if self._match is None:
             self.crossmatch()
         return self._match.n_multi
+
+    # ── Internal ────────────────────────────────────────────────────────
+
+    def _ensure_long_table(self) -> None:
+        """Build ``_weighted_long`` lazily — from an existing match when
+        one is present (e.g. set by :meth:`from_oneuid`), otherwise by
+        triggering :meth:`crossmatch`."""
+        if self._weighted_long is not None:
+            return
+        if self._match is None:
+            self.crossmatch()
+            return
+        self._weighted_long = self._build_long_table()
 
     def __repr__(self) -> str:
         n = ", ".join(f"{k}={len(v)}" for k, v in self.catalogs.items())
