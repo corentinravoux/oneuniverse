@@ -1,4 +1,4 @@
-"""Tests for oneuniverse.weight — base weights, cross-match, combine, catalog."""
+"""Tests for oneuniverse.combine — base weights, combine, catalog."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from oneuniverse.weight import (
+from oneuniverse.combine import (
     ColumnWeight,
     ConstantWeight,
     FKPWeight,
@@ -17,8 +17,9 @@ from oneuniverse.weight import (
     QualityMaskWeight,
     WeightedCatalog,
     combine_weights,
-    cross_match_surveys,
 )
+from oneuniverse.data.oneuid_crossmatch import cross_match_surveys
+from oneuniverse.data.oneuid_rules import CrossMatchRules
 
 
 # ── Base weights ─────────────────────────────────────────────────────────
@@ -119,33 +120,36 @@ def _toy_two_surveys():
 class TestCrossMatch:
     def test_basic_match_counts(self):
         cats = _toy_two_surveys()
-        res = cross_match_surveys(cats, sky_tol_arcsec=5.0, dz_tol=1e-2)
+        rules = CrossMatchRules(sky_tol_arcsec=5.0, dz_tol_default=1e-2)
+        res = cross_match_surveys(cats, rules)
         # 3 + 3 = 6 input rows, 4 unique groups (2 shared + A[1] alone + B[2] alone)
         assert len(res.table) == 6
         assert res.n_groups == 4
         assert res.n_multi == 2
 
     def test_multi_survey_subset(self):
-        res = cross_match_surveys(_toy_two_surveys(), sky_tol_arcsec=5.0)
+        rules = CrossMatchRules(sky_tol_arcsec=5.0, dz_tol_default=None)
+        res = cross_match_surveys(_toy_two_surveys(), rules)
         ms = res.multi_survey()
         assert set(ms["survey"]) == {"A", "B"}
         assert len(ms) == 4  # 2 universal × 2 surveys
 
     def test_dz_cut_blocks_match(self):
         # Tight Δz makes the second pair fail to merge.
-        res = cross_match_surveys(
-            _toy_two_surveys(), sky_tol_arcsec=5.0, dz_tol=1e-5,
-        )
+        rules = CrossMatchRules(sky_tol_arcsec=5.0, dz_tol_default=1e-5)
+        res = cross_match_surveys(_toy_two_surveys(), rules)
         # Both Δz are 1e-4 → no merges; 6 rows, 6 groups
         assert res.n_groups == 6
         assert res.n_multi == 0
 
     def test_missing_columns_raises(self):
+        rules = CrossMatchRules(sky_tol_arcsec=5.0)
         with pytest.raises(KeyError):
-            cross_match_surveys({"X": pd.DataFrame({"a": [1]})})
+            cross_match_surveys({"X": pd.DataFrame({"a": [1]})}, rules)
 
     def test_group_query(self):
-        res = cross_match_surveys(_toy_two_surveys(), sky_tol_arcsec=5.0)
+        rules = CrossMatchRules(sky_tol_arcsec=5.0, dz_tol_default=None)
+        res = cross_match_surveys(_toy_two_surveys(), rules)
         ms_ids = res.multi_survey()["universal_id"].unique()
         for uid in ms_ids:
             grp = res.group(int(uid))
@@ -238,10 +242,10 @@ class TestCombineWeights:
         assert np.isclose(t.loc[0, "value"], 110.0)
 
 
-# ── WeightedCatalog facade ───────────────────────────────────────────────
+# ── WeightedCatalog basics (no cross-match) ─────────────────────────────
 
 
-class TestWeightedCatalog:
+class TestWeightedCatalogBasics:
     def setup_method(self):
         self.cats = _toy_two_surveys()
         self.wc = WeightedCatalog(self.cats)
@@ -253,37 +257,14 @@ class TestWeightedCatalog:
         assert wA.shape == (3,)
         assert np.isclose(wA[0], 1.0 / 100.0)
 
-    def test_crossmatch_populates_long_table(self):
-        res = self.wc.crossmatch(sky_tol_arcsec=5.0, dz_tol=1e-2)
-        assert res.n_multi == 2
-        assert self.wc._weighted_long is not None
-        assert "weight" in self.wc._weighted_long.columns
-
-    def test_concurrences_returns_all_surveys(self):
-        self.wc.crossmatch(sky_tol_arcsec=5.0, dz_tol=1e-2)
-        ms = self.wc._match.multi_survey()
-        uid = int(ms["universal_id"].iloc[0])
-        rows = self.wc.concurrences(uid)
-        assert set(rows["survey"]) == {"A", "B"}
-        # weight column carries the registered IVW values
-        assert (rows["weight"] > 0).all()
-
-    def test_combine_through_facade(self):
-        self.wc.crossmatch(sky_tol_arcsec=5.0, dz_tol=1e-2)
-        # Add a fake variance column on the long table by joining v_err².
-        self.wc._weighted_long["v_var"] = self.wc._weighted_long["v_err"] ** 2
-        combined = self.wc.combine(
-            value_col="v", variance_col="v_var", strategy="best_only",
-        )
-        assert len(combined) == self.wc.n_universal()
-
     def test_unknown_survey_raises(self):
         with pytest.raises(KeyError):
             self.wc.add_weight("nope", ConstantWeight(1.0))
 
-    def test_crossmatch_emits_deprecation(self):
-        with pytest.warns(DeprecationWarning, match="from_oneuid"):
-            self.wc.crossmatch(sky_tol_arcsec=5.0, dz_tol=1e-2)
+    def test_combine_without_match_raises(self):
+        with pytest.raises(RuntimeError, match="from_oneuid"):
+            self.wc.combine(value_col="v", variance_col="v_err",
+                            strategy="best_only")
 
 
 # ── WeightedCatalog.from_oneuid (Phase 4) ───────────────────────────────

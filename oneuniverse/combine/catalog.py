@@ -1,36 +1,28 @@
 """
-oneuniverse.weight.catalog
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+oneuniverse.combine.catalog
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :class:`WeightedCatalog` — high-level facade for cross-survey weighting.
 
-Recommended workflow (Phase 4+)
--------------------------------
+Workflow
+--------
 1. Build a ONEUID index once via ``database.build_oneuid()``.
 2. Construct :class:`WeightedCatalog` with :meth:`from_oneuid`.
 3. Register :class:`Weight` per survey via :meth:`add_weight`.
 4. Call :meth:`combine` to merge concurrences.
-
-Legacy workflow
----------------
-:meth:`crossmatch` self-builds a match on raw DataFrames; it is kept
-for back-compat and emits a :class:`DeprecationWarning`. Removal is
-scheduled for Phase 6.
 """
-
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from oneuniverse.combine.measurements import CombinedMeasurements
+from oneuniverse.combine.strategies import combine_weights
+from oneuniverse.combine.weights.base import Weight
 from oneuniverse.data.oneuid import OneuidIndex
 from oneuniverse.data.oneuid_crossmatch import CrossMatchResult
-from oneuniverse.weight.base import Weight
-from oneuniverse.weight.combine import CombinedMeasurements, combine_weights
-from oneuniverse.weight.crossmatch import cross_match_surveys
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +49,6 @@ class WeightedCatalog:
         self._match: Optional[CrossMatchResult] = None
         self._weighted_long: Optional[pd.DataFrame] = None
 
-    # ── Weight registration ─────────────────────────────────────────────
-
     def add_weight(self, survey: str, weight: Weight) -> "WeightedCatalog":
         """Attach a :class:`Weight` to *survey*.  Multiple weights are multiplied."""
         if survey not in self.catalogs:
@@ -76,8 +66,6 @@ class WeightedCatalog:
         for w in ws:
             out *= w(df)
         return out
-
-    # ── Constructors ────────────────────────────────────────────────────
 
     @classmethod
     def from_oneuid(
@@ -107,42 +95,13 @@ class WeightedCatalog:
         )
         return wc
 
-    # ── Pipeline ────────────────────────────────────────────────────────
-
-    def crossmatch(
-        self,
-        sky_tol_arcsec: float = 1.0,
-        dz_tol: Optional[float] = 1e-3,
-    ) -> CrossMatchResult:
-        """Run the sky+z cross-match across all registered surveys.
-
-        .. deprecated:: Phase 4
-            Use :meth:`from_oneuid` with an index built via
-            ``database.build_oneuid()``. Removal scheduled for Phase 6.
-        """
-        warnings.warn(
-            "WeightedCatalog.crossmatch() is deprecated. Build a ONEUID "
-            "index with `database.build_oneuid()` and use "
-            "`WeightedCatalog.from_oneuid(index, database)` instead. "
-            "This path will be removed in Phase 6.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._match = cross_match_surveys(
-            self.catalogs,
-            sky_tol_arcsec=sky_tol_arcsec,
-            dz_tol=dz_tol,
-        )
-        # Pre-build the long table augmented with the user's weights and the
-        # original observable columns, so combine() can be called many times
-        # without re-running the match.
-        self._weighted_long = self._build_long_table()
-        return self._match
-
     def _build_long_table(self) -> pd.DataFrame:
         """Long-format table: one row per (universal_id, survey, original-row)."""
         if self._match is None:
-            raise RuntimeError("Call .crossmatch() first")
+            raise RuntimeError(
+                "WeightedCatalog has no cross-match. Build via "
+                "WeightedCatalog.from_oneuid(index, database)."
+            )
         parts = []
         for survey, df in self.catalogs.items():
             sub = self._match.table[self._match.table["survey"] == survey]
@@ -163,8 +122,7 @@ class WeightedCatalog:
     ) -> CombinedMeasurements:
         """Combine concurrences into one row per universal object.
 
-        See :func:`oneuniverse.weight.combine.combine_weights` for the
-        strategy semantics.
+        See :func:`oneuniverse.combine.strategies.combine_weights`.
         """
         self._ensure_long_table()
         return combine_weights(
@@ -175,11 +133,9 @@ class WeightedCatalog:
             survey_alpha=survey_alpha,
         )
 
-    # ── Query API ───────────────────────────────────────────────────────
-
     def concurrences(self, universal_id: int) -> pd.DataFrame:
-        """Return all rows (one per survey) for a given universal object,
-        with the per-survey weight already applied as a ``weight`` column."""
+        """All rows (one per survey) for a universal object, with the
+        per-survey weight applied as a ``weight`` column."""
         self._ensure_long_table()
         return self._weighted_long[
             self._weighted_long["universal_id"] == universal_id
@@ -187,25 +143,22 @@ class WeightedCatalog:
 
     def n_universal(self) -> int:
         if self._match is None:
-            self.crossmatch()
+            raise RuntimeError("no cross-match; use from_oneuid()")
         return self._match.n_groups
 
     def n_multi_survey(self) -> int:
         if self._match is None:
-            self.crossmatch()
+            raise RuntimeError("no cross-match; use from_oneuid()")
         return self._match.n_multi
 
-    # ── Internal ────────────────────────────────────────────────────────
-
     def _ensure_long_table(self) -> None:
-        """Build ``_weighted_long`` lazily — from an existing match when
-        one is present (e.g. set by :meth:`from_oneuid`), otherwise by
-        triggering :meth:`crossmatch`."""
         if self._weighted_long is not None:
             return
         if self._match is None:
-            self.crossmatch()
-            return
+            raise RuntimeError(
+                "WeightedCatalog has no cross-match. Build via "
+                "WeightedCatalog.from_oneuid(index, database)."
+            )
         self._weighted_long = self._build_long_table()
 
     def __repr__(self) -> str:
