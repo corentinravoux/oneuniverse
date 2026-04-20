@@ -1,6 +1,6 @@
 """
-oneuniverse.weight.combine
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+oneuniverse.combine.strategies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Combine weights for a single universal object measured by several surveys.
 
 Strategies (research summary in ``docs/weight_normalization_research.md``):
@@ -12,51 +12,25 @@ Strategies (research summary in ``docs/weight_normalization_research.md``):
   on a *common* observable.  Valid if errors are independent.
 - ``"hyperparameter"`` — Lahav (2000) / Hobson, Bridle & Lahav (2002)
   hyperparameters: each survey gets a multiplicative ``α_s`` (default 1.0)
-  applied as ``w_{s,i} → α_s · w_{s,i}``.  This is the *only*
-  statistically clean way to fold a subjective survey-priority knob into the
-  weights without corrupting per-survey error bars.
+  applied as ``w_{s,i} → α_s · w_{s,i}``.
 - ``"unit_mean"`` — rescale each survey's weights by their per-survey mean.
   Used in clustering pipelines (``pypower``); **destroys the 1/σ² scale** so
   it must NOT be fed to a Gaussian likelihood.
 """
-
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from oneuniverse.combine.measurements import CombinedMeasurements
+
 logger = logging.getLogger(__name__)
 
 
 _STRATEGIES = ("best_only", "ivar_average", "hyperparameter", "unit_mean")
-
-
-@dataclass
-class CombinedMeasurements:
-    """Output of :func:`combine_weights`.
-
-    Attributes
-    ----------
-    table : pd.DataFrame
-        One row per universal object, columns:
-        ``universal_id``, ``value``, ``variance``, ``weight``,
-        ``n_surveys``, ``surveys`` (comma-separated), ``strategy``.
-    strategy : str
-    """
-    table: pd.DataFrame
-    strategy: str
-
-    def __len__(self) -> int:
-        return len(self.table)
-
-    def __repr__(self) -> str:
-        return (
-            f"<CombinedMeasurements n={len(self)} strategy={self.strategy!r}>"
-        )
 
 
 def combine_weights(
@@ -76,9 +50,7 @@ def combine_weights(
     matched : DataFrame
         Long-format table with one row per (universal_id, survey) entry.
         Must contain at minimum ``universal_col``, ``survey_col``,
-        ``value_col``, ``variance_col``.  Typically built by
-        :func:`oneuniverse.weight.crossmatch.cross_match_surveys` plus a join
-        on the original catalogs.
+        ``value_col``, ``variance_col``.
     value_col : str
         Name of the homogenised observable (e.g. ``"v_pec"``, ``"z"``,
         ``"mu"``).  All surveys must already be on the *same* scale.
@@ -116,7 +88,6 @@ def combine_weights(
         value_col: "value",
         variance_col: "variance",
     })
-    # Drop rows with non-positive or NaN variance.
     good = np.isfinite(df["variance"]) & (df["variance"] > 0) & np.isfinite(df["value"])
     n_dropped = int((~good).sum())
     if n_dropped:
@@ -125,7 +96,6 @@ def combine_weights(
 
     df["weight"] = 1.0 / df["variance"]
 
-    # Apply hyperparameters before any per-object reduction.
     if strategy == "hyperparameter" and survey_alpha:
         alpha = df["survey"].map(lambda s: float(survey_alpha.get(s, 1.0)))
         df["weight"] = df["weight"] * alpha.to_numpy()
@@ -149,7 +119,6 @@ def combine_weights(
                 "surveys": ",".join(surveys),
             })
         else:
-            # All other strategies use a weighted mean.
             w = grp["weight"].to_numpy()
             v = grp["value"].to_numpy()
             wsum = w.sum()
@@ -158,7 +127,7 @@ def combine_weights(
             value = float((w * v).sum() / wsum)
             if strategy == "ivar_average" or strategy == "hyperparameter":
                 variance = float(1.0 / wsum)
-            else:  # unit_mean — variance is no longer well-defined
+            else:
                 variance = float(np.nan)
             out_rows.append({
                 "universal_id": uid,

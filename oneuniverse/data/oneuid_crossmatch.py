@@ -3,9 +3,7 @@ oneuniverse.data.oneuid_crossmatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Cross-match surveys driven by a :class:`CrossMatchRules` policy.
 
-This is the *canonical* home for the cross-matcher — Phase 4. The legacy
-entry point lives in :mod:`oneuniverse.weight.crossmatch` as a thin shim
-during the transition; Phase 6 deletes it.
+This is the canonical home for the cross-matcher (Phase 4+).
 
 The matcher is z-type aware: per-row ``z_type`` drives both the Δz
 tolerance (via :meth:`CrossMatchRules.dz_tol_for`) and the reject list
