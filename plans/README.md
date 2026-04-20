@@ -22,4 +22,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 3 | HEALPix spatial partitioning            | **complete (2026-04-15, 156/156 tests green)** |
 | 4 | Unified ONEUID (z-type rules, subsets, named indices) | **complete (2026-04-16, 190/190 tests green)** |
 | 5 | Streaming hydration                     | **complete (2026-04-16, 198/198 tests green)** |
-| 6 | Housekeeping + `weight/` → `combine/` redesign | pending     |
+| 6 | Housekeeping + `weight/` → `combine/` redesign | **complete (2026-04-20, 211/211 tests green)** |
