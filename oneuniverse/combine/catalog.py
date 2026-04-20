@@ -21,6 +21,7 @@ import pandas as pd
 from oneuniverse.combine.measurements import CombinedMeasurements
 from oneuniverse.combine.strategies import combine_weights
 from oneuniverse.combine.weights.base import Weight
+from oneuniverse.combine.weights.registry import default_weight_for
 from oneuniverse.data.oneuid import OneuidIndex
 from oneuniverse.data.oneuid_crossmatch import CrossMatchResult
 
@@ -54,6 +55,48 @@ class WeightedCatalog:
         if survey not in self.catalogs:
             raise KeyError(f"Unknown survey '{survey}'")
         self._weights[survey].append(weight)
+        return self
+
+    def fill_defaults(
+        self,
+        database,
+        z_type: str = "spec",
+        *,
+        skip_unknown: bool = False,
+    ) -> "WeightedCatalog":
+        """Auto-register :func:`default_weight_for` for every catalog.
+
+        For each survey registered in ``self.catalogs``, looks up
+        ``survey_type`` via ``database.entry(survey).loader.config`` and
+        attaches the canonical default weight for
+        ``(survey_type, z_type)``. Surveys already carrying a weight are
+        left untouched.
+
+        Parameters
+        ----------
+        database
+            :class:`~oneuniverse.data.database.OneuniverseDatabase`
+            instance that provides ``entry(name)`` lookups.
+        z_type
+            Redshift-type key for :func:`default_weight_for` (``"spec"``,
+            ``"phot"``, ``"pec"``).
+        skip_unknown
+            If ``True``, silently skip surveys whose ``(survey_type,
+            z_type)`` pair has no registered default. Default ``False``
+            re-raises the underlying :class:`KeyError`.
+        """
+        for survey in self.catalogs:
+            if self._weights[survey]:
+                continue
+            entry = database.entry(survey)
+            survey_type = entry.loader.config.survey_type
+            try:
+                w = default_weight_for(survey_type, z_type)
+            except KeyError:
+                if skip_unknown:
+                    continue
+                raise
+            self._weights[survey].append(w)
         return self
 
     def total_weight(self, survey: str) -> np.ndarray:

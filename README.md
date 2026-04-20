@@ -517,12 +517,13 @@ df   = q.partial_for(uids, columns=["z_spec_err"])  # hydration: selected column
 ### Per-survey weighting
 
 ```python
-from oneuniverse.weight import WeightedCatalog, InverseVarianceWeight, FKPWeight
+from oneuniverse.combine import WeightedCatalog, default_weight_for
+from oneuniverse.data.oneuid_rules import CrossMatchRules
 
-wc = WeightedCatalog({"eboss": eboss_df, "desi": desi_df})
-wc.add_weight("eboss", InverseVarianceWeight("z_spec_err"))
-wc.add_weight("desi",  InverseVarianceWeight("z_spec_err"))
-match = wc.crossmatch(sky_tol_arcsec=2.0, dz_tol=5e-3)
+index = db.build_oneuid(rules=CrossMatchRules(sky_tol_arcsec=2.0, dz_tol_default=5e-3))
+wc = WeightedCatalog.from_oneuid(index, db)
+wc.add_weight("eboss", default_weight_for("spectroscopic", "spec"))
+wc.add_weight("desi",  default_weight_for("spectroscopic", "spec"))
 combined = wc.combine(value_col="z", variance_col="z_var", strategy="best_only")
 ```
 

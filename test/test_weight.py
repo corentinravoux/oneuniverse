@@ -378,4 +378,35 @@ class TestWeightedCatalogFromOneuid:
                          strategy="best_only")
         assert len(out) == index.n_unique
 
+    def test_fill_defaults_registers_ivar_for_spec(self, _db_with_oneuid):
+        db, index, ds_a, ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        wc.fill_defaults(db, z_type="spec")
+        assert len(wc._weights[ds_a]) == 1
+        assert len(wc._weights[ds_b]) == 1
+        assert isinstance(wc._weights[ds_a][0], InverseVarianceWeight)
+        assert wc._weights[ds_a][0].error_column == "z_spec_err"
+
+    def test_fill_defaults_preserves_existing_weights(self, _db_with_oneuid):
+        db, index, ds_a, ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        custom = InverseVarianceWeight("v_err")
+        wc.add_weight(ds_a, custom)
+        wc.fill_defaults(db, z_type="spec")
+        assert wc._weights[ds_a] == [custom]
+        assert len(wc._weights[ds_b]) == 1
+
+    def test_fill_defaults_skip_unknown(self, _db_with_oneuid):
+        db, index, ds_a, ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        wc.fill_defaults(db, z_type="zzz", skip_unknown=True)
+        assert wc._weights[ds_a] == []
+        assert wc._weights[ds_b] == []
+
+    def test_fill_defaults_unknown_pair_raises(self, _db_with_oneuid):
+        db, index, _ds_a, _ds_b = _db_with_oneuid
+        wc = WeightedCatalog.from_oneuid(index, db)
+        with pytest.raises(KeyError):
+            wc.fill_defaults(db, z_type="zzz")
+
 
