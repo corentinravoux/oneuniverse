@@ -86,6 +86,15 @@ class DataGeometry(str, Enum):
     Tables: part_*.parquet (per-pixel data).
     No per-object redshift."""
 
+    LIGHTCURVE = "lightcurve"
+    """One row per epoch, grouped by object_id.
+    Tables: objects.parquet (per-source metadata, one row per object:
+        object_id, ra, dec, z, n_epochs, mjd_min, mjd_max, _healpix32)
+          + part_*.parquet (per-epoch photometry: object_id, mjd,
+        filter, flux, flux_err, flag).
+    Structural twin of SIGHTLINE, time-indexed instead of wavelength-indexed.
+    Example: LSST/ZTF supernovae, variable stars."""
+
 
 # ── Format version ───────────────────────────────────────────────────────
 
@@ -132,6 +141,28 @@ HEALPIX_REQUIRED_COLUMNS: Tuple[str, ...] = (
     "value",            # float32 or float64, the map quantity
 )
 
+LIGHTCURVE_OBJECT_REQUIRED_COLUMNS: Tuple[str, ...] = (
+    "object_id",        # int64, unique per source
+    "ra",               # float64, degrees (ICRS)
+    "dec",              # float64, degrees (ICRS)
+    "z",                # float64, source redshift
+    "z_type",           # string
+    "z_err",            # float64
+    "n_epochs",         # int32
+    "mjd_min",          # float64
+    "mjd_max",          # float64
+    "_healpix32",       # int64
+)
+
+LIGHTCURVE_DATA_REQUIRED_COLUMNS: Tuple[str, ...] = (
+    "object_id",        # int64, foreign key to objects table
+    "mjd",              # float64
+    "filter",           # string (e.g. "g", "r", "i", "z")
+    "flux",             # float64
+    "flux_err",         # float64
+    "flag",             # int32 / uint8 quality flag
+)
+
 GEOMETRY_COLUMNS: Dict[DataGeometry, Dict[str, Tuple[str, ...]]] = {
     DataGeometry.POINT: {
         "data": POINT_REQUIRED_COLUMNS,
@@ -143,6 +174,10 @@ GEOMETRY_COLUMNS: Dict[DataGeometry, Dict[str, Tuple[str, ...]]] = {
     DataGeometry.HEALPIX: {
         "data": HEALPIX_REQUIRED_COLUMNS,
     },
+    DataGeometry.LIGHTCURVE: {
+        "objects": LIGHTCURVE_OBJECT_REQUIRED_COLUMNS,
+        "data": LIGHTCURVE_DATA_REQUIRED_COLUMNS,
+    },
 }
 
 
@@ -151,9 +186,10 @@ GEOMETRY_COLUMNS: Dict[DataGeometry, Dict[str, Tuple[str, ...]]] = {
 
 # Row counts per partition file, tuned per geometry for ~20–30 MB files.
 DEFAULT_PARTITION_ROWS: Dict[DataGeometry, int] = {
-    DataGeometry.POINT:     200_000,    # ~25 scalar columns → ~20 MB
-    DataGeometry.SIGHTLINE: 2_000_000,  # ~4 float columns per pixel → ~25 MB
-    DataGeometry.HEALPIX:   500_000,    # ~2-3 float columns per pixel → ~10 MB
+    DataGeometry.POINT:      200_000,    # ~25 scalar columns → ~20 MB
+    DataGeometry.SIGHTLINE:  2_000_000,  # ~4 float columns per pixel → ~25 MB
+    DataGeometry.HEALPIX:    500_000,    # ~2-3 float columns per pixel → ~10 MB
+    DataGeometry.LIGHTCURVE: 1_000_000,  # ~6 float columns per epoch → ~20 MB
 }
 
 COMPRESSION: str = "zstd"
