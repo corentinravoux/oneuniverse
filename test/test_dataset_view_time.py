@@ -104,3 +104,97 @@ def test_t_range_outside_any_partition_returns_empty(tmp_path):
         columns=["t_obs"], t_range=(59000.0, 59500.0),
     )
     assert len(out) == 0
+
+
+def _point_df_with_t_obs(n: int, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({
+        "ra":  rng.uniform(0.0, 360.0, n),
+        "dec": rng.uniform(-60.0, 60.0, n),
+        "z":   rng.uniform(0.01, 0.3, n),
+        "z_type": ["spec"] * n,
+        "z_err":  rng.uniform(1e-4, 1e-3, n),
+        "galaxy_id": np.arange(n, dtype=np.int64),
+        "survey_id": [f"syn{i:05d}" for i in range(n)],
+        "_original_row_index": np.arange(n, dtype=np.int64),
+        "t_obs": rng.uniform(58000.0, 60000.0, n),
+    })
+
+
+def _point_df(n: int) -> pd.DataFrame:
+    return pd.DataFrame({
+        "ra": [0.0] * n, "dec": [0.0] * n, "z": [0.1] * n,
+        "z_type": ["spec"] * n, "z_err": [0.01] * n,
+        "galaxy_id": np.arange(n, dtype=np.int64),
+        "survey_id": [f"syn{i}" for i in range(n)],
+        "_original_row_index": np.arange(n, dtype=np.int64),
+    })
+
+
+def _ensure_healpix(df: pd.DataFrame) -> pd.DataFrame:
+    if "_healpix32" not in df.columns:
+        df = df.copy()
+        df["_healpix32"] = np.zeros(len(df), dtype=np.int64)
+    return df
+
+
+def test_converter_fills_temporal_when_t_obs_present(tmp_path):
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.manifest import read_manifest
+
+    df = _ensure_healpix(_point_df_with_t_obs(500))
+    survey_dir = tmp_path / "syn"
+    ou_dir = survey_dir / ONEUNIVERSE_SUBDIR
+    ou_dir.mkdir(parents=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name="syn", survey_type="transient",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+    )
+    m = read_manifest(ou_dir / "manifest.json")
+    assert m.temporal is not None
+    assert m.temporal.time_column == "t_obs"
+    assert m.temporal.t_min == float(df["t_obs"].min())
+    assert m.temporal.t_max == float(df["t_obs"].max())
+    assert all(p.stats.t_min is not None for p in m.partitions)
+
+
+def test_converter_accepts_validity_kwarg(tmp_path):
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.manifest import read_manifest
+
+    df = _ensure_healpix(_point_df(1))
+    v = DatasetValidity(valid_from_utc=_T0, version="dr17",
+                        supersedes=("eboss_qso_dr16",))
+    survey_dir = tmp_path / "with_v"
+    ou_dir = survey_dir / ONEUNIVERSE_SUBDIR
+    ou_dir.mkdir(parents=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name="with_v", survey_type="spectroscopic",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+        validity=v,
+    )
+    m = read_manifest(ou_dir / "manifest.json")
+    assert m.validity == v
+
+
+def test_converter_fills_default_validity_when_absent(tmp_path):
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.manifest import read_manifest
+
+    df = _ensure_healpix(_point_df(1))
+    survey_dir = tmp_path / "no_v"
+    ou_dir = survey_dir / ONEUNIVERSE_SUBDIR
+    ou_dir.mkdir(parents=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name="no_v", survey_type="spectroscopic",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+    )
+    m = read_manifest(ou_dir / "manifest.json")
+    assert m.validity is not None
+    assert m.validity.is_current()
