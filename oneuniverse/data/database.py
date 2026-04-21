@@ -571,15 +571,26 @@ class OneuniverseDatabase:
             sky_tol_arcsec=sky_tol_arcsec, dz_tol=dz_tol,
         )
 
-    def load_oneuid(self, name: str = "default"):
-        """Load a previously persisted ONEUID index by *name*."""
-        from oneuniverse.data.oneuid import load_oneuid_index
-        return load_oneuid_index(self, name=name)
+    def load_oneuid(
+        self, name: str = "default",
+        *, as_of: Optional[dt.datetime] = None,
+    ):
+        """Load a previously persisted ONEUID index by *name*.
 
-    def list_oneuids(self) -> List[str]:
-        """Return the names of persisted ONEUID indices."""
+        With ``as_of`` (tz-aware), return the archived version whose
+        :class:`DatasetValidity` contains that timestamp.
+        """
+        from oneuniverse.data.oneuid import load_oneuid_index
+        return load_oneuid_index(self, name=name, as_of=as_of)
+
+    def list_oneuids(self, *, include_archived: bool = False) -> List[str]:
+        """Return the names of persisted ONEUID indices.
+
+        With ``include_archived=True``, also return archived versions
+        named ``{name}__{YYYYmmddTHHMMSSZ}``.
+        """
         from oneuniverse.data.oneuid import list_oneuids
-        return list_oneuids(self)
+        return list_oneuids(self, include_archived=include_archived)
 
     def oneuid_query(self, index=None, *, name: str = "default") -> "OneuidQuery":
         """Return a tiered :class:`OneuidQuery` over the ONEUID index.

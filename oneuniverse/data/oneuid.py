@@ -38,6 +38,7 @@ for back-compat. It has no audit columns; they come back as ``"none"`` /
 """
 from __future__ import annotations
 
+import datetime as dt_mod
 import json
 import logging
 from dataclasses import dataclass, field
@@ -60,6 +61,7 @@ from oneuniverse.data.selection import (
     SkyPatch,
     apply_selections,
 )
+from oneuniverse.data.validity import DatasetValidity
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,7 @@ class OneuidIndex:
     n_multi: int
     name: str = "default"
     rules: Optional[CrossMatchRules] = None
+    validity: Optional[DatasetValidity] = None
 
     # ── Back-compat shims (derived from rules) ──────────────────────
 
@@ -269,9 +272,13 @@ def build_oneuid_index(
         n_multi=res.n_multi,
         name=name,
         rules=rules,
+        validity=DatasetValidity(
+            valid_from_utc=datetime.now(timezone.utc).isoformat(),
+        ),
     )
 
     if persist:
+        _archive_previous(database.root, name)
         _write_index(index, database.root)
         logger.info(
             "ONEUID: wrote %s", _index_path(database.root, name),
@@ -283,24 +290,72 @@ def build_oneuid_index(
 def load_oneuid_index(
     database,
     name: str = "default",
+    *,
+    as_of: Optional[dt_mod.datetime] = None,
 ) -> OneuidIndex:
-    """Load a previously persisted ONEUID index."""
-    new_path = _index_path(database.root, name)
-    if new_path.is_file():
-        return _read_index(database.root, name)
+    """Load a previously persisted ONEUID index.
+
+    With ``as_of=None`` (default), returns the currently-valid index.
+    With a timezone-aware ``as_of``, walks the live + archived manifests
+    and returns the index whose :class:`DatasetValidity` contains
+    ``as_of``.
+    """
+    root = database.root
+    if as_of is None:
+        new_path = _index_path(root, name)
+        if new_path.is_file():
+            return _read_index(root, name)
+        raise FileNotFoundError(
+            f"No ONEUID index '{name}' at {new_path}. "
+            f"Run database.build_oneuid(name={name!r})."
+        )
+
+    if as_of.tzinfo is None:
+        raise ValueError("load_oneuid_index: as_of must be tz-aware")
+
+    candidates: List[Path] = []
+    live = _index_manifest_path(root, name)
+    if live.is_file():
+        candidates.append(live)
+    archive_dir = root / ONEUID_DIR
+    if archive_dir.is_dir():
+        candidates.extend(
+            sorted(archive_dir.glob(f"{name}__*.manifest.json"))
+        )
+
+    for man in candidates:
+        with open(man) as fh:
+            raw = json.load(fh)
+        v_raw = raw.get("validity")
+        if v_raw is None:
+            continue
+        v = DatasetValidity.from_dict(v_raw)
+        if v.contains(as_of):
+            return _read_index_at(root, man, raw)
 
     raise FileNotFoundError(
-        f"No ONEUID index '{name}' at {new_path}. "
-        f"Run database.build_oneuid(name={name!r})."
+        f"load_oneuid_index: no version of {name!r} valid at {as_of}"
     )
 
 
-def list_oneuids(database) -> List[str]:
-    """Return the names of persisted ONEUID indices under *database*."""
+def list_oneuids(database, *, include_archived: bool = False) -> List[str]:
+    """Return the names of persisted ONEUID indices under *database*.
+
+    With ``include_archived=True``, also includes archived versions named
+    ``{name}__{YYYYmmddTHHMMSSZ}``.
+    """
     d = database.root / ONEUID_DIR
     if not d.is_dir():
         return []
-    return sorted(p.stem for p in d.glob("*.parquet"))
+    live = sorted(
+        p.stem for p in d.glob("*.parquet") if "__" not in p.stem
+    )
+    if not include_archived:
+        return live
+    archived = sorted(
+        p.stem for p in d.glob("*__*.parquet")
+    )
+    return live + archived
 
 
 # ── Internal — I/O ───────────────────────────────────────────────────────
@@ -322,6 +377,30 @@ def _resolve_rules(
     return CrossMatchRules(**kwargs) if kwargs else CrossMatchRules()
 
 
+def _archive_previous(root: Path, name: str) -> None:
+    """If a live index named *name* exists, rename its parquet + manifest
+    with a timestamp suffix and close its validity window."""
+    idx_path = _index_path(root, name)
+    man_path = _index_manifest_path(root, name)
+    if not (idx_path.exists() and man_path.exists()):
+        return
+    now = datetime.now(timezone.utc)
+    ts_suffix = now.strftime("%Y%m%dT%H%M%SZ")
+    archived_name = f"{name}__{ts_suffix}"
+    archived_idx = root / ONEUID_DIR / f"{archived_name}.parquet"
+    archived_man = root / ONEUID_DIR / f"{archived_name}.manifest.json"
+    idx_path.rename(archived_idx)
+    with open(man_path) as fh:
+        raw = json.load(fh)
+    v = raw.get("validity")
+    if v is not None and v.get("valid_to_utc") is None:
+        v["valid_to_utc"] = now.isoformat()
+        raw["validity"] = v
+    man_path.unlink()
+    with open(archived_man, "w") as fh:
+        json.dump(raw, fh, indent=2, sort_keys=True)
+
+
 def _write_index(index: OneuidIndex, root: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -337,6 +416,9 @@ def _write_index(index: OneuidIndex, root: Path) -> None:
 
     # Sidecar manifest.
     rules = index.rules or CrossMatchRules()
+    validity = index.validity or DatasetValidity(
+        valid_from_utc=datetime.now(timezone.utc).isoformat(),
+    )
     manifest = {
         "format_version": ONEUID_MANIFEST_FORMAT_VERSION,
         "name": index.name,
@@ -354,31 +436,55 @@ def _write_index(index: OneuidIndex, root: Path) -> None:
             ],
             "reject_ztype": [list(k) for k in rules.reject_ztype],
         },
+        "validity": validity.to_dict(),
     }
     with open(_index_manifest_path(root, index.name), "w") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True)
 
 
 def _read_index(root: Path, name: str) -> OneuidIndex:
-    import pyarrow.parquet as pq
-
-    table = pq.read_table(_index_path(root, name)).to_pandas()
     manifest_path = _index_manifest_path(root, name)
-    rules = CrossMatchRules()
     meta: dict = {}
     if manifest_path.is_file():
         with open(manifest_path) as fh:
             meta = json.load(fh)
-        rules = _rules_from_manifest(meta.get("rules", {}))
+    return _read_index_at(root, manifest_path, meta, parquet_name=name)
 
-    n_unique = int(meta.get("n_unique", (table["oneuid"].max() + 1) if len(table) else 0))
+
+def _read_index_at(
+    root: Path, manifest_path: Path, meta: dict,
+    parquet_name: Optional[str] = None,
+) -> OneuidIndex:
+    """Read an index given its manifest path and parsed metadata.
+
+    *parquet_name* overrides the parquet stem used for the table file;
+    otherwise the stem is derived from *manifest_path* by dropping
+    ``.manifest.json``.
+    """
+    import pyarrow.parquet as pq
+
+    if parquet_name is None:
+        stem = manifest_path.name
+        if stem.endswith(".manifest.json"):
+            stem = stem[: -len(".manifest.json")]
+        parquet_name = stem
+    parquet_path = manifest_path.parent / f"{parquet_name}.parquet"
+    table = pq.read_table(parquet_path).to_pandas()
+    rules = _rules_from_manifest(meta.get("rules", {}))
+    name = meta.get("name", parquet_name)
+    v_raw = meta.get("validity")
+    validity = DatasetValidity.from_dict(v_raw) if v_raw is not None else None
+    n_unique = int(meta.get(
+        "n_unique", (table["oneuid"].max() + 1) if len(table) else 0,
+    ))
     n_multi = int(meta.get(
         "n_multi",
-        int((table.groupby("oneuid")["dataset"].nunique() > 1).sum()) if len(table) else 0,
+        int((table.groupby("oneuid")["dataset"].nunique() > 1).sum())
+        if len(table) else 0,
     ))
     return OneuidIndex(
         table=table, n_unique=n_unique, n_multi=n_multi,
-        name=name, rules=rules,
+        name=name, rules=rules, validity=validity,
     )
 
 
