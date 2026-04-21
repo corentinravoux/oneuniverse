@@ -1158,7 +1158,7 @@ def _load_oneuid_for(
     idx = database.load_oneuid(oneuid_name).restrict_to(list(datasets))
     # Required columns from the index: oneuid, dataset, row_index,
     # ra, dec, z.
-    return idx.to_dataframe()[
+    return idx.table[
         ["oneuid", "dataset", "row_index", "ra", "dec", "z"]
     ].copy()
 
@@ -1777,9 +1777,9 @@ def test_subobject_link_skymap(tmp_path):
     )
     links = db.load_subobject_links("sne_in_hosts")
 
-    host_idx = db.load_oneuid("default").to_dataframe()
+    host_idx = db.load_oneuid("default").table
     host_idx = host_idx[host_idx["dataset"] == "hosts"].set_index("oneuid")
-    sn_idx = db.load_oneuid("default").to_dataframe()
+    sn_idx = db.load_oneuid("default").table
     sn_idx = sn_idx[sn_idx["dataset"] == "sne"].set_index("oneuid")
 
     fig, ax = plt.subplots(figsize=(9, 5))

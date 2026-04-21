@@ -6,7 +6,7 @@
 
 **Architecture:**
 - Layer A (row-level temporal): `TemporalSpec` manifest block + `PartitionStats.t_min/t_max` + `DatasetView.scan(t_range=…)`. New `DataGeometry.LIGHTCURVE` with `objects.parquet` + per-epoch `part_*.parquet`.
-- Layer B (database-level bitemporal): `DatasetValidity` manifest block (`valid_from_utc`, `valid_to_utc`, `version`, `supersedes`). `OneuniverseDatabase` gains `as_of(ts)` and `versions_of(name)`. ONEUID manifests get the same block, and `load_oneuid(name, as_of=T)` resolves the correct version.
+- Layer B (database-level bitemporal): `DatasetValidity` manifest block (`valid_from_utc`, `valid_to_utc`, `version`, `supersedes`). `OneuniverseDatabase` gains `as_of(ts)` and `versions_of_root(path)`. ONEUID manifests get the same block, and `load_oneuid(name, as_of=T)` resolves the correct version.
 - Format version bump: OUF `2.0.0 → 2.1.0`, schema `2.0.0 → 2.1.0` (reader accepts both).
 
 **Tech Stack:** Python 3.10+, dataclasses, pyarrow/pyarrow.dataset, pandas, pytest, healpy, numpy, matplotlib (diagnostic only).
@@ -42,7 +42,7 @@
 - `oneuniverse/data/manifest.py` — `PartitionStats.t_min/t_max`, `Manifest.temporal`, `Manifest.validity`, version-compat rule (`2.x`), default-fill validity when reading 2.0.x.
 - `oneuniverse/data/dataset_view.py` — `scan(t_range=…)`, `_range_expr` time-column awareness, `objects_table()` for SIGHTLINE/LIGHTCURVE.
 - `oneuniverse/data/converter.py` — fill `TemporalSpec` + partition `t_min/t_max` when `t_obs` column present; accept a `validity` kwarg.
-- `oneuniverse/data/database.py` — walker honours validity, `as_of(ts)`, `versions_of(name)`.
+- `oneuniverse/data/database.py` — walker honours validity, `as_of(ts)`, `versions_of_root(path)`.
 - `oneuniverse/data/oneuid.py` — ONEUID manifest carries `DatasetValidity`, `build_oneuid_index(...)` closes out prior version, `load_oneuid_index(name, as_of=…)`.
 - `oneuniverse/data/__init__.py` — export `TemporalSpec`, `DatasetValidity`, `write_ouf_lightcurve_dataset`.
 
@@ -1629,7 +1629,7 @@ git commit -m "feat(temporal): DatasetView.objects_table() for SIGHTLINE/LIGHTCU
 
 ---
 
-## Task 9: `OneuniverseDatabase.as_of(timestamp)` and `versions_of(name)`
+## Task 9: `OneuniverseDatabase.as_of(timestamp)` and `versions_of_root(path)`
 
 **Files:**
 - Modify: `oneuniverse/data/database.py`, `oneuniverse/data/_dataset_entry.py`
