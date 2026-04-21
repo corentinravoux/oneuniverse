@@ -61,6 +61,8 @@ from oneuniverse.data.manifest import (
     read_manifest,
     write_manifest,
 )
+from oneuniverse.data.temporal import TemporalSpec
+from oneuniverse.data.validity import DatasetValidity
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,8 @@ def write_ouf_dataset(
     partitioning: Optional[PartitioningSpec] = None,
     loader: Optional[LoaderSpec] = None,
     stats_builder=None,
+    temporal: Optional[TemporalSpec] = None,
+    validity: Optional[DatasetValidity] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -137,6 +141,12 @@ def write_ouf_dataset(
         _write_single_parquet(objects_df, out_dir / OBJECTS_FILENAME, compression)
         logger.info("  objects.parquet: %d sightlines", len(objects_df))
 
+    # Default stats builder: captures all available partition columns
+    # (ra, dec, z, t_obs) so per-partition pruning can filter on any of
+    # them without each caller hand-rolling a builder.
+    if stats_builder is None:
+        stats_builder = _default_stats_builder
+
     # Partitions ---------------------------------------------------------
     if geometry is DataGeometry.POINT:
         partitions = _write_partitions_by_healpix(
@@ -176,6 +186,19 @@ def write_ouf_dataset(
         ColumnSpec(name=str(c), dtype=str(df[c].dtype)) for c in df.columns
     ]
 
+    # Temporal auto-fill from df["t_obs"] (POINT geometry only) ---------
+    if temporal is None and "t_obs" in df.columns and geometry is DataGeometry.POINT:
+        temporal = TemporalSpec(
+            t_min=float(df["t_obs"].min()),
+            t_max=float(df["t_obs"].max()),
+        )
+
+    # Default validity: "as of this conversion, still current" ----------
+    if validity is None:
+        validity = DatasetValidity(
+            valid_from_utc=datetime.now(timezone.utc).isoformat(),
+        )
+
     manifest = Manifest(
         oneuniverse_format_version=FORMAT_VERSION,
         oneuniverse_schema_version=SCHEMA_VERSION,
@@ -190,6 +213,8 @@ def write_ouf_dataset(
         conversion_kwargs=conversion_kwargs,
         loader=loader,
         extra=extra,
+        temporal=temporal,
+        validity=validity,
     )
     write_manifest(out_dir / MANIFEST_FILENAME, manifest)
     return manifest
@@ -248,16 +273,6 @@ def convert_survey(
     if config.data_filename:
         original_paths.append(survey_path / config.data_filename)
 
-    def _point_stats(chunk: pd.DataFrame) -> PartitionStats:
-        return PartitionStats(
-            ra_min=float(chunk["ra"].min()) if "ra" in chunk else None,
-            ra_max=float(chunk["ra"].max()) if "ra" in chunk else None,
-            dec_min=float(chunk["dec"].min()) if "dec" in chunk else None,
-            dec_max=float(chunk["dec"].max()) if "dec" in chunk else None,
-            z_min=float(chunk["z"].min()) if "z" in chunk else None,
-            z_max=float(chunk["z"].max()) if "z" in chunk else None,
-        )
-
     manifest = write_ouf_dataset(
         df=df,
         out_dir=out_dir,
@@ -270,7 +285,6 @@ def convert_survey(
         original_format=config.data_format or "fits",
         conversion_kwargs=loader_kwargs,
         loader=LoaderSpec(name=survey_name, version="0.2.0"),
-        stats_builder=_point_stats,
     )
 
     _log_summary(out_dir, survey_path, config, manifest)
@@ -462,6 +476,23 @@ def get_geometry(survey_path: Path) -> DataGeometry:
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────
+
+
+def _default_stats_builder(chunk: pd.DataFrame) -> PartitionStats:
+    def _minmax(col: str):
+        if col not in chunk.columns:
+            return None, None
+        return float(chunk[col].min()), float(chunk[col].max())
+    ra_lo, ra_hi = _minmax("ra")
+    dec_lo, dec_hi = _minmax("dec")
+    z_lo, z_hi = _minmax("z")
+    t_lo, t_hi = _minmax("t_obs")
+    return PartitionStats(
+        ra_min=ra_lo, ra_max=ra_hi,
+        dec_min=dec_lo, dec_max=dec_hi,
+        z_min=z_lo, z_max=z_hi,
+        t_min=t_lo, t_max=t_hi,
+    )
 
 
 def _prepare_output_dir(survey_path: Path, overwrite: bool) -> Path:
