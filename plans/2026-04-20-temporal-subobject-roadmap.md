@@ -114,9 +114,9 @@ re-debate without raising with the user first.
    database whose entries are the ones with
    `valid_from_utc <= timestamp < (valid_to_utc or +∞)`. The default
    database view is `as_of(now)`.
-4. **`OneuniverseDatabase.versions_of(name)`** lists all recorded
-   versions of a dataset ordered by `valid_from_utc`, including
-   superseded ones.
+4. **`OneuniverseDatabase.versions_of_root(path)`** lists all recorded
+   versions of a dataset under a given subpath, ordered by
+   `valid_from_utc`, including superseded ones.
 5. **ONEUID indices are bitemporal too.** The ONEUID manifest JSON
    carries its own `DatasetValidity` block. `db.load_oneuid(name,
    as_of=T)` selects the index that was valid at T. Building an index
