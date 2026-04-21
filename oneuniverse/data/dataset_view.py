@@ -113,6 +113,7 @@ class DatasetView:
         ra_range: Optional[Range] = None,
         dec_range: Optional[Range] = None,
         z_range: Optional[Range] = None,
+        t_range: Optional[Range] = None,
         healpix_cells: Optional[Iterable[int]] = None,
     ) -> List[PartitionSpec]:
         """Return partitions whose stats may overlap the given filters."""
@@ -134,6 +135,8 @@ class DatasetView:
             if not _range_overlaps(dec_range, part.stats.dec_min, part.stats.dec_max):
                 continue
             if not _range_overlaps(z_range, part.stats.z_min, part.stats.z_max):
+                continue
+            if not _range_overlaps(t_range, part.stats.t_min, part.stats.t_max):
                 continue
             keep.append(part)
         return keep
@@ -157,28 +160,35 @@ class DatasetView:
         ra_range: Optional[Range] = None,
         dec_range: Optional[Range] = None,
         z_range: Optional[Range] = None,
+        t_range: Optional[Range] = None,
         cone: Optional[Cone] = None,
         skypatch: Optional[SkyPatch] = None,
         healpix_cells: Optional[Iterable[int]] = None,
     ) -> pa.Table:
         """Return a :class:`pyarrow.Table` with projection + filter pushed down.
 
-        ``ra_range`` / ``dec_range`` / ``z_range`` drive range-based
-        partition pruning via manifest stats. ``cone`` / ``skypatch`` /
-        ``healpix_cells`` drive HEALPix-cell partition pruning on POINT
-        datasets and add an exact in-cone/in-patch filter to the Parquet
-        reader.
+        ``ra_range`` / ``dec_range`` / ``z_range`` / ``t_range`` drive
+        range-based partition pruning via manifest stats; ``t_range``
+        pushdown also filters rows on ``manifest.temporal.time_column``.
+        ``cone`` / ``skypatch`` / ``healpix_cells`` drive HEALPix-cell
+        partition pruning on POINT datasets and add an exact
+        in-cone/in-patch filter to the Parquet reader.
         """
         cells = self._resolve_cells(cone, skypatch, healpix_cells)
         partitions = self._select_partitions(
             ra_range=ra_range, dec_range=dec_range, z_range=z_range,
-            healpix_cells=cells,
+            t_range=t_range, healpix_cells=cells,
         )
         dataset = self._build_dataset(partitions)
         if dataset is None:
             return _empty_table(self.columns, columns)
 
-        expr = _range_expr(filter, ra_range, dec_range, z_range)
+        time_col = (
+            self.manifest.temporal.time_column
+            if self.manifest.temporal is not None else None
+        )
+        expr = _range_expr(filter, ra_range, dec_range, z_range,
+                           t_range, time_col)
         expr = _spatial_expr(expr, cone, skypatch)
         cols = list(columns) if columns is not None else None
         return dataset.to_table(columns=cols, filter=expr)
@@ -191,6 +201,7 @@ class DatasetView:
         ra_range: Optional[Range] = None,
         dec_range: Optional[Range] = None,
         z_range: Optional[Range] = None,
+        t_range: Optional[Range] = None,
         cone: Optional[Cone] = None,
         skypatch: Optional[SkyPatch] = None,
         healpix_cells: Optional[Iterable[int]] = None,
@@ -199,7 +210,8 @@ class DatasetView:
         table = self.scan(
             columns=columns, filter=filter,
             ra_range=ra_range, dec_range=dec_range, z_range=z_range,
-            cone=cone, skypatch=skypatch, healpix_cells=healpix_cells,
+            t_range=t_range, cone=cone, skypatch=skypatch,
+            healpix_cells=healpix_cells,
         )
         return table.to_pandas()
 
@@ -256,12 +268,19 @@ def _range_expr(
     ra_range: Optional[Range],
     dec_range: Optional[Range],
     z_range: Optional[Range],
+    t_range: Optional[Range] = None,
+    time_column: Optional[str] = None,
 ) -> Optional[pc.Expression]:
-    """Combine a user-supplied expression with ra/dec/z range bounds."""
+    """Combine a user-supplied expression with ra/dec/z/time range bounds."""
     parts: List[pc.Expression] = []
     if base is not None:
         parts.append(base)
-    for col, rng in (("ra", ra_range), ("dec", dec_range), ("z", z_range)):
+    cols: List[Tuple[str, Optional[Range]]] = [
+        ("ra", ra_range), ("dec", dec_range), ("z", z_range),
+    ]
+    if t_range is not None and time_column is not None:
+        cols.append((time_column, t_range))
+    for col, rng in cols:
         if rng is None:
             continue
         lo, hi = rng
