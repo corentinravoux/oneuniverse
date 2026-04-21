@@ -26,9 +26,11 @@ from typing import Any, Dict, List, Optional, Union
 
 from oneuniverse.data._atomic import atomic_write_text
 from oneuniverse.data.format_spec import DataGeometry
+from oneuniverse.data.temporal import TemporalSpec
+from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.0.0"
-SCHEMA_VERSION: str = "2.0.0"
+FORMAT_VERSION: str = "2.1.0"
+SCHEMA_VERSION: str = "2.1.0"
 
 
 class ManifestValidationError(ValueError):
@@ -64,6 +66,8 @@ class PartitionStats:
     dec_max: Optional[float] = None
     z_min: Optional[float] = None
     z_max: Optional[float] = None
+    t_min: Optional[float] = None
+    t_max: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,8 @@ class Manifest:
     # Geometry- or survey-specific extras that do not deserve a
     # first-class field (e.g. healpix_nside, n_sightlines).
     extra: Dict[str, Any] = field(default_factory=dict)
+    temporal: Optional[TemporalSpec] = None
+    validity: Optional[DatasetValidity] = None
 
     @property
     def n_rows(self) -> int:
@@ -156,6 +162,8 @@ def read_manifest(path: Union[str, Path]) -> Manifest:
 def _to_dict(m: Manifest) -> Dict[str, Any]:
     d = asdict(m)
     d["geometry"] = m.geometry.value
+    d["temporal"] = m.temporal.to_dict() if m.temporal is not None else None
+    d["validity"] = m.validity.to_dict() if m.validity is not None else None
     return d
 
 
@@ -187,10 +195,13 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         _require(raw, key, path)
 
     fmt = raw["oneuniverse_format_version"]
-    if not (isinstance(fmt, str) and fmt.startswith("2.")):
+    if not (
+        isinstance(fmt, str)
+        and (fmt.startswith("2.0") or fmt.startswith("2.1"))
+    ):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
-            f"with this library (expected 2.x)."
+            f"with this library (expected 2.0.x or 2.1.x)."
         )
 
     geo = raw["geometry"]
@@ -230,6 +241,27 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     schema = [ColumnSpec(**c) for c in raw["schema"]]
     loader = LoaderSpec(**raw["loader"])
 
+    temporal_raw = raw.get("temporal")
+    temporal = TemporalSpec.from_dict(temporal_raw) if temporal_raw else None
+
+    validity_raw = raw.get("validity")
+    if validity_raw is not None:
+        validity = DatasetValidity.from_dict(validity_raw)
+    elif fmt.startswith("2.0"):
+        # Forward-compatibility: 2.0.x manifests have no validity block;
+        # synthesize one from created_utc so downstream code can rely on
+        # .validity being non-None. 2.1.x authors opt in explicitly.
+        created = raw["created_utc"]
+        if (
+            "+" not in created
+            and "Z" not in created
+            and not created.endswith("+00:00")
+        ):
+            created = created + "+00:00"
+        validity = DatasetValidity(valid_from_utc=created)
+    else:
+        validity = None
+
     return Manifest(
         oneuniverse_format_version=fmt,
         oneuniverse_schema_version=raw["oneuniverse_schema_version"],
@@ -244,4 +276,6 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         conversion_kwargs=raw["conversion_kwargs"],
         loader=loader,
         extra=raw.get("extra", {}),
+        temporal=temporal,
+        validity=validity,
     )
