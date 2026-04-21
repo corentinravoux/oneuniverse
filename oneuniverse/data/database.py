@@ -27,6 +27,7 @@ Example
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 from dataclasses import replace
@@ -50,6 +51,7 @@ from oneuniverse.data.format_spec import (
 )
 from oneuniverse.data.dataset_view import DatasetView
 from oneuniverse.data.manifest import Manifest
+from oneuniverse.data.validity import DatasetValidity
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,78 @@ def _make_loader_class(
     return type(cls_name, (BaseSurveyLoader,), attrs)
 
 
+# ── Validity helpers ─────────────────────────────────────────────────────
+
+
+def _apply_supersessions(all_entries: Dict[str, "DatasetEntry"]) -> None:
+    """Close out superseded entries by copying manifests with patched
+    validity. Works on *all_entries* in place; does not mutate on-disk
+    manifests."""
+    for new in list(all_entries.values()):
+        v = new.manifest.validity
+        if v is None or not v.supersedes:
+            continue
+        for prior_name in v.supersedes:
+            prior = all_entries.get(prior_name)
+            if prior is None or prior.manifest.validity is None:
+                continue
+            if prior.manifest.validity.valid_to_utc is not None:
+                continue
+            closed = prior.manifest.validity.closed_at(v.valid_from_utc)
+            new_manifest = replace(prior.manifest, validity=closed)
+            all_entries[prior_name] = replace(prior, manifest=new_manifest)
+
+
+def _warn_on_mixed_validity(all_entries: Dict[str, "DatasetEntry"]) -> None:
+    """Log a WARNING for entries under the same survey-root with
+    overlapping validity windows and no ``supersedes`` link between
+    them."""
+    by_parent: Dict[Path, List[Tuple[str, "DatasetEntry"]]] = {}
+    for name, e in all_entries.items():
+        if e.manifest.validity is None:
+            continue
+        by_parent.setdefault(e.path.parent, []).append((name, e))
+
+    for parent, bucket in by_parent.items():
+        if len(bucket) < 2:
+            continue
+        for i, (n_i, e_i) in enumerate(bucket):
+            v_i = e_i.manifest.validity
+            for n_j, e_j in bucket[i + 1:]:
+                v_j = e_j.manifest.validity
+                if n_i in v_j.supersedes or n_j in v_i.supersedes:
+                    continue
+                if _windows_overlap(v_i, v_j):
+                    logger.warning(
+                        "OneuniverseDatabase: overlapping validity under %s: "
+                        "%s (%s..%s) and %s (%s..%s); no supersedes link",
+                        parent, n_i, v_i.valid_from_utc, v_i.valid_to_utc,
+                        n_j, v_j.valid_from_utc, v_j.valid_to_utc,
+                    )
+
+
+def _is_relative_to(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _windows_overlap(a: DatasetValidity, b: DatasetValidity) -> bool:
+    a0 = dt.datetime.fromisoformat(a.valid_from_utc)
+    a1 = (dt.datetime.fromisoformat(a.valid_to_utc)
+          if a.valid_to_utc is not None else None)
+    b0 = dt.datetime.fromisoformat(b.valid_from_utc)
+    b1 = (dt.datetime.fromisoformat(b.valid_to_utc)
+          if b.valid_to_utc is not None else None)
+    if a1 is not None and a1 <= b0:
+        return False
+    if b1 is not None and b1 <= a0:
+        return False
+    return True
+
+
 # ── Database class ───────────────────────────────────────────────────────
 
 
@@ -155,6 +229,7 @@ class OneuniverseDatabase:
         self._max_depth = max_depth
         self._register_global = register_global
         self._entries: Dict[str, DatasetEntry] = {}
+        self._all_entries: Dict[str, DatasetEntry] = {}
         self.scan()
 
     # ── Construction helpers ─────────────────────────────────────────────
@@ -259,6 +334,7 @@ class OneuniverseDatabase:
     def scan(self) -> None:
         """Walk :attr:`root` and (re)build the in-memory registry."""
         self._entries.clear()
+        self._all_entries.clear()
 
         for manifest_path in self._find_manifests():
             survey_dir = manifest_path.parent.parent  # …/<survey_dir>/oneuniverse/manifest.json
@@ -282,7 +358,7 @@ class OneuniverseDatabase:
                 manifest=manifest,
             )
             loader_cls = _make_loader_class(name, config, survey_dir)
-            self._entries[name] = DatasetEntry(
+            self._all_entries[name] = DatasetEntry(
                 loader=loader_cls,
                 manifest=manifest,
                 path=survey_dir,
@@ -294,8 +370,18 @@ class OneuniverseDatabase:
                 except ValueError:
                     pass
 
+        _apply_supersessions(self._all_entries)
+        _warn_on_mixed_validity(self._all_entries)
+
+        self._entries = {
+            name: e
+            for name, e in self._all_entries.items()
+            if e.manifest.validity is None or e.manifest.validity.is_current()
+        }
+
         logger.info(
-            "OneuniverseDatabase: discovered %d dataset(s) under %s",
+            "OneuniverseDatabase: discovered %d dataset(s) (%d currently valid) under %s",
+            len(self._all_entries),
             len(self._entries),
             self.root,
         )
@@ -409,6 +495,55 @@ class OneuniverseDatabase:
         """Shortcut: instantiate loader and call ``.load(**kwargs)``."""
         return self.get_loader(name).load(**kwargs)
 
+    # ── Bitemporal access ────────────────────────────────────────────────
+
+    def as_of(self, when: dt.datetime) -> "OneuniverseDatabase":
+        """Return a sibling database view containing only entries whose
+        :class:`DatasetValidity` was valid at *when* (tz-aware).
+
+        The returned object shares root, data_root, and loader classes;
+        only ``_entries`` is filtered.
+        """
+        if when.tzinfo is None:
+            raise ValueError(
+                "OneuniverseDatabase.as_of: timestamp must be timezone-aware"
+            )
+        filtered = {
+            name: e
+            for name, e in self._all_entries.items()
+            if e.manifest.validity is not None
+            and e.manifest.validity.contains(when)
+        }
+        clone = self.__class__.__new__(self.__class__)
+        clone.root = self.root
+        clone.data_root = self.data_root
+        clone._name_from_path = self._name_from_path
+        clone._max_depth = self._max_depth
+        clone._register_global = False
+        clone._all_entries = dict(self._all_entries)
+        clone._entries = filtered
+        return clone
+
+    def versions_of_root(self, survey_root: str) -> List[DatasetEntry]:
+        """Return every entry (including superseded) whose path lives
+        under ``survey_root`` (a subpath under the database root), sorted
+        by ``validity.valid_from_utc``. Entries without a validity block
+        sort first.
+        """
+        root = (self.root / survey_root).resolve()
+        matching = [
+            e for e in self._all_entries.values()
+            if _is_relative_to(Path(e.path).resolve(), root)
+        ]
+
+        def _key(e: DatasetEntry):
+            v = e.manifest.validity
+            if v is None:
+                return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+            return dt.datetime.fromisoformat(v.valid_from_utc)
+
+        return sorted(matching, key=_key)
+
     # ── ONEUID — universal cross-survey identifier ───────────────────────
 
     def build_oneuid(
@@ -475,4 +610,4 @@ class OneuniverseDatabase:
         return "\n".join(lines)
 
     def __repr__(self) -> str:
-        return f"<OneuniverseDatabase root={self.root} n_datasets={len(self._loaders)}>"
+        return f"<OneuniverseDatabase root={self.root} n_datasets={len(self._entries)}>"
