@@ -69,6 +69,11 @@ from oneuniverse.data.oneuid import (  # noqa: F401
     build_oneuid_index,
     load_oneuid_index,
 )
+from oneuniverse.data.temporal import TemporalSpec  # noqa: F401
+from oneuniverse.data.validity import DatasetValidity  # noqa: F401
+from oneuniverse.data._converter_lightcurve import (  # noqa: F401
+    write_ouf_lightcurve_dataset,
+)
 
 
 def load_catalog(
@@ -146,4 +151,8 @@ __all__ = [
     "OneuidQuery",
     "build_oneuid_index",
     "load_oneuid_index",
+    # Temporal + lightcurve (Phase 7)
+    "TemporalSpec",
+    "DatasetValidity",
+    "write_ouf_lightcurve_dataset",
 ]
