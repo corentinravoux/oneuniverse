@@ -86,6 +86,52 @@ def test_partition_stats_cover_mjd(tmp_path):
     assert overall_max == float(epochs["mjd"].max())
 
 
+def test_objects_table_on_lightcurve(tmp_path):
+    from oneuniverse.data.dataset_view import DatasetView
+    objects, epochs = _make(4, 5)
+    survey_dir = tmp_path / "view_lc"
+    write_ouf_lightcurve_dataset(
+        objects=objects, epochs=epochs,
+        survey_path=survey_dir,
+        survey_name="view_lc", survey_type="transient",
+        loader_name="syn", loader_version="0",
+    )
+    view = DatasetView.from_path(survey_dir)
+    obj = view.objects_table().to_pandas()
+    assert len(obj) == 4
+    assert "n_epochs" in obj.columns
+
+    epo = view.scan(columns=["object_id", "mjd"], t_range=(59000.0, 60000.0))
+    for t in epo.column("mjd").to_pylist():
+        assert 59000.0 <= t <= 60000.0
+
+
+def test_objects_table_on_point_raises(tmp_path):
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.dataset_view import DatasetView
+    from oneuniverse.data.manifest import LoaderSpec
+    df = pd.DataFrame({
+        "ra": [0.0], "dec": [0.0], "z": [0.1],
+        "z_type": ["spec"], "z_err": [0.01],
+        "galaxy_id": np.array([0], dtype=np.int64),
+        "survey_id": ["syn0"],
+        "_original_row_index": np.array([0], dtype=np.int64),
+        "_healpix32": np.array([0], dtype=np.int64),
+    })
+    survey_dir = tmp_path / "pt"
+    ou_dir = survey_dir / "oneuniverse"
+    ou_dir.mkdir(parents=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name="pt", survey_type="spectroscopic",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+    )
+    view = DatasetView.from_path(survey_dir)
+    with pytest.raises(ValueError, match="objects_table"):
+        view.objects_table()
+
+
 def test_writer_accepts_validity_kwarg(tmp_path):
     from oneuniverse.data.validity import DatasetValidity
     objects, epochs = _make(2, 3)
