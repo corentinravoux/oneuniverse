@@ -41,6 +41,7 @@ from oneuniverse.data.format_spec import (
     HEALPIX_PARTITION_NEST,
     HEALPIX_PARTITION_NSIDE,
     MANIFEST_FILENAME,
+    OBJECTS_FILENAME,
     ONEUNIVERSE_SUBDIR,
     DataGeometry,
 )
@@ -214,6 +215,27 @@ class DatasetView:
             healpix_cells=healpix_cells,
         )
         return table.to_pandas()
+
+    def objects_table(
+        self, columns: Optional[Sequence[str]] = None,
+    ) -> pa.Table:
+        """Return the per-object metadata table.
+
+        Defined for SIGHTLINE (one row per sightline) and LIGHTCURVE
+        (one row per source) geometries. Raises on POINT/HEALPIX, which
+        have no objects table on disk.
+        """
+        import pyarrow.parquet as pq
+
+        if self.geometry not in {DataGeometry.SIGHTLINE, DataGeometry.LIGHTCURVE}:
+            raise ValueError(
+                f"objects_table() is only defined for SIGHTLINE and "
+                f"LIGHTCURVE geometries, got {self.geometry.value!r}"
+            )
+        return pq.read_table(
+            self.ou_dir / OBJECTS_FILENAME,
+            columns=list(columns) if columns else None,
+        )
 
     # ── Internals ────────────────────────────────────────────────────────
 
