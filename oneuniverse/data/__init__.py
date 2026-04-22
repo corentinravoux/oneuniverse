@@ -74,6 +74,13 @@ from oneuniverse.data.validity import DatasetValidity  # noqa: F401
 from oneuniverse.data._converter_lightcurve import (  # noqa: F401
     write_ouf_lightcurve_dataset,
 )
+from oneuniverse.data.subobject_rules import SubobjectRules  # noqa: F401
+from oneuniverse.data.subobject import (  # noqa: F401
+    SubobjectLinks,
+    build_subobject_links,
+    load_subobject_links,
+    list_subobject_link_sets,
+)
 
 
 def load_catalog(
@@ -155,4 +162,10 @@ __all__ = [
     "TemporalSpec",
     "DatasetValidity",
     "write_ouf_lightcurve_dataset",
+    # Sub-object links (Phase 8)
+    "SubobjectRules",
+    "SubobjectLinks",
+    "build_subobject_links",
+    "load_subobject_links",
+    "list_subobject_link_sets",
 ]
