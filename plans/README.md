@@ -27,3 +27,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 5 | Streaming hydration                     | **complete (2026-04-16, 198/198 tests green)** |
 | 6 | Housekeeping + `weight/` → `combine/` redesign | **complete (2026-04-20, 211/211 tests green)** |
 | 7 | Temporal data (t_obs + LIGHTCURVE + bitemporal database + versioned ONEUID) | **complete (2026-04-21, 265/265 tests green)** |
+| 8 | Sub-object hierarchy (bitemporal link sidecars) | **complete (2026-04-22, 292/292 tests green)** |
