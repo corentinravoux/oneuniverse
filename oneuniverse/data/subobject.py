@@ -159,3 +159,120 @@ def read_subobject_links(root: Path, name: str) -> "SubobjectLinks":
         validity=DatasetValidity.from_dict(raw["validity"]),
         table=table,
     )
+
+
+_REQUIRED_DTYPE = {
+    "parent_oneuid": np.int64,
+    "child_oneuid": np.int64,
+    "confidence": np.float32,
+    "sky_sep_arcsec": np.float32,
+    "dz": np.float32,
+}
+
+
+def _radec_to_unit(ra_deg: np.ndarray, dec_deg: np.ndarray) -> np.ndarray:
+    ra = np.radians(ra_deg)
+    dec = np.radians(dec_deg)
+    cd = np.cos(dec)
+    return np.column_stack([cd * np.cos(ra), cd * np.sin(ra), np.sin(dec)])
+
+
+def _chord_tol(sky_tol_arcsec: float) -> float:
+    ang = np.radians(sky_tol_arcsec / 3600.0)
+    return 2.0 * np.sin(ang / 2.0)
+
+
+def _chord_to_arcsec(d: np.ndarray) -> np.ndarray:
+    return np.degrees(2.0 * np.arcsin(np.clip(d / 2.0, 0.0, 1.0))) * 3600.0
+
+
+def _build_subobject_pairs(
+    parents: pd.DataFrame,
+    children: pd.DataFrame,
+    rules: SubobjectRules,
+) -> pd.DataFrame:
+    """Return a link table respecting the rules.
+
+    Expected columns on both frames: ``oneuid``, ``ra``, ``dec``, ``z``
+    (``z`` may contain ``NaN`` only on the child side when
+    ``rules.dz_tol is None``).
+    """
+    from scipy.spatial import cKDTree
+
+    required = {"oneuid", "ra", "dec", "z"}
+    for label, df in (("parents", parents), ("children", children)):
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"_build_subobject_pairs: {label} missing columns {missing!r}"
+            )
+
+    if len(parents) == 0 or len(children) == 0:
+        return pd.DataFrame(
+            {c: pd.Series(dtype=_REQUIRED_DTYPE[c]) for c in REQUIRED_COLUMNS}
+        )
+
+    p_ra = parents["ra"].to_numpy(float)
+    p_dec = parents["dec"].to_numpy(float)
+    p_z = parents["z"].to_numpy(float)
+    p_uid = parents["oneuid"].to_numpy(np.int64)
+
+    c_ra = children["ra"].to_numpy(float)
+    c_dec = children["dec"].to_numpy(float)
+    c_z = children["z"].to_numpy(float)
+    c_uid = children["oneuid"].to_numpy(np.int64)
+
+    p_xyz = _radec_to_unit(p_ra, p_dec)
+    c_xyz = _radec_to_unit(c_ra, c_dec)
+
+    tree = cKDTree(p_xyz)
+    chord = _chord_tol(rules.sky_tol_arcsec)
+
+    neighbours = tree.query_ball_point(c_xyz, r=chord)
+
+    parent_idx_out: List[int] = []
+    child_idx_out: List[int] = []
+    conf_out: List[float] = []
+    sep_out: List[float] = []
+    dz_out: List[float] = []
+
+    for ci, cand in enumerate(neighbours):
+        if not cand:
+            continue
+        cand_arr = np.asarray(cand, dtype=np.int64)
+        if rules.dz_tol is not None and np.isfinite(c_z[ci]):
+            dz = np.abs(p_z[cand_arr] - c_z[ci])
+            keep = np.isfinite(dz) & (dz <= rules.dz_tol)
+            cand_arr = cand_arr[keep]
+        if cand_arr.size == 0:
+            continue
+        if cand_arr.size > 1 and not rules.accept_ambiguous:
+            continue
+        n_cand = cand_arr.size
+        chords = np.linalg.norm(p_xyz[cand_arr] - c_xyz[ci], axis=1)
+        seps = _chord_to_arcsec(chords)
+        for k, pi in enumerate(cand_arr):
+            parent_idx_out.append(int(pi))
+            child_idx_out.append(ci)
+            conf_out.append(1.0 / n_cand)
+            sep_out.append(float(seps[k]))
+            if rules.dz_tol is None or not np.isfinite(c_z[ci]):
+                dz_out.append(np.nan)
+            else:
+                dz_out.append(float(p_z[pi] - c_z[ci]))
+
+    return pd.DataFrame(
+        {
+            "parent_oneuid": np.asarray(
+                p_uid[parent_idx_out] if parent_idx_out else [],
+                dtype=np.int64,
+            ),
+            "child_oneuid": np.asarray(
+                c_uid[child_idx_out] if child_idx_out else [],
+                dtype=np.int64,
+            ),
+            "confidence": np.asarray(conf_out, dtype=np.float32),
+            "sky_sep_arcsec": np.asarray(sep_out, dtype=np.float32),
+            "dz": np.asarray(dz_out, dtype=np.float32),
+        }
+    )
