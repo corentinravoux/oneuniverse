@@ -276,3 +276,176 @@ def _build_subobject_pairs(
             "dz": np.asarray(dz_out, dtype=np.float32),
         }
     )
+
+
+def _load_oneuid_for(
+    database, oneuid_name: str, datasets: Sequence[str],
+) -> pd.DataFrame:
+    idx = database.load_oneuid(oneuid_name).restrict_to(list(datasets))
+    return idx.table[
+        ["oneuid", "dataset", "row_index", "ra", "dec", "z"]
+    ].copy()
+
+
+def _archive_previous(root: Path, name: str) -> None:
+    """Close previous sidecar's validity and rename to archival name."""
+    live_man = _links_manifest_path(root, name)
+    if not live_man.exists():
+        return
+    raw = json.loads(live_man.read_text())
+    now = datetime.now(tz=timezone.utc)
+    now_iso = now.isoformat()
+    validity = DatasetValidity.from_dict(raw["validity"]).closed_at(now_iso)
+    raw["validity"] = validity.to_dict()
+
+    ts = now.strftime("%Y%m%dT%H%M%SZ")
+    archive_base = f"{name}__{ts}"
+    archive_table = _links_path(root, archive_base)
+    archive_man = _links_manifest_path(root, archive_base)
+
+    live_table = _links_path(root, name)
+    if live_table.exists():
+        shutil.move(str(live_table), str(archive_table))
+    archive_man.write_text(json.dumps(raw, indent=2, sort_keys=True))
+    live_man.unlink()
+
+
+def build_subobject_links(
+    database,
+    *,
+    rules: SubobjectRules,
+    parent_datasets: Sequence[str],
+    child_datasets: Sequence[str],
+    name: str = "default",
+    oneuid_name: str = "default",
+) -> int:
+    """Build and persist a named sub-object link sidecar. Returns row count."""
+    root = Path(database.root)
+    parent_datasets = tuple(parent_datasets)
+    child_datasets = tuple(child_datasets)
+    if not parent_datasets:
+        raise ValueError("build_subobject_links: parent_datasets is empty")
+    if not child_datasets:
+        raise ValueError("build_subobject_links: child_datasets is empty")
+
+    for d in parent_datasets:
+        st = database.entry(d).manifest.survey_type
+        if st != rules.parent_survey_type:
+            raise ValueError(
+                f"build_subobject_links: parent dataset {d!r} has "
+                f"survey_type={st!r}, rules require "
+                f"{rules.parent_survey_type!r}"
+            )
+    for d in child_datasets:
+        st = database.entry(d).manifest.survey_type
+        if st != rules.child_survey_type:
+            raise ValueError(
+                f"build_subobject_links: child dataset {d!r} has "
+                f"survey_type={st!r}, rules require "
+                f"{rules.child_survey_type!r}"
+            )
+
+    parent_idx = _load_oneuid_for(database, oneuid_name, parent_datasets)
+    child_idx = _load_oneuid_for(database, oneuid_name, child_datasets)
+
+    frames: List[pd.DataFrame] = []
+    for p_name in parent_datasets:
+        parents = parent_idx[parent_idx["dataset"] == p_name].drop_duplicates(
+            subset="oneuid"
+        )
+        for c_name in child_datasets:
+            children = child_idx[child_idx["dataset"] == c_name].drop_duplicates(
+                subset="oneuid"
+            )
+            frames.append(_build_subobject_pairs(parents, children, rules))
+
+    combined = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(
+            {c: pd.Series(dtype=_REQUIRED_DTYPE[c]) for c in REQUIRED_COLUMNS}
+        )
+    )
+
+    try:
+        oneuid_hash = database.load_oneuid(oneuid_name).rules.hash()
+    except Exception:
+        oneuid_hash = "unknown"
+
+    links = SubobjectLinks(
+        name=name,
+        rules=rules,
+        parent_datasets=parent_datasets,
+        child_datasets=child_datasets,
+        oneuid_name=oneuid_name,
+        oneuid_hash=oneuid_hash,
+        validity=DatasetValidity(
+            valid_from_utc=datetime.now(tz=timezone.utc).isoformat(),
+            version=name,
+        ),
+        table=combined,
+    )
+
+    _archive_previous(root, name)
+    write_subobject_links(root, links)
+    logger.info(
+        "subobject: wrote %d links to %s (rules hash %s)",
+        len(links), _links_path(root, name), rules.hash(),
+    )
+    return len(links)
+
+
+def load_subobject_links(
+    root: Path,
+    name: str = "default",
+    *,
+    as_of: Optional[datetime] = None,
+) -> "SubobjectLinks":
+    """Load a named sub-object link sidecar.
+
+    With ``as_of`` (tz-aware), return the archived version whose
+    :class:`DatasetValidity` contains that timestamp.
+    """
+    root = Path(root)
+    if as_of is None:
+        return read_subobject_links(root, name)
+
+    if as_of.tzinfo is None:
+        raise ValueError("load_subobject_links: as_of must be tz-aware")
+
+    candidates: List[Path] = []
+    live = _links_manifest_path(root, name)
+    if live.exists():
+        candidates.append(live)
+    subdir = root / SUBOBJECT_DIR
+    if subdir.exists():
+        for p in subdir.glob(f"{name}__*.manifest.json"):
+            candidates.append(p)
+
+    for man in candidates:
+        raw = json.loads(man.read_text())
+        v = DatasetValidity.from_dict(raw["validity"])
+        if v.contains(as_of):
+            stem = man.name[: -len(".manifest.json")]
+            return read_subobject_links(root, stem)
+
+    raise FileNotFoundError(
+        f"load_subobject_links: no version of {name!r} valid at {as_of.isoformat()}"
+    )
+
+
+def list_subobject_link_sets(
+    root: Path, *, include_archived: bool = False,
+) -> List[str]:
+    root = Path(root)
+    subdir = root / SUBOBJECT_DIR
+    if not subdir.exists():
+        return []
+    names = []
+    for p in sorted(subdir.glob("*.manifest.json")):
+        stem = p.name[: -len(".manifest.json")]
+        is_archived = "__" in stem
+        if is_archived and not include_archived:
+            continue
+        names.append(stem)
+    return names

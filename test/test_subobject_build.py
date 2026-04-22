@@ -275,3 +275,125 @@ def test_pair_builder_missing_child_z():
     out = _build_subobject_pairs(parents, children, rules)
     assert len(out) == 1
     assert np.isnan(out.iloc[0].dz)
+
+
+def _healpix32(ra, dec):
+    import healpy as hp
+    theta = np.radians(90.0 - np.asarray(dec))
+    phi = np.radians(np.asarray(ra))
+    return hp.ang2pix(32, theta, phi, nest=True).astype(np.int64)
+
+
+def _synthetic_host_catalog(root, name, n_host=5, seed=0):
+    """Write a tiny POINT dataset of host galaxies; return the survey dir."""
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.format_spec import DataGeometry
+    from oneuniverse.data.manifest import LoaderSpec
+
+    rng = np.random.default_rng(seed)
+    ra = rng.uniform(10.0, 20.0, n_host)
+    dec = rng.uniform(-5.0, 5.0, n_host)
+    z = rng.uniform(0.02, 0.1, n_host)
+    df = pd.DataFrame({
+        "ra": ra, "dec": dec, "z": z,
+        "z_type": np.array(["spec"] * n_host),
+        "z_err": np.full(n_host, 1e-4, dtype=np.float32),
+        "galaxy_id": np.arange(n_host, dtype=np.int64),
+        "survey_id": [f"{name}_{i:04d}" for i in range(n_host)],
+        "_original_row_index": np.arange(n_host, dtype=np.int64),
+        "_healpix32": _healpix32(ra, dec),
+    })
+    survey_dir = root / name
+    ou_dir = survey_dir / "oneuniverse"
+    ou_dir.mkdir(parents=True, exist_ok=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name=name, survey_type="spectroscopic",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+    )
+    return survey_dir
+
+
+def _synthetic_sn_catalog(root, name, parent_radec_z, seed=0):
+    """Co-located SN POINT dataset (SN near each host + one isolated SN)."""
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.format_spec import DataGeometry
+    from oneuniverse.data.manifest import LoaderSpec
+
+    rng = np.random.default_rng(seed)
+    offsets = rng.uniform(0.1, 0.6, len(parent_radec_z))
+    ra = parent_radec_z["ra"].to_numpy() + offsets / 3600.0
+    dec = parent_radec_z["dec"].to_numpy()
+    z = parent_radec_z["z"].to_numpy() + rng.normal(0.0, 3e-4, len(ra))
+
+    ra = np.append(ra, 200.0)
+    dec = np.append(dec, 45.0)
+    z = np.append(z, 0.15)
+
+    n = len(ra)
+    df = pd.DataFrame({
+        "ra": ra, "dec": dec, "z": z,
+        "z_type": np.array(["spec"] * n),
+        "z_err": np.full(n, 1e-3, dtype=np.float32),
+        "galaxy_id": np.arange(n, dtype=np.int64),
+        "survey_id": [f"{name}_{i:04d}" for i in range(n)],
+        "_original_row_index": np.arange(n, dtype=np.int64),
+        "_healpix32": _healpix32(ra, dec),
+    })
+    survey_dir = root / name
+    ou_dir = survey_dir / "oneuniverse"
+    ou_dir.mkdir(parents=True, exist_ok=True)
+    write_ouf_dataset(
+        df, ou_dir,
+        survey_name=name, survey_type="transient",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="syn", version="0"),
+    )
+    return survey_dir
+
+
+def test_build_subobject_links_end_to_end(tmp_path):
+    from oneuniverse.data.database import OneuniverseDatabase
+    from oneuniverse.data.oneuid_rules import CrossMatchRules
+
+    root = tmp_path / "db"
+    root.mkdir()
+    _synthetic_host_catalog(root, "host_galaxies", n_host=5, seed=0)
+    # Reload host ra/dec/z from the DatasetView to generate co-located SNe.
+    from oneuniverse.data.dataset_view import DatasetView
+    host_view = DatasetView.from_path(root / "host_galaxies")
+    host_df = host_view.read(columns=["ra", "dec", "z"])
+    _synthetic_sn_catalog(root, "sne", host_df, seed=0)
+
+    db = OneuniverseDatabase(root)
+    assert set(db.list().keys()) == {"host_galaxies", "sne"}
+
+    db.build_oneuid(
+        datasets=["host_galaxies", "sne"],
+        rules=CrossMatchRules(sky_tol_arcsec=0.05),
+        name="default",
+    )
+
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=2.0, dz_tol=1e-2,
+        relation="hosts", accept_ambiguous=False,
+    )
+    n = db.build_subobject_links(
+        rules=rules,
+        parent_datasets=["host_galaxies"],
+        child_datasets=["sne"],
+        name="sne_in_hosts",
+        oneuid_name="default",
+    )
+    assert n == 5
+
+    loaded = db.load_subobject_links("sne_in_hosts")
+    assert len(loaded) == 5
+    assert loaded.parent_datasets == ("host_galaxies",)
+    assert loaded.child_datasets == ("sne",)
+    assert loaded.oneuid_name == "default"
+    assert loaded.validity.is_current()
+    assert (loaded.table["confidence"] == 1.0).all()

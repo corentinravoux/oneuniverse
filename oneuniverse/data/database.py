@@ -592,6 +592,44 @@ class OneuniverseDatabase:
         from oneuniverse.data.oneuid import list_oneuids
         return list_oneuids(self, include_archived=include_archived)
 
+    def build_subobject_links(
+        self,
+        *,
+        rules,
+        parent_datasets: Sequence[str],
+        child_datasets: Sequence[str],
+        name: str = "default",
+        oneuid_name: str = "default",
+    ) -> int:
+        from oneuniverse.data.subobject import (
+            build_subobject_links as _build,
+        )
+        return _build(
+            self, rules=rules,
+            parent_datasets=parent_datasets,
+            child_datasets=child_datasets,
+            name=name, oneuid_name=oneuid_name,
+        )
+
+    def load_subobject_links(
+        self,
+        name: str = "default",
+        *,
+        as_of: Optional[dt.datetime] = None,
+    ):
+        from oneuniverse.data.subobject import (
+            load_subobject_links as _load,
+        )
+        return _load(Path(self.root), name=name, as_of=as_of)
+
+    def list_subobject_link_sets(
+        self, *, include_archived: bool = False,
+    ) -> List[str]:
+        from oneuniverse.data.subobject import (
+            list_subobject_link_sets as _list,
+        )
+        return _list(Path(self.root), include_archived=include_archived)
+
     def oneuid_query(self, index=None, *, name: str = "default") -> "OneuidQuery":
         """Return a tiered :class:`OneuidQuery` over the ONEUID index.
 
