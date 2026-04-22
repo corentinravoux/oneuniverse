@@ -304,8 +304,9 @@ def _build_subobject_pairs(
 def _load_oneuid_for(
     database, oneuid_name: str, datasets: Sequence[str],
 ) -> pd.DataFrame:
-    idx = database.load_oneuid(oneuid_name).restrict_to(list(datasets))
-    return idx.table[
+    tbl = database.load_oneuid(oneuid_name).table
+    sub = tbl[tbl["dataset"].isin(list(datasets))]
+    return sub[
         ["oneuid", "dataset", "row_index", "ra", "dec", "z"]
     ].copy()
 
