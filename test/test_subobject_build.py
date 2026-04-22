@@ -136,3 +136,142 @@ def test_manifest_rejects_unknown_format_version(tmp_path):
     man.write_text(json.dumps({"format_version": 99}))
     with pytest.raises(ValueError, match="format_version"):
         read_subobject_links(tmp_path, "bogus")
+
+
+def _radec_to_unit(ra_deg, dec_deg):
+    ra = np.radians(ra_deg)
+    dec = np.radians(dec_deg)
+    cd = np.cos(dec)
+    return np.column_stack([cd * np.cos(ra), cd * np.sin(ra), np.sin(dec)])
+
+
+def test_pair_builder_unambiguous():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({
+        "oneuid": [10],
+        "ra": [15.0], "dec": [0.0],
+        "z": [0.05],
+    })
+    children = pd.DataFrame({
+        "oneuid": [200],
+        "ra": [15.0 + 0.5 / 3600],
+        "dec": [0.0],
+        "z": [0.051],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=2e-2,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert row.parent_oneuid == 10
+    assert row.child_oneuid == 200
+    assert row.confidence == pytest.approx(1.0)
+    assert row.sky_sep_arcsec < 1.0
+    assert abs(abs(row.dz) - 1e-3) < 1e-6
+
+
+def test_pair_builder_rejects_out_of_tolerance():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({"oneuid":[10],"ra":[15.0],"dec":[0.0],"z":[0.05]})
+    children = pd.DataFrame({
+        "oneuid":[200],
+        "ra":[15.0 + 5.0 / 3600],
+        "dec":[0.0], "z":[0.051],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=2e-2,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 0
+
+
+def test_pair_builder_rejects_dz_outside():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({"oneuid":[10],"ra":[15.0],"dec":[0.0],"z":[0.05]})
+    children = pd.DataFrame({
+        "oneuid":[200],
+        "ra":[15.0 + 0.5 / 3600],
+        "dec":[0.0], "z":[0.2],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=1e-2,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 0
+
+
+def test_pair_builder_ambiguity_rejected_by_default():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({
+        "oneuid":[10, 11],
+        "ra":[15.0, 15.0 + 0.4 / 3600],
+        "dec":[0.0, 0.0],
+        "z":[0.050, 0.052],
+    })
+    children = pd.DataFrame({
+        "oneuid":[200],
+        "ra":[15.0 + 0.2 / 3600],
+        "dec":[0.0], "z":[0.051],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=2e-2, accept_ambiguous=False,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 0
+
+
+def test_pair_builder_ambiguity_accepted_with_flag():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({
+        "oneuid":[10, 11],
+        "ra":[15.0, 15.0 + 0.4 / 3600],
+        "dec":[0.0, 0.0],
+        "z":[0.050, 0.052],
+    })
+    children = pd.DataFrame({
+        "oneuid":[200],
+        "ra":[15.0 + 0.2 / 3600],
+        "dec":[0.0], "z":[0.051],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=2e-2, accept_ambiguous=True,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 2
+    assert out["confidence"].sum() == pytest.approx(1.0)
+    assert (out["confidence"] < 1.0).all()
+
+
+def test_pair_builder_missing_child_z():
+    from oneuniverse.data.subobject import _build_subobject_pairs
+
+    parents = pd.DataFrame({"oneuid":[10],"ra":[15.0],"dec":[0.0],"z":[0.05]})
+    children = pd.DataFrame({
+        "oneuid":[200],
+        "ra":[15.0 + 0.5 / 3600], "dec":[0.0],
+        "z":[np.nan],
+    })
+    rules = SubobjectRules(
+        parent_survey_type="spectroscopic",
+        child_survey_type="transient",
+        sky_tol_arcsec=1.5, dz_tol=None,
+    )
+    out = _build_subobject_pairs(parents, children, rules)
+    assert len(out) == 1
+    assert np.isnan(out.iloc[0].dz)
