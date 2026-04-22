@@ -81,6 +81,29 @@ class SubobjectLinks:
     def __len__(self) -> int:
         return len(self.table)
 
+    def children_of(self, parent_oneuid: int) -> np.ndarray:
+        """Child ONEUIDs under *parent_oneuid*, sorted by descending confidence."""
+        mask = self.table["parent_oneuid"].to_numpy() == parent_oneuid
+        if not mask.any():
+            return np.empty(0, dtype=np.int64)
+        sub = self.table.loc[mask].sort_values("confidence", ascending=False)
+        return sub["child_oneuid"].to_numpy(dtype=np.int64)
+
+    def parent_of(self, child_oneuid: int):
+        """Parent ONEUID of *child_oneuid*.
+
+        ``None`` if absent, ``int`` if unambiguous, ``list[int]`` sorted
+        by descending confidence when ambiguous candidates exist.
+        """
+        mask = self.table["child_oneuid"].to_numpy() == child_oneuid
+        if not mask.any():
+            return None
+        sub = self.table.loc[mask].sort_values("confidence", ascending=False)
+        parents = sub["parent_oneuid"].to_numpy(dtype=np.int64).tolist()
+        if len(parents) == 1:
+            return parents[0]
+        return parents
+
 
 def _rules_to_dict(r: SubobjectRules) -> dict:
     return r._canonical()
