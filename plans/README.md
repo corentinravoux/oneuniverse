@@ -12,6 +12,9 @@ audit done 2026-04-15).
 - [`2026-04-20-temporal-subobject-roadmap.md`](2026-04-20-temporal-subobject-roadmap.md) — roadmap for Phase 7 (temporal) + Phase 8 (sub-object).
 - [`2026-04-20-phase7-temporal.md`](2026-04-20-phase7-temporal.md) — detailed plan for Phase 7.
 - [`2026-04-20-phase8-subobject.md`](2026-04-20-phase8-subobject.md) — detailed plan for Phase 8.
+- [`2026-04-23-phase9-desi-dr1-onboarding.md`](2026-04-23-phase9-desi-dr1-onboarding.md) — detailed plan for Phase 9 (DESI DR1 QSO end-to-end + fragility audit).
+- [`2026-04-23-phase10-probabilistic-redshifts.md`](2026-04-23-phase10-probabilistic-redshifts.md) — detailed plan for Phase 10 (photo-z PDF storage + ProbabilisticRedshift reader).
+- [`2026-04-23-phase11-selection-weights.md`](2026-04-23-phase11-selection-weights.md) — detailed plan for Phase 11 (generic selection/completeness weight family).
 
 Phases 2–6 each get their own detailed plan document as we reach them
 (written using `superpowers:writing-plans`).
@@ -28,3 +31,6 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 6 | Housekeeping + `weight/` → `combine/` redesign | **complete (2026-04-20, 211/211 tests green)** |
 | 7 | Temporal data (t_obs + LIGHTCURVE + bitemporal database + versioned ONEUID) | **complete (2026-04-21, 265/265 tests green)** |
 | 8 | Sub-object hierarchy (bitemporal link sidecars) | **complete (2026-04-22, 292/292 tests green)** |
+| 9 | DESI DR1 QSO onboarding end-to-end + fragility audit | planned |
+| 10 | Probabilistic redshifts (photo-z PDFs: interp/quant/mixmod, FixedSizeList parquet, PdfSpec in manifest, ProbabilisticRedshift reader, PDF-aware weights) | planned |
+| 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | planned |
