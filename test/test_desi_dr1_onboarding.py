@@ -111,3 +111,40 @@ def test_oneuid_single_dataset(tmp_path):
     idx = db.load_oneuid("default")
     assert idx.table["oneuid"].nunique() == len(idx.table)
     assert set(idx.table["dataset"].unique()) == {"desi_qso"}
+
+
+def test_weighted_catalog_defaults(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    write_fake_desi_dr1_fits(raw_dir, n_rows=800, seed=5)
+
+    import numpy as np
+    from oneuniverse.data.converter import convert_survey
+    from oneuniverse.data.database import OneuniverseDatabase
+    from oneuniverse.data.oneuid_rules import CrossMatchRules
+    from oneuniverse.combine import WeightedCatalog
+
+    db_root = tmp_path / "db"
+    db_root.mkdir()
+    convert_survey(
+        "desi_qso",
+        raw_path=raw_dir,
+        output_dir=db_root / "desi_qso",
+        overwrite=True,
+    )
+    db = OneuniverseDatabase(db_root)
+    db.build_oneuid(
+        datasets=["desi_qso"],
+        rules=CrossMatchRules(sky_tol_arcsec=0.5),
+        name="default",
+    )
+    idx = db.load_oneuid("default")
+
+    wc = WeightedCatalog.from_oneuid(idx, db)
+    wc.fill_defaults(db)
+
+    assert "desi_qso" in repr(wc)
+    w = wc.total_weight("desi_qso")
+    assert np.all(np.isfinite(w))
+    assert np.all(w > 0)
+    assert len(w) == len(wc.catalogs["desi_qso"])
