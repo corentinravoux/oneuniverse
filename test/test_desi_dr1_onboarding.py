@@ -28,6 +28,39 @@ def test_loader_reads_fake_dr1(tmp_path):
     assert (df["z"] > 0).all()
 
 
+def test_cone_query_prunes_partitions(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    write_fake_desi_dr1_fits(raw_dir, n_rows=5000, seed=3)
+
+    from oneuniverse.data.converter import convert_survey
+    from oneuniverse.data.dataset_view import DatasetView
+    from oneuniverse.data.selection import Cone
+
+    ou_dir = tmp_path / "db" / "desi_qso"
+    convert_survey(
+        "desi_qso", raw_path=raw_dir, output_dir=ou_dir, overwrite=True,
+    )
+
+    view = DatasetView.from_path(ou_dir)
+    center_ra, center_dec, radius = 180.0, 20.0, 5.0
+    cone = Cone(ra=center_ra, dec=center_dec, radius=radius)
+    df = view.read(cone=cone, columns=["ra", "dec"])
+    assert len(df) > 0
+
+    import numpy as np
+    ra1 = np.radians(df["ra"].to_numpy())
+    dec1 = np.radians(df["dec"].to_numpy())
+    ra2 = np.radians(center_ra)
+    dec2 = np.radians(center_dec)
+    cos_d = (
+        np.sin(dec1) * np.sin(dec2)
+        + np.cos(dec1) * np.cos(dec2) * np.cos(ra1 - ra2)
+    )
+    sep_deg = np.degrees(np.arccos(np.clip(cos_d, -1.0, 1.0)))
+    assert (sep_deg <= radius + 1e-6).all()
+
+
 def test_convert_and_reread(tmp_path):
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
