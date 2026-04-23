@@ -26,3 +26,26 @@ def test_loader_reads_fake_dr1(tmp_path):
     assert {"ra", "dec", "z", "z_spec_err", "zwarning"}.issubset(df.columns)
     assert (df["zwarning"] == 0).all()
     assert (df["z"] > 0).all()
+
+
+def test_convert_and_reread(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    write_fake_desi_dr1_fits(raw_dir, n_rows=1000, seed=2)
+
+    from oneuniverse.data.converter import convert_survey
+    from oneuniverse.data.dataset_view import DatasetView
+
+    ou_dir = tmp_path / "db" / "desi_qso"
+    convert_survey(
+        "desi_qso",
+        raw_path=raw_dir,
+        output_dir=ou_dir,
+        overwrite=True,
+    )
+
+    view = DatasetView.from_path(ou_dir)
+    df = view.read(columns=["ra", "dec", "z", "z_type"])
+    assert len(df) > 0
+    assert set(df["z_type"].unique()) <= {"spec"}
+    assert df["ra"].between(0, 360).all()
