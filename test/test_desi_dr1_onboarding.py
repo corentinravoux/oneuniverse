@@ -82,3 +82,32 @@ def test_convert_and_reread(tmp_path):
     assert len(df) > 0
     assert set(df["z_type"].unique()) <= {"spec"}
     assert df["ra"].between(0, 360).all()
+
+
+def test_oneuid_single_dataset(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    write_fake_desi_dr1_fits(raw_dir, n_rows=1200, seed=4)
+
+    from oneuniverse.data.converter import convert_survey
+    from oneuniverse.data.database import OneuniverseDatabase
+    from oneuniverse.data.oneuid_rules import CrossMatchRules
+
+    db_root = tmp_path / "db"
+    db_root.mkdir()
+    convert_survey(
+        "desi_qso",
+        raw_path=raw_dir,
+        output_dir=db_root / "desi_qso",
+        overwrite=True,
+    )
+
+    db = OneuniverseDatabase(db_root)
+    db.build_oneuid(
+        datasets=["desi_qso"],
+        rules=CrossMatchRules(sky_tol_arcsec=0.5),
+        name="default",
+    )
+    idx = db.load_oneuid("default")
+    assert idx.table["oneuid"].nunique() == len(idx.table)
+    assert set(idx.table["dataset"].unique()) == {"desi_qso"}
