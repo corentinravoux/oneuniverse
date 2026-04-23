@@ -221,7 +221,7 @@ class DESIQSOLoader(BaseSurveyLoader):
 
         # Add oneuniverse standard columns
         n = len(df)
-        df["z_type"] = np.zeros(n, dtype=np.int8)  # spectroscopic
+        df["z_type"] = np.full(n, "spec", dtype="<U4")
         df["galaxy_id"] = np.arange(n, dtype=np.int64)
         df["survey_id"] = "desi_qso"
         df["z_spec"] = df["z"].astype(np.float32)

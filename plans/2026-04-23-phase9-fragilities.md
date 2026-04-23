@@ -9,16 +9,23 @@ Severity: S1 blocks onboarding, S2 degrades it, S3 cosmetic.
 
 ## Open
 
-### F1 (S1) — Converter rejects DESIQSOLoader output: missing `z_err`, `_healpix32`
-
-- **Where:** `convert_survey("desi_qso", raw_path=..., output_dir=..., overwrite=True)` → `write_ouf_dataset` at `oneuniverse/data/converter.py:131`.
-- **Error:** `ValueError: data_df missing required columns: ['z_err', '_healpix32']`
-- **Root cause:**
-  1. `DESIQSOLoader._COLUMN_MAP` maps FITS `ZERR` → `z_spec_err`; CORE schema requires `z_err`. Loader never promotes spectroscopic `z_spec_err` into the generic `z_err` column.
-  2. `_healpix32` is a partition key computed from `(ra, dec)`. Converter expects it to exist on the DataFrame before validation but neither the loader nor `write_ouf_dataset`'s pre-check derives it.
-- **Surfaced by:** `test_convert_and_reread`.
-- **Fix direction:** either (a) have `DESIQSOLoader._load_raw` alias `z_err = z_spec_err` when CORE group is active and let `write_ouf_dataset` auto-compute `_healpix32` from `ra`/`dec`, or (b) make the converter itself materialise both before validation. Prefer (b) — it closes the gap for every loader, not just DESI.
+_(none currently — see Closed.)_
 
 ## Closed
 
-_(none yet — populated as fixes land in Task 10.)_
+### F1 (S1) — Converter rejects loader output: missing `z_err`, `_healpix32`
+
+- **Where:** `convert_survey("desi_qso", …)` → `write_ouf_dataset` at `oneuniverse/data/converter.py:131`.
+- **Symptom:** `ValueError: data_df missing required columns: ['z_err', '_healpix32']`.
+- **Root cause:** DESI loader maps `ZERR`→`z_spec_err` but never materialises CORE `z_err`; partition key `_healpix32` was nobody's responsibility before `write_ouf_dataset`.
+- **Fix:** both promoted to the converter itself so every POINT loader benefits — `convert_survey` now aliases `z_spec_err`/`z_phot_err`→`z_err` and computes `_healpix32` via `healpy.ang2pix(NSIDE=32, nest=True)` from `ra`/`dec` before validation.
+- **Regression test:** `test/test_desi_dr1_onboarding.py::test_convert_and_reread`.
+- **Surfaced by:** Task 3.
+
+### F2 (S1) — DESI loader writes `z_type` as int8(0) instead of `"spec"`
+
+- **Where:** `oneuniverse/data/surveys/spectroscopic/desi_qso/loader.py` L224 (pre-fix).
+- **Symptom:** After conversion, `df["z_type"].unique() == np.array([0], dtype=int8)`; downstream `WeightedCatalog.fill_defaults` / z-type rules require the string `"spec"` (see `schema.Z_TYPE_VALUES`).
+- **Fix:** loader now writes `np.full(n, "spec", dtype="<U4")`.
+- **Regression test:** `test/test_desi_dr1_onboarding.py::test_convert_and_reread` asserts `set(df["z_type"].unique()) <= {"spec"}`.
+- **Surfaced by:** Task 3 (second run, after F1 fix).

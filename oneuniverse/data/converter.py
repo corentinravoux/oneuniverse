@@ -269,6 +269,25 @@ def convert_survey(
     if ORIGINAL_INDEX_COL not in df.columns:
         df[ORIGINAL_INDEX_COL] = np.arange(len(df), dtype=np.int64)
 
+    # Guarantee CORE `z_err`: promote the active redshift-group's error
+    # column when loaders only populate it (common pattern: spectroscopic
+    # group exposes `z_spec_err`, photometric exposes `z_phot_err`).
+    if "z_err" not in df.columns:
+        for src in ("z_spec_err", "z_phot_err"):
+            if src in df.columns:
+                df["z_err"] = df[src].astype(np.float32)
+                break
+
+    # Guarantee CORE/partition key `_healpix32`. Computed once here so
+    # every POINT loader gets partitioning "for free".
+    if "_healpix32" not in df.columns and {"ra", "dec"}.issubset(df.columns):
+        import healpy as hp
+        theta = np.radians(90.0 - df["dec"].to_numpy(dtype=np.float64))
+        phi = np.radians(df["ra"].to_numpy(dtype=np.float64))
+        df["_healpix32"] = hp.ang2pix(
+            HEALPIX_PARTITION_NSIDE, theta, phi, nest=True,
+        ).astype(np.int32)
+
     original_paths = []
     if config.data_filename:
         original_paths.append(survey_path / config.data_filename)
