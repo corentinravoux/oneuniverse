@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from oneuniverse.data._atomic import atomic_write_text
 from oneuniverse.data.format_spec import DataGeometry
+from oneuniverse.data.pdf import PdfSpec
 from oneuniverse.data.temporal import TemporalSpec
 from oneuniverse.data.validity import DatasetValidity
 
@@ -115,6 +116,7 @@ class Manifest:
     extra: Dict[str, Any] = field(default_factory=dict)
     temporal: Optional[TemporalSpec] = None
     validity: Optional[DatasetValidity] = None
+    pdf_spec: Optional[PdfSpec] = None
 
     @property
     def n_rows(self) -> int:
@@ -164,6 +166,7 @@ def _to_dict(m: Manifest) -> Dict[str, Any]:
     d["geometry"] = m.geometry.value
     d["temporal"] = m.temporal.to_dict() if m.temporal is not None else None
     d["validity"] = m.validity.to_dict() if m.validity is not None else None
+    d["pdf_spec"] = m.pdf_spec.to_dict() if m.pdf_spec is not None else None
     return d
 
 
@@ -262,6 +265,9 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     else:
         validity = None
 
+    pdf_raw = raw.get("pdf_spec")
+    pdf_spec = PdfSpec.from_dict(pdf_raw) if pdf_raw is not None else None
+
     return Manifest(
         oneuniverse_format_version=fmt,
         oneuniverse_schema_version=raw["oneuniverse_schema_version"],
@@ -278,4 +284,5 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         extra=raw.get("extra", {}),
         temporal=temporal,
         validity=validity,
+        pdf_spec=pdf_spec,
     )
