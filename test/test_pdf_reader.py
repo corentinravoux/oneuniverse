@@ -95,3 +95,39 @@ def test_datasetview_load_pdf(tmp_path):
     pz = view.load_pdf()
     assert len(pz) == 32
     assert pz.spec == spec
+
+
+def test_quant_reader_recovers_moments():
+    pytest = __import__("pytest")
+    sp = pytest.importorskip("scipy.stats")
+    rng = np.random.default_rng(0)
+    n = 10
+    mu = rng.uniform(0.2, 1.8, size=n)
+    sigma = rng.uniform(0.02, 0.08, size=n)
+    levels = np.linspace(0.005, 0.995, 81)
+    qvals = np.stack([sp.norm.ppf(levels, loc=mu[i], scale=sigma[i]) for i in range(n)])
+    spec = PdfSpec(
+        parameterisation="quant", n_components=len(levels),
+        grid=None, grid_kind="quantile",
+        quant_levels=list(levels.astype(float)),
+    )
+    pz = ProbabilisticRedshift(spec, values=qvals, grid=None)
+    np.testing.assert_allclose(pz.mean(), mu, atol=5e-2)
+    np.testing.assert_allclose(pz.std(), sigma, rtol=2e-1)
+
+
+def test_mixmod_reader_recovers_moments():
+    rng = np.random.default_rng(1)
+    n, K = 8, 3
+    mu = rng.uniform(0.1, 1.9, size=(n, K)).astype(np.float64)
+    sigma = rng.uniform(0.03, 0.1, size=(n, K)).astype(np.float64)
+    w = rng.dirichlet(np.ones(K), size=n)
+    spec = PdfSpec(
+        parameterisation="mixmod", n_components=K, grid=None,
+        grid_kind="component",
+    )
+    pz = ProbabilisticRedshift.from_mixmod(spec, mu, sigma, w)
+    expected_mean = (w * mu).sum(axis=1)
+    np.testing.assert_allclose(pz.mean(), expected_mean, rtol=1e-6)
+    samples = pz.sample(n_per=2000, seed=0)
+    assert samples.shape == (n, 2000)
