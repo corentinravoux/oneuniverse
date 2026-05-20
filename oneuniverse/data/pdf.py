@@ -71,15 +71,24 @@ class PdfSpec:
             raise ValueError("interp parameterisation requires a non-empty grid")
         if self.parameterisation == "quant" and not self.quant_levels:
             raise ValueError("quant parameterisation requires quant_levels")
+        # Normalise sequences to plain Python floats so JSON round-trips
+        # (np.float32 / np.float64 are equality-noisy after str↔float).
+        if self.grid is not None:
+            object.__setattr__(self, "grid", [float(x) for x in self.grid])
+        if self.quant_levels is not None:
+            object.__setattr__(
+                self, "quant_levels", [float(x) for x in self.quant_levels],
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "parameterisation": self.parameterisation,
             "n_components": int(self.n_components),
-            "grid": list(self.grid) if self.grid is not None else None,
+            "grid": [float(x) for x in self.grid] if self.grid is not None else None,
             "grid_kind": self.grid_kind,
             "quant_levels": (
-                list(self.quant_levels) if self.quant_levels is not None else None
+                [float(x) for x in self.quant_levels]
+                if self.quant_levels is not None else None
             ),
             "extra": dict(self.extra),
         }

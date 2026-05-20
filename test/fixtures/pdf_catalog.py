@@ -43,3 +43,24 @@ def make_gaussian_pdf_catalog(
         "z_pdf_std": sigma,
     })
     return df, grid
+
+
+def materialise_core_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the OUF CORE columns the converter validates against.
+
+    Mirrors what ``convert_survey`` derives for real loaders so tests can
+    feed a photo-z PDF fixture straight to ``write_ouf_dataset``.
+    """
+    import healpy as hp
+    n = len(df)
+    df = df.copy()
+    df["z"] = df["z_pdf_mean"].astype(np.float32)
+    df["z_type"] = np.full(n, "phot_pdf", dtype="<U8")
+    df["z_err"] = df["z_pdf_std"].astype(np.float32)
+    df["galaxy_id"] = np.arange(n, dtype=np.int64)
+    df["survey_id"] = np.full(n, "pdf_fake", dtype="<U32")
+    df["_original_row_index"] = np.arange(n, dtype=np.int64)
+    theta = np.radians(90.0 - df["dec"].to_numpy(dtype=np.float64))
+    phi = np.radians(df["ra"].to_numpy(dtype=np.float64))
+    df["_healpix32"] = hp.ang2pix(32, theta, phi, nest=True).astype(np.int32)
+    return df

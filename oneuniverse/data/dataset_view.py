@@ -216,6 +216,24 @@ class DatasetView:
         )
         return table.to_pandas()
 
+    def load_pdf(self):
+        """Return a :class:`ProbabilisticRedshift` bound to this dataset.
+
+        Raises
+        ------
+        ValueError
+            If the manifest has no ``pdf_spec`` (dataset is not probabilistic).
+        """
+        from oneuniverse.data.pdf import ProbabilisticRedshift
+        spec = self.manifest.pdf_spec
+        if spec is None:
+            raise ValueError(
+                f"DatasetView({self.ou_dir}): manifest has no pdf_spec; "
+                f"dataset is not probabilistic."
+            )
+        df = self.read()
+        return ProbabilisticRedshift.from_dataframe(df, spec)
+
     def objects_table(
         self, columns: Optional[Sequence[str]] = None,
     ) -> pa.Table:

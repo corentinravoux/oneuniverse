@@ -9,7 +9,9 @@ import pyarrow.parquet as pq
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from fixtures.pdf_catalog import make_gaussian_pdf_catalog  # noqa: E402
+from fixtures.pdf_catalog import (  # noqa: E402
+    make_gaussian_pdf_catalog, materialise_core_cols,
+)
 
 from oneuniverse.data.converter import write_ouf_dataset  # noqa: E402
 from oneuniverse.data.dataset_view import DatasetView  # noqa: E402
@@ -18,31 +20,13 @@ from oneuniverse.data.manifest import LoaderSpec  # noqa: E402
 from oneuniverse.data.pdf import PdfSpec, ProbabilisticRedshift  # noqa: E402
 
 
-def _materialise_core_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Add the CORE columns the converter validates against."""
-    n = len(df)
-    df = df.copy()
-    df["z"] = df["z_pdf_mean"].astype(np.float32)
-    df["z_type"] = np.full(n, "phot_pdf", dtype="<U8")
-    df["z_err"] = df["z_pdf_std"].astype(np.float32)
-    df["galaxy_id"] = np.arange(n, dtype=np.int64)
-    df["survey_id"] = np.full(n, "pdf_fake", dtype="<U32")
-    df["_original_row_index"] = np.arange(n, dtype=np.int64)
-    # _healpix32 added by ang2pix below; mimics what convert_survey does.
-    import healpy as hp
-    theta = np.radians(90.0 - df["dec"].to_numpy(dtype=np.float64))
-    phi = np.radians(df["ra"].to_numpy(dtype=np.float64))
-    df["_healpix32"] = hp.ang2pix(32, theta, phi, nest=True).astype(np.int32)
-    return df
-
-
 def test_converter_writes_fixed_size_list_for_pdf(tmp_path):
     df, grid = make_gaussian_pdf_catalog(n_rows=200, n_grid=101, seed=2)
     spec = PdfSpec(
         parameterisation="interp", n_components=len(grid),
         grid=list(grid), grid_kind="z",
     )
-    df = _materialise_core_cols(df)
+    df = materialise_core_cols(df)
 
     out_dir = tmp_path / "pdf_fake" / "oneuniverse"
     out_dir.mkdir(parents=True)
