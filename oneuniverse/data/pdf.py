@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+import pandas as pd
+
 
 class PdfParameterisation(str, Enum):
     INTERP = "interp"
@@ -93,3 +96,82 @@ class PdfSpec:
             ),
             extra=dict(d.get("extra", {})),
         )
+
+
+class ProbabilisticRedshift:
+    """Vectorised PDF accessor bound to a :class:`PdfSpec`.
+
+    Current Task 5 supports ``parameterisation == "interp"`` only; the
+    ``quant`` and ``mixmod`` branches land in Task 8. All methods return
+    one value per row (or ``(n_rows, ...)`` for sampling/CDF).
+    """
+
+    def __init__(
+        self,
+        spec: PdfSpec,
+        values: np.ndarray,
+        grid: np.ndarray,
+    ) -> None:
+        if spec.parameterisation != "interp":
+            raise NotImplementedError(
+                f"parameterisation {spec.parameterisation!r} not yet supported; "
+                f"interp only at Task 5."
+            )
+        if values.ndim != 2:
+            raise ValueError(f"values must be 2D, got shape {values.shape}")
+        if values.shape[1] != len(grid):
+            raise ValueError(
+                f"values second axis ({values.shape[1]}) must match "
+                f"grid length ({len(grid)})"
+            )
+        self.spec = spec
+        self.values = np.asarray(values, dtype=np.float64)
+        self.grid = np.asarray(grid, dtype=np.float64)
+
+    @classmethod
+    def from_dataframe(
+        cls, df: pd.DataFrame, spec: PdfSpec,
+    ) -> "ProbabilisticRedshift":
+        raw = df["z_pdf_values"].to_numpy()
+        values = np.stack([np.asarray(r, dtype=np.float64) for r in raw])
+        if spec.grid is None:
+            raise ValueError("interp PdfSpec.grid must be set")
+        return cls(spec, values, np.asarray(spec.grid, dtype=np.float64))
+
+    def __len__(self) -> int:
+        return self.values.shape[0]
+
+    def mean(self) -> np.ndarray:
+        dz = self.grid[1] - self.grid[0]
+        return (self.values * self.grid[None, :]).sum(axis=1) * dz
+
+    def std(self) -> np.ndarray:
+        dz = self.grid[1] - self.grid[0]
+        m = self.mean()
+        var = (
+            self.values * (self.grid[None, :] - m[:, None]) ** 2
+        ).sum(axis=1) * dz
+        return np.sqrt(np.maximum(var, 0.0))
+
+    def cdf(self) -> np.ndarray:
+        dz = self.grid[1] - self.grid[0]
+        c = np.cumsum(self.values, axis=1) * dz
+        c /= np.maximum(c[:, -1:], 1e-300)
+        return c
+
+    def ppf(self, q) -> np.ndarray:
+        q = np.atleast_1d(np.asarray(q, dtype=np.float64))
+        c = self.cdf()
+        out = np.empty((c.shape[0], q.size), dtype=np.float64)
+        for i in range(c.shape[0]):
+            out[i] = np.interp(q, c[i], self.grid)
+        return out[:, 0] if q.size == 1 else out
+
+    def sample(self, n_per: int, seed=None) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        q = rng.uniform(0.0, 1.0, size=(len(self), n_per))
+        c = self.cdf()
+        out = np.empty_like(q)
+        for i in range(len(self)):
+            out[i] = np.interp(q[i], c[i], self.grid)
+        return out
