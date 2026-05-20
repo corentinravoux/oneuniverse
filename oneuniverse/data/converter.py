@@ -58,6 +58,9 @@ from oneuniverse.data.manifest import (
     PartitionSpec,
     PartitionStats,
     PartitioningSpec,
+)
+from oneuniverse.data.pdf import PdfSpec
+from oneuniverse.data.manifest import (
     read_manifest,
     write_manifest,
 )
@@ -89,6 +92,7 @@ def write_ouf_dataset(
     stats_builder=None,
     temporal: Optional[TemporalSpec] = None,
     validity: Optional[DatasetValidity] = None,
+    pdf_spec: Optional[PdfSpec] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -150,7 +154,7 @@ def write_ouf_dataset(
     # Partitions ---------------------------------------------------------
     if geometry is DataGeometry.POINT:
         partitions = _write_partitions_by_healpix(
-            df, out_dir, compression, stats_builder,
+            df, out_dir, compression, stats_builder, pdf_spec,
         )
         if partitioning is None:
             partitioning = PartitioningSpec(
@@ -160,7 +164,7 @@ def write_ouf_dataset(
             )
     else:
         partitions = _write_partitions(
-            df, out_dir, partition_rows, compression, stats_builder,
+            df, out_dir, partition_rows, compression, stats_builder, pdf_spec,
         )
 
     # Original-file specs ------------------------------------------------
@@ -215,6 +219,7 @@ def write_ouf_dataset(
         extra=extra,
         temporal=temporal,
         validity=validity,
+        pdf_spec=pdf_spec,
     )
     write_manifest(out_dir / MANIFEST_FILENAME, manifest)
     return manifest
@@ -536,9 +541,9 @@ def _write_partitions(
     partition_rows: int,
     compression: str,
     stats_builder=None,
+    pdf_spec: Optional[PdfSpec] = None,
 ) -> List[PartitionSpec]:
     """Write *df* as fixed-size Parquet partitions + return typed specs."""
-    import pyarrow as pa
     import pyarrow.parquet as pq
 
     n_total = len(df)
@@ -551,7 +556,7 @@ def _write_partitions(
 
         part_name = f"part_{i:04d}.parquet"
         part_path = out_dir / part_name
-        table = pa.Table.from_pandas(chunk, preserve_index=False)
+        table = _chunk_to_table(chunk, pdf_spec)
         pq.write_table(table, part_path, compression=compression)
 
         stats = stats_builder(chunk) if stats_builder else PartitionStats()
@@ -575,6 +580,7 @@ def _write_partitions_by_healpix(
     out_dir: Path,
     compression: str,
     stats_builder=None,
+    pdf_spec: Optional[PdfSpec] = None,
 ) -> List[PartitionSpec]:
     """Write *df* as one Parquet file per ``_healpix32`` cell.
 
@@ -582,7 +588,6 @@ def _write_partitions_by_healpix(
     ``PartitionSpec.healpix_cell`` records the cell id for later
     pruning.
     """
-    import pyarrow as pa
     import pyarrow.parquet as pq
 
     if "_healpix32" not in df.columns:
@@ -598,7 +603,7 @@ def _write_partitions_by_healpix(
         cell_dir.mkdir(parents=True, exist_ok=True)
         rel_name = f"data/{cell_dir.name}/part_0000.parquet"
         part_path = out_dir / rel_name
-        table = pa.Table.from_pandas(chunk, preserve_index=False)
+        table = _chunk_to_table(chunk, pdf_spec)
         pq.write_table(table, part_path, compression=compression)
 
         stats = stats_builder(chunk) if stats_builder else PartitionStats()
@@ -615,6 +620,41 @@ def _write_partitions_by_healpix(
             rel_name, len(chunk), part_path.stat().st_size / 1e6,
         )
     return specs
+
+
+def _chunk_to_table(chunk: pd.DataFrame, pdf_spec: Optional[PdfSpec]):
+    """Convert a DataFrame chunk to a pyarrow Table, casting PDF list
+    columns to FixedSizeList[f4, n_components] when ``pdf_spec`` is set.
+
+    Without ``pdf_spec``, falls back to ``pa.Table.from_pandas``.
+    """
+    import pyarrow as pa
+
+    if pdf_spec is None:
+        return pa.Table.from_pandas(chunk, preserve_index=False)
+
+    n = int(pdf_spec.n_components)
+    list_cols = ["z_pdf_values"]
+    if pdf_spec.parameterisation == "mixmod":
+        list_cols += ["z_pdf_sigma", "z_pdf_weights"]
+    list_cols = [c for c in list_cols if c in chunk.columns]
+
+    scalar = chunk.drop(columns=list_cols)
+    table = pa.Table.from_pandas(scalar, preserve_index=False)
+
+    elt_type = pa.float32()
+    for col in list_cols:
+        arr = np.stack(
+            [np.asarray(r, dtype=np.float32) for r in chunk[col].to_numpy()]
+        )
+        if arr.shape[1] != n:
+            raise ValueError(
+                f"column {col!r}: expected {n} components, got {arr.shape[1]}"
+            )
+        flat = pa.array(arr.reshape(-1), type=elt_type)
+        fsl = pa.FixedSizeListArray.from_arrays(flat, n)
+        table = table.append_column(col, fsl)
+    return table
 
 
 def _write_single_parquet(
