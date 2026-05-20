@@ -9,8 +9,7 @@ via :meth:`WeightedCatalog.add_weight`.
 """
 from __future__ import annotations
 
-from types import MappingProxyType
-from typing import Callable, Mapping, Tuple
+from typing import Callable, Dict, Tuple
 
 from oneuniverse.combine.weights.base import Weight
 from oneuniverse.combine.weights.ivar import InverseVarianceWeight
@@ -36,12 +35,12 @@ def _ivar_pdf_width() -> Weight:
     return PdfWidthIVarWeight(std_column="z_pdf_std")
 
 
-_DEFAULTS: Mapping[Key, Factory] = MappingProxyType({
+_DEFAULTS: Dict[Key, Factory] = {
     ("spectroscopic", "spec"): _ivar_spec,
     ("photometric", "phot"): _ivar_phot,
     ("peculiar_velocity", "pec"): _ivar_pec,
     ("photometric", "phot_pdf"): _ivar_pdf_width,
-})
+}
 
 
 def default_weight_for(survey_type: str, z_type: str) -> Weight:
@@ -68,3 +67,30 @@ def default_weight_for(survey_type: str, z_type: str) -> Weight:
             f"No default weight registered for (survey_type={survey_type!r}, "
             f"z_type={z_type!r}). Known pairs: {list(_DEFAULTS)}"
         ) from None
+
+
+def register_default(
+    survey_type: str, z_type: str, factory: Factory,
+) -> None:
+    """Register a default :class:`Weight` factory for ``(survey_type, z_type)``.
+
+    Raises :class:`ValueError` if the key already has a registration —
+    callers must explicitly :func:`unregister_default` first to avoid
+    silent clobber of the canonical defaults.
+    """
+    key = (survey_type, z_type)
+    if key in _DEFAULTS:
+        raise ValueError(
+            f"register_default: {key!r} is already registered "
+            f"(call unregister_default first if you intend to replace it)"
+        )
+    _DEFAULTS[key] = factory
+
+
+def unregister_default(survey_type: str, z_type: str) -> None:
+    """Remove the default factory registered for ``(survey_type, z_type)``.
+
+    Raises :class:`KeyError` if no such key is registered.
+    """
+    key = (survey_type, z_type)
+    del _DEFAULTS[key]
