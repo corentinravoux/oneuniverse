@@ -7,6 +7,10 @@ Composable per-object weight primitives used by
 from oneuniverse.combine.weights.base import ProductWeight, Weight
 from oneuniverse.combine.weights.fkp import FKPWeight
 from oneuniverse.combine.weights.ivar import InverseVarianceWeight
+from oneuniverse.combine.weights.pdf import (
+    PdfMeanRedshiftWeight,
+    PdfWidthIVarWeight,
+)
 from oneuniverse.combine.weights.quality import (
     ColumnWeight,
     ConstantWeight,
@@ -22,5 +26,7 @@ __all__ = [
     "InverseVarianceWeight",
     "FKPWeight",
     "QualityMaskWeight",
+    "PdfMeanRedshiftWeight",
+    "PdfWidthIVarWeight",
     "default_weight_for",
 ]

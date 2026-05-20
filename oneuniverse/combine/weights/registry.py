@@ -31,10 +31,16 @@ def _ivar_pec() -> Weight:
     return InverseVarianceWeight("velocity_error", name="ivar(vpec)")
 
 
+def _ivar_pdf_width() -> Weight:
+    from oneuniverse.combine.weights.pdf import PdfWidthIVarWeight
+    return PdfWidthIVarWeight(std_column="z_pdf_std")
+
+
 _DEFAULTS: Mapping[Key, Factory] = MappingProxyType({
     ("spectroscopic", "spec"): _ivar_spec,
     ("photometric", "phot"): _ivar_phot,
     ("peculiar_velocity", "pec"): _ivar_pec,
+    ("photometric", "phot_pdf"): _ivar_pdf_width,
 })
 
 
