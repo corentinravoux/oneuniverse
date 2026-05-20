@@ -7,7 +7,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from fixtures.pdf_catalog import make_gaussian_pdf_catalog  # noqa: E402
+from fixtures.pdf_catalog import (  # noqa: E402
+    make_gaussian_pdf_catalog, materialise_core_cols,
+)
 
 from oneuniverse.data.pdf import PdfSpec, ProbabilisticRedshift  # noqa: E402
 
@@ -65,3 +67,31 @@ def test_reader_sample_covers_pdf():
     # 5-sigma per-row band: with 64 rows, fluke rate ~ 6e-7 each, ~4e-5 overall.
     tol = 5.0 * pz.std() / np.sqrt(500)
     assert (np.abs(emp - pz.mean()) < tol).all()
+
+
+def test_datasetview_load_pdf(tmp_path):
+    from oneuniverse.data.converter import write_ouf_dataset
+    from oneuniverse.data.dataset_view import DatasetView
+    from oneuniverse.data.format_spec import DataGeometry
+    from oneuniverse.data.manifest import LoaderSpec
+
+    df, grid = make_gaussian_pdf_catalog(n_rows=32, n_grid=51, seed=3)
+    spec = PdfSpec(
+        parameterisation="interp", n_components=len(grid),
+        grid=list(grid), grid_kind="z",
+    )
+    df = materialise_core_cols(df)
+    out_dir = tmp_path / "pdf2" / "oneuniverse"
+    out_dir.mkdir(parents=True)
+    write_ouf_dataset(
+        df=df, out_dir=out_dir,
+        survey_name="pdf2", survey_type="photometric",
+        geometry=DataGeometry.POINT,
+        loader=LoaderSpec(name="pdf2", version="0"),
+        pdf_spec=spec,
+    )
+
+    view = DatasetView.from_path(out_dir.parent)
+    pz = view.load_pdf()
+    assert len(pz) == 32
+    assert pz.spec == spec
