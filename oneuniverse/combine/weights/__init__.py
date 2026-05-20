@@ -6,6 +6,7 @@ Composable per-object weight primitives used by
 """
 from oneuniverse.combine.weights.base import ProductWeight, Weight
 from oneuniverse.combine.weights.fkp import FKPWeight
+from oneuniverse.combine.weights.hpmap import HealpixMapWeight
 from oneuniverse.combine.weights.ivar import InverseVarianceWeight
 from oneuniverse.combine.weights.pdf import (
     PdfMeanRedshiftWeight,
@@ -16,7 +17,15 @@ from oneuniverse.combine.weights.quality import (
     ConstantWeight,
     QualityMaskWeight,
 )
-from oneuniverse.combine.weights.registry import default_weight_for
+from oneuniverse.combine.weights.registry import (
+    default_weight_for, register_default, unregister_default,
+)
+from oneuniverse.combine.weights.selection import (
+    CompletenessWeight,
+    FiberCollisionWeight,
+    ZFailureWeight,
+    boss_total_weight,
+)
 
 __all__ = [
     "Weight",
@@ -26,7 +35,14 @@ __all__ = [
     "InverseVarianceWeight",
     "FKPWeight",
     "QualityMaskWeight",
+    "HealpixMapWeight",
     "PdfMeanRedshiftWeight",
     "PdfWidthIVarWeight",
+    "CompletenessWeight",
+    "FiberCollisionWeight",
+    "ZFailureWeight",
+    "boss_total_weight",
     "default_weight_for",
+    "register_default",
+    "unregister_default",
 ]
