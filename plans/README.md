@@ -33,4 +33,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 8 | Sub-object hierarchy (bitemporal link sidecars) | **complete (2026-04-22, 292/292 tests green)** |
 | 9 | DESI DR1 QSO onboarding end-to-end + fragility audit | **complete (2026-04-23, 299/299 tests green; F1+F2 fixed, F3 deferred)** |
 | 10 | Probabilistic redshifts (photo-z PDFs: interp/quant/mixmod, FixedSizeList parquet, PdfSpec in manifest, ProbabilisticRedshift reader, PDF-aware weights) | **complete (2026-04-23, 326/326 tests green)** |
-| 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | planned |
+| 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | **complete (2026-04-23, 345/345 tests green)** |
