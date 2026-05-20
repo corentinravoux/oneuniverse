@@ -55,7 +55,7 @@ CORE_COLUMNS: Tuple[ColumnDef, ...] = (
 )
 
 # Allowed tags for the required ``z_type`` CORE column.
-Z_TYPE_VALUES: Tuple[str, ...] = ("spec", "phot", "pv", "none")
+Z_TYPE_VALUES: Tuple[str, ...] = ("spec", "phot", "phot_pdf", "pv", "none")
 
 SPECTROSCOPIC_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("z_spec", "f4", "", "Spectroscopic redshift"),
