@@ -124,6 +124,32 @@ QSO_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("n_dla", "i1", "", "Number of DLA systems detected", required=False),
 )
 
+PROBABILISTIC_REDSHIFT_COLUMNS: Tuple[ColumnDef, ...] = (
+    ColumnDef(
+        "z_pdf_kind", "U8", "",
+        "PDF parameterisation tag: interp | quant | mixmod",
+    ),
+    ColumnDef(
+        "z_pdf_values", "f4", "",
+        "PDF values: interp p(z), quant z(q), or mixmod component means",
+    ),
+    ColumnDef(
+        "z_pdf_sigma", "f4", "",
+        "mixmod only: component std devs", required=False,
+    ),
+    ColumnDef(
+        "z_pdf_weights", "f4", "",
+        "mixmod only: component weights", required=False,
+    ),
+    ColumnDef("z_pdf_mean", "f4", "", "PDF first moment", required=False),
+    ColumnDef("z_pdf_std", "f4", "", "PDF standard deviation", required=False),
+    ColumnDef("z_pdf_median", "f4", "", "PDF median", required=False),
+    ColumnDef("z_pdf_mode", "f4", "", "PDF mode", required=False),
+    ColumnDef("z_pdf_l68", "f4", "", "PDF 16th percentile", required=False),
+    ColumnDef("z_pdf_u68", "f4", "", "PDF 84th percentile", required=False),
+)
+
+
 SNIA_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("z_cmb", "f4", "", "CMB-frame redshift"),
     ColumnDef("mu", "f4", "mag", "Distance modulus"),
@@ -144,6 +170,7 @@ COLUMN_GROUPS: Dict[str, Tuple[ColumnDef, ...]] = {
     "peculiar_velocity": PV_COLUMNS,
     "qso": QSO_COLUMNS,
     "snia": SNIA_COLUMNS,
+    "probabilistic_redshift": PROBABILISTIC_REDSHIFT_COLUMNS,
 }
 
 
