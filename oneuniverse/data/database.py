@@ -279,7 +279,6 @@ class OneuniverseDatabase:
         **kwargs
             Forwarded to :class:`OneuniverseDatabase` (e.g. ``name_from_path``).
         """
-        from oneuniverse.data._config import set_data_root
         from oneuniverse.data._registry import _REGISTRY
 
         raw_root = Path(raw_root).expanduser().resolve()
@@ -287,9 +286,6 @@ class OneuniverseDatabase:
         if not raw_root.is_dir():
             raise FileNotFoundError(f"Raw root does not exist: {raw_root}")
         database_root.mkdir(parents=True, exist_ok=True)
-
-        # Point the global data-root at the raw tree so loaders can find files.
-        set_data_root(raw_root)
 
         from oneuniverse.data.converter import convert_survey  # local import
 
