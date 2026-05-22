@@ -32,6 +32,7 @@ all = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    "pytest-xdist>=3.0",
     "fitsio>=1.1",
     "pyarrow>=12.0",
     "healpy>=1.16",
