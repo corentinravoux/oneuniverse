@@ -650,7 +650,7 @@ class OneuidQuery:
 
         col_arg = list(columns) if columns is not None else None
         pieces: List[pd.DataFrame] = []
-        for ds_name, grp in sub.groupby("dataset", sort=False):
+        for ds_name, grp in sub.groupby("dataset", sort=False, observed=False):
             view = self.database[ds_name]
             available = set(view.columns)
             want: Optional[List[str]] = None
