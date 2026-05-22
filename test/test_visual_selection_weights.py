@@ -47,7 +47,11 @@ def test_phase11_hpmap_overlay():
     plt.colorbar(sc, ax=ax, label="HealpixMapWeight value")
     ax.set_xlabel("RA [deg]"); ax.set_ylabel("Dec [deg]")
     ax.set_title("Points coloured by pixel weight")
-    fig.tight_layout()
+    # mollview + add_subplot mix incompatible with tight_layout — use
+    # explicit subplots_adjust instead.
+    fig.subplots_adjust(
+        left=0.05, right=0.98, top=0.92, bottom=0.10, wspace=0.25,
+    )
     out_png = OUT / "phase11_hpmap_overlay.png"
     fig.savefig(out_png, dpi=110)
     plt.close(fig)
