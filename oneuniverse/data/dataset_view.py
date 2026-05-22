@@ -270,8 +270,14 @@ class DatasetView:
         """
         if cone is None and skypatch is None and healpix_cells is None:
             return None
+        # Read partitioning NSIDE/ordering from the manifest. Legacy
+        # manifests with no partitioning block fall back to the global
+        # default (NSIDE=32, NEST).
         nside = HEALPIX_PARTITION_NSIDE
         nest = HEALPIX_PARTITION_NEST
+        if self.manifest.partitioning is not None:
+            nside = int(self.manifest.partitioning.extra.get("nside", nside))
+            nest = bool(self.manifest.partitioning.extra.get("nest", nest))
         acc: set = set()
         if healpix_cells is not None:
             acc.update(int(c) for c in healpix_cells)
