@@ -16,6 +16,8 @@ audit done 2026-04-15).
 - [`2026-04-23-phase10-probabilistic-redshifts.md`](2026-04-23-phase10-probabilistic-redshifts.md) — detailed plan for Phase 10 (photo-z PDF storage + ProbabilisticRedshift reader).
 - [`2026-04-23-phase11-selection-weights.md`](2026-04-23-phase11-selection-weights.md) — detailed plan for Phase 11 (generic selection/completeness weight family).
 - [`2026-05-22-phase12-carried-debt.md`](2026-05-22-phase12-carried-debt.md) — detailed plan for Phase 12 (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed D2, convert_survey loader= overload D3).
+- [`2026-05-22-phase14-performance-footprint.md`](2026-05-22-phase14-performance-footprint.md) — detailed plan for Phase 14 (suite profiling, shared eBOSS fixture, pushdown audit, optional xdist; parallel writer deferred).
+- [`2026-05-22-phase15-docs-stability.md`](2026-05-22-phase15-docs-stability.md) — detailed plan for Phase 15 (Sphinx scaffold, warning audit, visual-test goldens, CLAUDE.md).
 
 Phases 2–6 each get their own detailed plan document as we reach them
 (written using `superpowers:writing-plans`).
@@ -36,3 +38,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 10 | Probabilistic redshifts (photo-z PDFs: interp/quant/mixmod, FixedSizeList parquet, PdfSpec in manifest, ProbabilisticRedshift reader, PDF-aware weights) | **complete (2026-04-23, 326/326 tests green)** |
 | 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | **complete (2026-04-23, 345/345 tests green)** |
 | 12 | Carried-over debt cleanup (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed= D2, convert_survey loader= overload D3) | **complete (2026-05-22, 361/361 tests green)** |
+| 14 | Performance + footprint (suite-time profiling, shared eBOSS fixture, pushdown audit, optional pytest-xdist; parallel writer T5 deferred) | **complete (2026-05-22, 364/364 tests green; suite 277s → 205s)** |
