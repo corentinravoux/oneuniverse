@@ -42,6 +42,7 @@ from oneuniverse.data.format_spec import (
     HEALPIX_PARTITION_NSIDE,
     HEALPIX_SUBDIR_FMT,
     MANIFEST_FILENAME,
+    MIN_ROWS_PER_PARTITION,
     OBJECTS_FILENAME,
     ONEUNIVERSE_SUBDIR,
     ORIGINAL_INDEX_COL,
@@ -93,6 +94,7 @@ def write_ouf_dataset(
     temporal: Optional[TemporalSpec] = None,
     validity: Optional[DatasetValidity] = None,
     pdf_spec: Optional[PdfSpec] = None,
+    partition_nside: Optional[int] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -153,14 +155,19 @@ def write_ouf_dataset(
 
     # Partitions ---------------------------------------------------------
     if geometry is DataGeometry.POINT:
+        chosen_nside = (
+            int(partition_nside) if partition_nside is not None
+            else _auto_partition_nside(len(df))
+        )
         partitions = _write_partitions_by_healpix(
             df, out_dir, compression, stats_builder, pdf_spec,
+            partition_nside=chosen_nside,
         )
         if partitioning is None:
             partitioning = PartitioningSpec(
                 scheme="healpix",
                 column="_healpix32",
-                extra={"nside": HEALPIX_PARTITION_NSIDE, "nest": True},
+                extra={"nside": chosen_nside, "nest": True},
             )
     else:
         partitions = _write_partitions(
@@ -575,34 +582,65 @@ def _write_partitions(
     return specs
 
 
+def _auto_partition_nside(
+    n_rows: int, min_rows: int = MIN_ROWS_PER_PARTITION,
+) -> int:
+    """Return the largest valid NSIDE (power of 2, ≤ HEALPIX_PARTITION_NSIDE)
+    for which the *mean* rows-per-cell ≥ ``min_rows``. Floors at 1.
+    """
+    nside = HEALPIX_PARTITION_NSIDE
+    while nside > 1:
+        npix = 12 * nside * nside
+        if n_rows >= min_rows * npix:
+            return nside
+        nside //= 2
+    return 1
+
+
 def _write_partitions_by_healpix(
     df: pd.DataFrame,
     out_dir: Path,
     compression: str,
     stats_builder=None,
     pdf_spec: Optional[PdfSpec] = None,
+    partition_nside: int = HEALPIX_PARTITION_NSIDE,
 ) -> List[PartitionSpec]:
-    """Write *df* as one Parquet file per ``_healpix32`` cell.
+    """Write *df* as one Parquet file per partition cell.
 
     Layout: ``{out_dir}/data/healpix32={cell:05d}/part_0000.parquet``.
-    ``PartitionSpec.healpix_cell`` records the cell id for later
-    pruning.
+    The cell id is at ``partition_nside`` (coarsened from the fine
+    NSIDE=32 ``_healpix32`` column by right-shifting in NEST ordering).
+    ``PartitionSpec.healpix_cell`` records the (coarse) cell id.
     """
     import pyarrow.parquet as pq
 
     if "_healpix32" not in df.columns:
         raise ValueError("POINT df missing required _healpix32 column")
 
+    fine = HEALPIX_PARTITION_NSIDE
+    if partition_nside > fine or fine % partition_nside != 0:
+        raise ValueError(
+            f"partition_nside={partition_nside} must be a power-of-2 divisor "
+            f"of HEALPIX_PARTITION_NSIDE={fine}"
+        )
+    bits_to_drop = 2 * int(np.log2(fine // partition_nside))
+    fine_cells = df["_healpix32"].to_numpy(dtype=np.int64)
+    partition_cells = fine_cells >> bits_to_drop if bits_to_drop else fine_cells
+
     data_root = out_dir / "data"
     data_root.mkdir(parents=True, exist_ok=True)
 
     specs: List[PartitionSpec] = []
-    for cell, chunk in df.groupby("_healpix32", sort=True):
+    df_with_pcell = df.assign(_partition_cell=partition_cells)
+    for cell, chunk in df_with_pcell.groupby(
+        "_partition_cell", sort=True, observed=False,
+    ):
         cell = int(cell)
         cell_dir = data_root / HEALPIX_SUBDIR_FMT.format(cell=cell)
         cell_dir.mkdir(parents=True, exist_ok=True)
         rel_name = f"data/{cell_dir.name}/part_0000.parquet"
         part_path = out_dir / rel_name
+        chunk = chunk.drop(columns=["_partition_cell"])
         table = _chunk_to_table(chunk, pdf_spec)
         pq.write_table(table, part_path, compression=compression)
 
