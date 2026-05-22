@@ -20,9 +20,8 @@ Directory layout after conversion::
 
 Usage
 -----
->>> from oneuniverse.data import convert_survey, set_data_root
->>> set_data_root("/data/surveys")
->>> convert_survey("eboss_qso", overwrite=True, qso_only=True)
+>>> from oneuniverse.data import convert_survey
+>>> convert_survey("eboss_qso", data_root="/data/surveys", overwrite=True, qso_only=True)
 """
 
 from __future__ import annotations
@@ -246,11 +245,8 @@ def convert_survey(
     **loader_kwargs: Any,
 ) -> Path:
     """Convert a registered survey to OUF 2.0 POINT format."""
-    from oneuniverse.data._config import resolve_survey_path, set_data_root
+    from oneuniverse.data._config import resolve_survey_path
     from oneuniverse.data._registry import get_loader
-
-    if data_root is not None:
-        set_data_root(data_root)
 
     loader = get_loader(survey_name)
     config = loader.config
@@ -261,6 +257,7 @@ def convert_survey(
     else:
         survey_path = resolve_survey_path(
             config.survey_type, config.name, config.data_subpath,
+            data_root=Path(data_root) if data_root is not None else None,
         )
         if survey_path is None:
             raise FileNotFoundError(

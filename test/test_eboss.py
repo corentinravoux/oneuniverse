@@ -19,9 +19,17 @@ skip_no_data = pytest.mark.skipif(not has_data, reason="eBOSS data not available
 
 
 @pytest.fixture(scope="module")
-def setup_data_root():
-    from oneuniverse.data import set_data_root
-    set_data_root(DATA_ROOT)
+def setup_data_root(monkeypatch_module):
+    # Phase 12 removed set_data_root(); plumb the data root via env var.
+    monkeypatch_module.setenv("ONEUNIVERSE_DATA_ROOT", str(DATA_ROOT))
+
+
+@pytest.fixture(scope="module")
+def monkeypatch_module():
+    from _pytest.monkeypatch import MonkeyPatch
+    mp = MonkeyPatch()
+    yield mp
+    mp.undo()
 
 
 @skip_no_data

@@ -28,7 +28,6 @@ from oneuniverse.data.selection import Cone, Shell, SkyPatch, Selection  # noqa:
 import oneuniverse.data.surveys  # noqa: F401
 
 # ── Private machinery ────────────────────────────────────────────────────
-from oneuniverse.data._config import get_data_root, set_data_root  # noqa: F401
 from oneuniverse.data._registry import (  # noqa: F401
     get_loader,
     get_survey_config,
@@ -125,9 +124,6 @@ __all__ = [
     "Cone",
     "Shell",
     "SkyPatch",
-    # Configuration
-    "get_data_root",
-    "set_data_root",
     # Conversion & format
     "convert_survey",
     "convert_sightlines",

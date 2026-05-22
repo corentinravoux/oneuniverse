@@ -1,21 +1,24 @@
 """
 oneuniverse.data._config
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-Global configuration for data loading — principally the root path where
-survey data lives on a cluster filesystem.
+Per-call data-root resolution. **No module-level mutable state.**
 
-Configuration hierarchy (first match wins):
-1. Explicit ``set_data_root(path)`` call in user code
-2. Environment variable ``ONEUNIVERSE_DATA_ROOT``
-3. Default ``None`` (only in-memory / test surveys available)
+A "data root" is the filesystem prefix under which raw survey catalogs
+live. It can be supplied three ways, in order of precedence:
 
-On a cluster the admin typically sets::
-
-    export ONEUNIVERSE_DATA_ROOT=/data/cosmology/surveys
+1. Explicit ``data_root=`` keyword argument on the consuming call
+   (:func:`resolve_survey_path`, :class:`OneuniverseDatabase`,
+   :func:`convert_survey`).
+2. The ``ONEUNIVERSE_DATA_ROOT`` environment variable.
+3. ``None`` (only in-memory / test surveys available).
 
 Surveys then resolve their data path as::
 
     {data_root}/{survey_type}/{survey_name}/
+
+The module-level ``set_data_root``/``get_data_root`` wrappers from
+earlier releases were removed in Phase 12 — they bled config between
+processes and tests. Pass ``data_root=`` explicitly or set the env var.
 """
 
 from __future__ import annotations
@@ -25,56 +28,32 @@ from pathlib import Path
 from typing import Optional
 
 _ENV_VAR = "ONEUNIVERSE_DATA_ROOT"
-_data_root: Optional[Path] = None
 
 
 def env_data_root() -> Optional[Path]:
-    """Return the data root from :envvar:`ONEUNIVERSE_DATA_ROOT`, or None.
-
-    Prefer this over :func:`get_data_root` in new code — it is the per-
-    database kwarg's natural default and has no mutable module state.
-    """
+    """Return the data root from :envvar:`ONEUNIVERSE_DATA_ROOT`, or None."""
     env = os.environ.get(_ENV_VAR)
     return Path(env) if env else None
-
-
-def get_data_root() -> Optional[Path]:
-    """Return the current data root, or None if unset.
-
-    .. deprecated::
-        Pass ``data_root=`` to :class:`OneuniverseDatabase` instead.
-        Module-level state is retained only for backward compatibility
-        and will be removed in a future major release.
-    """
-    if _data_root is not None:
-        return _data_root
-    return env_data_root()
-
-
-def set_data_root(path: str | Path) -> None:
-    """Override the data root for this session.
-
-    .. deprecated::
-        Pass ``data_root=`` to :class:`OneuniverseDatabase` instead.
-    """
-    global _data_root
-    _data_root = Path(path)
 
 
 def resolve_survey_path(
     survey_type: str,
     survey_name: str,
     data_subpath: str = "",
+    *,
+    data_root: Optional[Path] = None,
 ) -> Optional[Path]:
     """Return the survey data directory or None.
 
-    If *data_subpath* is set (e.g. ``"spectroscopic/eboss/qso"``), it is used
-    directly under the data root.  Otherwise falls back to
-    ``{data_root}/{survey_type}/{survey_name}/``.
+    Resolution: ``data_root`` kwarg → ``ONEUNIVERSE_DATA_ROOT`` env →
+    None. If *data_subpath* is set (e.g. ``"spectroscopic/eboss/qso"``)
+    it is used directly under the data root; otherwise the path falls
+    back to ``{data_root}/{survey_type}/{survey_name}/``.
     """
-    root = get_data_root()
+    root = data_root if data_root is not None else env_data_root()
     if root is None:
         return None
+    root = Path(root)
     if data_subpath:
         return root / data_subpath
     return root / survey_type / survey_name
