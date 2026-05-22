@@ -1,11 +1,13 @@
-"""
-eBOSS DR16Q loader tests.
+"""eBOSS DR16Q loader tests.
 
 These tests require the actual FITS data file. They are skipped if
 the data is not available (CI-safe).
+
+Phase 14 T2: session-scope shared `eboss_default_df` fixture lets all
+the "default-load + column inspection" tests share one ~31s load,
+saving ~90s of suite time on machines with the data.
 """
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -19,17 +21,26 @@ skip_no_data = pytest.mark.skipif(not has_data, reason="eBOSS data not available
 
 
 @pytest.fixture(scope="module")
+def monkeypatch_module():
+    from _pytest.monkeypatch import MonkeyPatch
+    mp = MonkeyPatch()
+    yield mp
+    mp.undo()
+
+
+@pytest.fixture(scope="module")
 def setup_data_root(monkeypatch_module):
     # Phase 12 removed set_data_root(); plumb the data root via env var.
     monkeypatch_module.setenv("ONEUNIVERSE_DATA_ROOT", str(DATA_ROOT))
 
 
 @pytest.fixture(scope="module")
-def monkeypatch_module():
-    from _pytest.monkeypatch import MonkeyPatch
-    mp = MonkeyPatch()
-    yield mp
-    mp.undo()
+def eboss_default_df(setup_data_root):
+    """Load eBOSS DR16Q once with default kwargs; share across tests."""
+    if not has_data:
+        pytest.skip("eBOSS data not available")
+    from oneuniverse.data import load_catalog
+    return load_catalog("eboss_qso", validate=False)
 
 
 @skip_no_data
@@ -39,11 +50,39 @@ class TestEbossQSOLoader:
     def _setup(self, setup_data_root):
         pass
 
-    def test_load_qso_only(self):
-        from oneuniverse.data import load_catalog
-        df = load_catalog("eboss_qso", validate=False)
+    # ── Tests reusing the shared default-load df ──────────────────────────
+
+    def test_load_qso_only(self, eboss_default_df):
+        df = eboss_default_df
         assert len(df) > 900_000
         assert all(df["is_qso"] == 1)
+
+    def test_columns_present(self, eboss_default_df):
+        df = eboss_default_df
+        expected = [
+            "ra", "dec", "z", "is_qso", "source_z", "z_pipe", "z_pca",
+            "zwarning", "psfmag_r", "extinction_r", "n_dla",
+            "plate", "mjd", "fiberid", "survey_id", "galaxy_id",
+        ]
+        for col in expected:
+            assert col in df.columns, f"Missing column: {col}"
+
+    def test_photometry_bands(self, eboss_default_df):
+        df = eboss_default_df
+        for band in "ugriz":
+            assert f"psfmag_{band}" in df.columns
+            assert f"extinction_{band}" in df.columns
+        assert df["psfmag_r"].median() > 15
+        assert df["psfmag_r"].median() < 25
+
+    def test_dla_count(self, eboss_default_df):
+        df = eboss_default_df
+        assert "n_dla" in df.columns
+        assert df["n_dla"].max() <= 5
+        assert df["n_dla"].min() >= 0
+        assert (df["n_dla"] > 0).sum() > 10_000
+
+    # ── Tests exercising loader-side filters (one load each) ──────────────
 
     def test_load_full_superset(self):
         from oneuniverse.data import load_catalog
@@ -57,27 +96,6 @@ class TestEbossQSOLoader:
         assert all(df["z"] >= 2.0)
         assert all(df["z"] <= 3.0)
         assert len(df) > 100_000
-
-    def test_columns_present(self):
-        from oneuniverse.data import load_catalog
-        df = load_catalog("eboss_qso", validate=False)
-        expected = [
-            "ra", "dec", "z", "is_qso", "source_z", "z_pipe", "z_pca",
-            "zwarning", "psfmag_r", "extinction_r", "n_dla",
-            "plate", "mjd", "fiberid", "survey_id", "galaxy_id",
-        ]
-        for col in expected:
-            assert col in df.columns, f"Missing column: {col}"
-
-    def test_photometry_bands(self):
-        from oneuniverse.data import load_catalog
-        df = load_catalog("eboss_qso", validate=False)
-        for band in "ugriz":
-            assert f"psfmag_{band}" in df.columns
-            assert f"extinction_{band}" in df.columns
-        # Magnitudes should be reasonable (not all zero or NaN)
-        assert df["psfmag_r"].median() > 15
-        assert df["psfmag_r"].median() < 25
 
     def test_cone_selection(self):
         from oneuniverse.data import Cone, load_catalog
@@ -98,13 +116,7 @@ class TestEbossQSOLoader:
         )
         assert list(df.columns) == ["ra", "dec", "z"]
 
-    def test_dla_count(self):
-        from oneuniverse.data import load_catalog
-        df = load_catalog("eboss_qso", validate=False)
-        assert "n_dla" in df.columns
-        assert df["n_dla"].max() <= 5
-        assert df["n_dla"].min() >= 0
-        assert (df["n_dla"] > 0).sum() > 10_000
+    # ── Pure-metadata tests (no load) ────────────────────────────────────
 
     def test_config_metadata(self):
         from oneuniverse.data import get_survey_config
