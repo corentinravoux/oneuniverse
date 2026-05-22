@@ -55,4 +55,4 @@ def test_phase11_hpmap_overlay():
     out_png = OUT / "phase11_hpmap_overlay.png"
     fig.savefig(out_png, dpi=110)
     plt.close(fig)
-    assert out_png.exists() and out_png.stat().st_size > 10_000
+    assert out_png.exists() and out_png.stat().st_size > 30_000
