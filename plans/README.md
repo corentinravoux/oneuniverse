@@ -39,3 +39,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | **complete (2026-04-23, 345/345 tests green)** |
 | 12 | Carried-over debt cleanup (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed= D2, convert_survey loader= overload D3) | **complete (2026-05-22, 361/361 tests green)** |
 | 14 | Performance + footprint (suite-time profiling, shared eBOSS fixture, pushdown audit, optional pytest-xdist; parallel writer T5 deferred) | **complete (2026-05-22, 364/364 tests green; suite 277s → 205s)** |
+| 15 | Docs + stability hardening (Sphinx scaffold + autodoc, warning audit + suite-wide pin, visual-test goldens, package-scoped CLAUDE.md) | **complete (2026-05-22, 365/365 tests green)** |
