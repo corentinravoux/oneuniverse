@@ -38,6 +38,10 @@ dev = [
     "healpy>=1.16",
     "matplotlib>=3.5",
 ]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["oneuniverse*"]
