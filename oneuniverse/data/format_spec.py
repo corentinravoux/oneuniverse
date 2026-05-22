@@ -200,6 +200,12 @@ HEALPIX_PARTITION_NSIDE: int = 32
 HEALPIX_PARTITION_NEST: bool = True
 HEALPIX_SUBDIR_FMT: str = "healpix32={cell:05d}"  # under data/
 
+# Phase 12 (F3): partitioning auto-coarsens for small catalogs so the
+# parquet header overhead stops dominating. The auto-picker keeps the
+# *finest* NSIDE (power of 2, ≤ HEALPIX_PARTITION_NSIDE) for which the
+# mean rows-per-cell ≥ MIN_ROWS_PER_PARTITION.
+MIN_ROWS_PER_PARTITION: int = 5_000
+
 ONEUNIVERSE_SUBDIR: str = "oneuniverse"
 MANIFEST_FILENAME: str = "manifest.json"
 OBJECTS_FILENAME: str = "objects.parquet"
