@@ -61,7 +61,13 @@ def _point_stats(chunk: pd.DataFrame) -> PartitionStats:
 
 def _write(tmp: Path, df: pd.DataFrame, partition_rows: int = None,
            subdir: str = "synth"):
-    """Write *df* as OUF 2.0 and return the ou_dir."""
+    """Write *df* as OUF 2.0 and return the ou_dir.
+
+    Pins partition_nside=32 so these Phase-2 tests keep asserting the
+    one-file-per-fine-cell layout; Phase-12 auto-coarsening is exercised
+    by ``test_partition_nside.py``.
+    """
+    from oneuniverse.data.format_spec import HEALPIX_PARTITION_NSIDE
     ou_dir = tmp / subdir / ONEUNIVERSE_SUBDIR
     ou_dir.mkdir(parents=True, exist_ok=True)
     write_ouf_dataset(
@@ -72,6 +78,7 @@ def _write(tmp: Path, df: pd.DataFrame, partition_rows: int = None,
         geometry=DataGeometry.POINT,
         partition_rows=partition_rows,
         stats_builder=_point_stats,
+        partition_nside=HEALPIX_PARTITION_NSIDE,
     )
     return ou_dir
 
