@@ -235,21 +235,37 @@ def write_ouf_dataset(
 
 
 def convert_survey(
-    survey_name: str,
+    survey_name: Optional[str] = None,
     data_root: Optional[str | Path] = None,
     partition_rows: Optional[int] = None,
     compression: str = COMPRESSION,
     overwrite: bool = False,
     output_dir: Optional[str | Path] = None,
     raw_path: Optional[str | Path] = None,
+    *,
+    loader=None,
+    partition_nside: Optional[int] = None,
     **loader_kwargs: Any,
 ) -> Path:
-    """Convert a registered survey to OUF 2.0 POINT format."""
+    """Convert a registered survey to OUF 2.0 POINT format.
+
+    Either pass a registered ``survey_name`` (loader looked up in the
+    ``@register`` registry) or an explicit ``loader=<BaseSurveyLoader>``
+    instance for one-off / unregistered loaders. The instance form
+    bypasses the registry; useful for tests and ad-hoc conversions.
+    """
     from oneuniverse.data._config import resolve_survey_path
     from oneuniverse.data._registry import get_loader
 
-    loader = get_loader(survey_name)
+    if loader is None and survey_name is None:
+        raise TypeError(
+            "convert_survey requires either survey_name= (registered) or "
+            "loader=<BaseSurveyLoader instance>"
+        )
+    if loader is None:
+        loader = get_loader(survey_name)
     config = loader.config
+    survey_name = survey_name or config.name
 
     if raw_path is not None:
         rp = Path(raw_path).expanduser().resolve()
@@ -259,12 +275,16 @@ def convert_survey(
             config.survey_type, config.name, config.data_subpath,
             data_root=Path(data_root) if data_root is not None else None,
         )
-        if survey_path is None:
+        if survey_path is None and config.data_filename:
             raise FileNotFoundError(
                 f"Cannot resolve data path for '{survey_name}'. "
                 "Set ONEUNIVERSE_DATA_ROOT or pass data_root= or raw_path=."
             )
 
+    if output_dir is None and survey_path is None:
+        raise TypeError(
+            "convert_survey: pass output_dir= when survey_path cannot be resolved"
+        )
     out_base = Path(output_dir) if output_dir is not None else survey_path
     out_base.mkdir(parents=True, exist_ok=True)
     out_dir = _prepare_output_dir(out_base, overwrite)
@@ -298,7 +318,7 @@ def convert_survey(
         ).astype(np.int32)
 
     original_paths = []
-    if config.data_filename:
+    if config.data_filename and survey_path is not None:
         original_paths.append(survey_path / config.data_filename)
 
     manifest = write_ouf_dataset(
@@ -308,6 +328,7 @@ def convert_survey(
         survey_type=config.survey_type,
         geometry=DataGeometry.POINT,
         partition_rows=partition_rows,
+        partition_nside=partition_nside,
         compression=compression,
         original_paths=original_paths,
         original_format=config.data_format or "fits",
@@ -733,8 +754,14 @@ def _count_rows(path: Path, fmt: str) -> Optional[int]:
 def _log_summary(out_dir, survey_path, config, manifest: Manifest):
     """Log a human-readable summary of the conversion."""
     total_size = sum(p.size_bytes for p in manifest.partitions)
-    original_path = Path(survey_path) / (config.data_filename or "")
-    if config.data_filename and original_path.exists():
+    if survey_path is None or not config.data_filename:
+        logger.info(
+            "Conversion complete: %d rows → %d files (%.1f MB)",
+            manifest.n_rows, manifest.n_partitions, total_size / 1e6,
+        )
+        return
+    original_path = Path(survey_path) / config.data_filename
+    if original_path.exists():
         original_size = original_path.stat().st_size
         logger.info(
             "Conversion complete: %d rows → %d files (%.1f MB, "
