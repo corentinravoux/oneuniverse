@@ -460,9 +460,22 @@ oneuniverse/
 pip install .                      # minimal (numpy, pandas, astropy)
 pip install ".[all]"               # + fitsio, pyarrow, healpy, matplotlib
 pip install -e ".[dev]"            # editable + test dependencies
+pip install -e ".[docs]"           # + sphinx for the API reference
 ```
 
 Requires Python >= 3.9.
+
+## Documentation
+
+API reference is auto-generated with Sphinx:
+
+```bash
+pip install -e ".[docs]"
+cd docs && make html
+open _build/html/index.html        # or your usual browser command
+```
+
+Browsable layout in [`docs/`](docs/) — `conf.py`, `index.rst`, `api.rst`. Package-scoped agent guide in [`CLAUDE.md`](CLAUDE.md). Phase-by-phase implementation plans in [`plans/README.md`](plans/README.md).
 
 ---
 
