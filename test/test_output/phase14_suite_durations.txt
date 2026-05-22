@@ -1,0 +1,37 @@
+# Phase 14 — pre-optimisation suite-duration baseline (2026-05-22)
+#
+# Total: 361 passed, 1 skipped, 2 warnings in 277.70s (0:04:37)
+#
+# HOT-LIST: 8 tests in `test_eboss.py` account for ~252s (~91% of total)
+# because each call to `load_catalog("eboss_qso", ...)` re-reads the
+# 2.33M-row DR16Q FITS superset from disk + applies cuts.
+#
+# Task 2 target: session-scope shared `load_catalog("eboss_qso", ...)`
+# fixture; let every test re-derive its assertion from the cached df.
+# Expected suite time post-T2: ~31s (one load) + ~25s (the rest) ≈ 1min.
+#
+# Note: these eBOSS tests are skipped on systems without the FITS file
+# (CI). On Corentin's workstation they run.
+
+============================= slowest 20 durations =============================
+31.83s call     test/test_eboss.py::TestEbossQSOLoader::test_load_qso_only
+31.83s call     test/test_eboss.py::TestEbossQSOLoader::test_z_range_filter
+31.72s call     test/test_eboss.py::TestEbossQSOLoader::test_columns_present
+31.63s call     test/test_eboss.py::TestEbossQSOLoader::test_cone_selection
+31.48s call     test/test_eboss.py::TestEbossQSOLoader::test_photometry_bands
+31.46s call     test/test_eboss.py::TestEbossQSOLoader::test_dla_count
+31.41s call     test/test_eboss.py::TestEbossQSOLoader::test_column_subset
+30.92s call     test/test_eboss.py::TestEbossQSOLoader::test_load_full_superset
+2.91s call     test/test_healpix_partitioning.py::TestDatasetViewPruning::test_skypatch_scan
+2.25s call     test/test_subobject_bitemporal.py::test_as_of_resolves_correct_version
+2.03s call     test/test_healpix_partitioning.py::TestDatasetViewPruning::test_cone_prunes_partitions
+1.99s call     test/test_healpix_partitioning.py::TestDatasetViewPruning::test_cone_scan_returns_only_in_cone_rows
+1.22s call     test/test_subobject_bitemporal.py::test_rebuild_archives_previous
+1.14s call     test/test_oneuid_bitemporal.py::test_load_oneuid_as_of_picks_earlier_version
+1.14s call     test/test_oneuid_bitemporal.py::test_list_oneuids_bitemporal_contains_archived
+1.13s call     test/test_oneuid_bitemporal.py::test_rebuild_closes_previous_version
+1.11s call     test/test_dataset_view.py::TestPartitionPruning::test_multi_partition_layout
+1.07s call     test/test_dataset_view.py::TestPartitionPruning::test_z_range_prunes_partitions
+0.57s call     test/test_dataset_view.py::TestPartitionPruning::test_no_range_keeps_all
+0.54s call     test/test_healpix_partitioning.py::TestDatasetViewPruning::test_explicit_cells_kwarg
+============ 361 passed, 1 skipped, 2 warnings in 277.70s (0:04:37) ============
