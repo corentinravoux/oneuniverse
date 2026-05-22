@@ -228,7 +228,12 @@ git commit -m "phase14/T4: declare pytest-xdist as an optional dev extra"
 
 ---
 
-### Task 5: Parallel partition writer (opt-in)
+### Task 5: Parallel partition writer (opt-in) — **DEFERRED**
+
+**Decision (2026-05-22):** Skipped. After Tasks 1-4 the suite dropped 277s → ~158s (-43%) on the eBOSS path; the partition writer is not on the hot path. Adding multiprocessing introduces real risks (pickle overhead, byte-identity guarantees across pyarrow versions, worker startup) that outweigh the marginal win for current dataset sizes. Re-open when a real ≥ 1M-row conversion shows it dominating wall-clock time.
+
+(Original plan body retained below for posterity.)
+
 
 **Files:**
 - Modify: `oneuniverse/data/converter.py` — `_write_partitions_by_healpix(..., n_workers=1)`. Default 1 = single-process behaviour unchanged.
