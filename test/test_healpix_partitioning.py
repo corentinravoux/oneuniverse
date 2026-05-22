@@ -71,6 +71,7 @@ def _point_stats(chunk: pd.DataFrame) -> PartitionStats:
 
 
 def _write(tmp: Path, df: pd.DataFrame) -> Path:
+    """Write at the canonical NSIDE=32 — these tests pin the Phase-3 layout."""
     ou_dir = tmp / "synth" / ONEUNIVERSE_SUBDIR
     ou_dir.mkdir(parents=True, exist_ok=True)
     write_ouf_dataset(
@@ -80,6 +81,7 @@ def _write(tmp: Path, df: pd.DataFrame) -> Path:
         survey_type="test",
         geometry=DataGeometry.POINT,
         stats_builder=_point_stats,
+        partition_nside=HEALPIX_PARTITION_NSIDE,
     )
     return ou_dir
 
