@@ -290,7 +290,9 @@ def convert_survey(
     out_dir = _prepare_output_dir(out_base, overwrite)
 
     logger.info("Loading %s via loader...", survey_name)
-    if raw_path is not None:
+    # Pass survey_path unconditionally so the loader's _load_raw can find
+    # its files without relying on the (removed) module-level data root.
+    if survey_path is not None:
         loader_kwargs.setdefault("data_path", survey_path)
     df = loader.load(validate=False, force_native=True, **loader_kwargs)
 
