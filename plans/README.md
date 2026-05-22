@@ -15,6 +15,7 @@ audit done 2026-04-15).
 - [`2026-04-23-phase9-desi-dr1-onboarding.md`](2026-04-23-phase9-desi-dr1-onboarding.md) — detailed plan for Phase 9 (DESI DR1 QSO end-to-end + fragility audit).
 - [`2026-04-23-phase10-probabilistic-redshifts.md`](2026-04-23-phase10-probabilistic-redshifts.md) — detailed plan for Phase 10 (photo-z PDF storage + ProbabilisticRedshift reader).
 - [`2026-04-23-phase11-selection-weights.md`](2026-04-23-phase11-selection-weights.md) — detailed plan for Phase 11 (generic selection/completeness weight family).
+- [`2026-05-22-phase12-carried-debt.md`](2026-05-22-phase12-carried-debt.md) — detailed plan for Phase 12 (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed D2, convert_survey loader= overload D3).
 
 Phases 2–6 each get their own detailed plan document as we reach them
 (written using `superpowers:writing-plans`).
@@ -34,3 +35,4 @@ Phases 2–6 each get their own detailed plan document as we reach them
 | 9 | DESI DR1 QSO onboarding end-to-end + fragility audit | **complete (2026-04-23, 299/299 tests green; F1+F2 fixed, F3 deferred)** |
 | 10 | Probabilistic redshifts (photo-z PDFs: interp/quant/mixmod, FixedSizeList parquet, PdfSpec in manifest, ProbabilisticRedshift reader, PDF-aware weights) | **complete (2026-04-23, 326/326 tests green)** |
 | 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | **complete (2026-04-23, 345/345 tests green)** |
+| 12 | Carried-over debt cleanup (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed= D2, convert_survey loader= overload D3) | **complete (2026-05-22, 361/361 tests green)** |
