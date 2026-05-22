@@ -91,4 +91,4 @@ def test_subobject_link_skymap(tmp_path):
     fig.savefig(outfile, dpi=120)
     plt.close(fig)
 
-    assert outfile.exists() and outfile.stat().st_size > 10_000
+    assert outfile.exists() and outfile.stat().st_size > 30_000

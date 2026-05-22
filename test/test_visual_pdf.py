@@ -69,4 +69,13 @@ def test_phase10_visual_end_to_end(tmp_path):
     out_png = OUT / "phase10_pdf_overview.png"
     fig.savefig(out_png, dpi=110)
     plt.close(fig)
-    assert out_png.exists() and out_png.stat().st_size > 10_000
+    assert out_png.exists() and out_png.stat().st_size > 30_000
+    # Phase 15 T3: also sanity-check image dimensions when Pillow is
+    # available. Catches a regression where matplotlib produces a tiny
+    # canvas that still passes the size floor.
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    with Image.open(out_png) as im:
+        assert im.width >= 800 and im.height >= 200

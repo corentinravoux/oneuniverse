@@ -88,7 +88,7 @@ def test_visual_transient_point(tmp_path):
     out = OUTPUT_DIR / "phase7_temporal_point.png"
     fig.savefig(out, dpi=120)
     plt.close(fig)
-    assert out.exists() and out.stat().st_size > 10_000
+    assert out.exists() and out.stat().st_size > 30_000
 
 
 def test_visual_lightcurve(tmp_path):
@@ -150,7 +150,7 @@ def test_visual_lightcurve(tmp_path):
     out = OUTPUT_DIR / "phase7_temporal_lightcurve.png"
     fig.savefig(out, dpi=120)
     plt.close(fig)
-    assert out.exists() and out.stat().st_size > 10_000
+    assert out.exists() and out.stat().st_size > 30_000
 
 
 def _syn_point(root, sub, name, validity, seed=0, n=200):
@@ -222,4 +222,4 @@ def test_visual_database_snapshot(tmp_path):
     out = OUTPUT_DIR / "phase7_database_snapshot.png"
     fig.savefig(out, dpi=120)
     plt.close(fig)
-    assert out.exists() and out.stat().st_size > 10_000
+    assert out.exists() and out.stat().st_size > 30_000

@@ -49,4 +49,4 @@ def test_desi_dr1_sky_and_z(tmp_path):
     out = OUT / "phase9_desi_dr1_sky_z.png"
     fig.savefig(out, dpi=120)
     plt.close(fig)
-    assert out.exists() and out.stat().st_size > 10_000
+    assert out.exists() and out.stat().st_size > 30_000
