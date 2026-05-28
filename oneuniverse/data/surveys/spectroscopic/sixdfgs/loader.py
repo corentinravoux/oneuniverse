@@ -44,6 +44,11 @@ class SixdFGSLoader(BaseSurveyLoader):
         n_objects_approx=136_000,
     )
 
+    @classmethod
+    def coordinate_spec(cls):
+        from oneuniverse.data.coordinate_spec import CoordinateSpec
+        return CoordinateSpec(frame="icrs")
+
     def _load_raw(self, data_path: Optional[Path] = None, **kwargs) -> pd.DataFrame:
         if data_path is None:
             raise FileNotFoundError(
