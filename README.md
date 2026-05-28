@@ -477,6 +477,14 @@ open _build/html/index.html        # or your usual browser command
 
 Browsable layout in [`docs/`](docs/) — `conf.py`, `index.rst`, `api.rst`. Package-scoped agent guide in [`CLAUDE.md`](CLAUDE.md). Phase-by-phase implementation plans in [`plans/README.md`](plans/README.md).
 
+### Research notes
+
+Technical references and design analyses live in [`research/`](research/):
+
+- [`survey_landscape_review.md`](research/survey_landscape_review.md) — full landscape of cosmology survey datasets (BOSS/eBOSS, DESI, GAMA, KiDS, DES, HSC, Rubin, Euclid, Roman, Lyα, PV, SNe, CMB, HI/radio, GW sirens, X-ray, alerts, GAIA/LS/PS1, mocks) with geometry, IDs, redshift columns, weights, PDFs, hierarchies, gotchas. Updated 2026-05-28.
+- [`schema_generalisation_audit.md`](research/schema_generalisation_audit.md) — file-by-file audit of the current schema/manifest/converter/dataset_view/ONEUID/PDF/loaders/weights against the survey landscape, with concrete API changes and a Phase 16–21 roadmap. Updated 2026-05-28.
+- [`eboss_dr16q_research.md`](research/eboss_dr16q_research.md), [`weighting_schemes_research.md`](research/weighting_schemes_research.md), [`weight_normalization_research.md`](research/weight_normalization_research.md), [`cosmography_reference.md`](research/cosmography_reference.md), [`digital_twin_research.md`](research/digital_twin_research.md), [`database_technology_research.md`](research/database_technology_research.md) — prior topical references.
+
 ---
 
 ## Quick start
