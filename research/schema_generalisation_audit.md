@@ -525,11 +525,11 @@ Extend registry key to `(survey_type, sub_kind, z_type)`; default
 A natural Phase 16+ decomposition (each producing a working OUF
 version bump + green test suite):
 
-- **Phase 16 — Observational metadata expansion.** `CoordinateSpec`,
-  `SpectrumSpec`, extensible `z_type` registry, `ColumnDef` gains
-  `frame`/`epoch`/`wavelength_convention`/`nullable`. **No
-  cosmology** — H₀/Ωₘ/distance models live in Pillars 2/3.
-  OUF → 2.2.0.
+- **Phase 16 — Observational metadata expansion.** Landed 2026-05-28.
+  Adds `CoordinateSpec`, `SpectrumSpec`, extensible `z_type` registry,
+  `ColumnDef` gains `frame`/`epoch`/`wavelength_convention`/`nullable`.
+  No cosmology. OUF 2.2.0. See
+  [`../plans/2026-05-28-phase16-observational-metadata.md`](../plans/2026-05-28-phase16-observational-metadata.md).
 - **Phase 17 — Variable-length columns + generic partition stats.**
   Converter accepts `list_columns` / `struct_columns` / dynamic
   `extra_ranges`. Unblocks Lyα ingest as canonical OUF rather than
