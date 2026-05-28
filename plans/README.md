@@ -1,42 +1,103 @@
-# oneuniverse Stabilisation Plans
+# oneuniverse Plans
 
-Implementation plans for the Pillar 1 stabilisation effort (architecture
-audit done 2026-04-15).
+Phase-level and pillar-level roadmaps for the oneuniverse project.
+The plans here describe **why** and **how** each chunk of work lands;
+detailed task lists live in dated phase files.
+
+## Three-pillar structure (2026-05-28)
+
+The whole stack is organised around three pillars:
+
+- **Pillar 1 — Data, Combine, Measure.** Everything inside the
+  `oneuniverse` package. Database construction from raw catalogs →
+  cross-survey combination → analysis-ready `MeasurementSet`
+  handoff. No cosmology, no estimators, no forward models.
+  See [`2026-05-28-pillar1-data-combine-measure.md`](2026-05-28-pillar1-data-combine-measure.md).
+
+- **Pillar 2 — External Scientific Tool Interfaces.** Estimators,
+  fitters, likelihoods, theory predictions consumed by tools
+  **outside** `oneuniverse` (`flip`, `pycorr`, `picca`, future
+  `onecorr`). Pillar 2 is where cosmology enters. Adapters live in
+  `oneuniverse.measure.adapters` (thin shims, no science).
+  See [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
+
+- **Pillar 3 — Simulation / Digital Twin.** Constrained Bayesian
+  forward modelling of the actual Universe; per-survey observation
+  models; mini-simulation zoom-ins; incremental updates.
+  See [`2026-05-28-pillar3-simulation-digital-twin.md`](2026-05-28-pillar3-simulation-digital-twin.md).
+
+## Pillar 1 phase plans
+
+### Stabilisation (Phases 1–15, complete 2026-05-22)
 
 - [`2026-04-15-stabilisation-roadmap.md`](2026-04-15-stabilisation-roadmap.md) — master phase-level roadmap with rationale, design decisions, and scope per phase.
-- [`2026-04-15-phase1-ouf-v2.md`](2026-04-15-phase1-ouf-v2.md) — detailed task-by-task plan for Phase 1 (OUF 2.0 manifest + atomic writes + content hashing). **Starting here.**
-- [`2026-04-15-phase3-healpix-partitioning.md`](2026-04-15-phase3-healpix-partitioning.md) — detailed task-by-task plan for Phase 3 (HEALPix spatial partitioning on disk + Cone/SkyPatch cell pruning).
-- [`2026-04-15-phase4-unified-oneuid.md`](2026-04-15-phase4-unified-oneuid.md) — detailed task-by-task plan for Phase 4 (CrossMatchRules policy, relocated cross-matcher, audit columns, named on-disk ONEUID indices, `WeightedCatalog.from_oneuid`).
-- [`2026-04-16-phase5-streaming-hydration.md`](2026-04-16-phase5-streaming-hydration.md) — detailed task-by-task plan for Phase 5 (row-level pushdown via `_original_row_index`, `OneuidQuery.iter_partial` streaming generator).
-- [`2026-04-16-phase6-housekeeping-combine.md`](2026-04-16-phase6-housekeeping-combine.md) — detailed task-by-task plan for Phase 6 (DatasetEntry consolidation, compact ONEUID dtypes, legacy-shim deletions, per-database `data_root`, frozen registry, `oneuniverse.weight` → `oneuniverse.combine` redesign with `default_weight_for`).
-- [`2026-04-20-temporal-subobject-roadmap.md`](2026-04-20-temporal-subobject-roadmap.md) — roadmap for Phase 7 (temporal) + Phase 8 (sub-object).
-- [`2026-04-20-phase7-temporal.md`](2026-04-20-phase7-temporal.md) — detailed plan for Phase 7.
-- [`2026-04-20-phase8-subobject.md`](2026-04-20-phase8-subobject.md) — detailed plan for Phase 8.
-- [`2026-04-23-phase9-desi-dr1-onboarding.md`](2026-04-23-phase9-desi-dr1-onboarding.md) — detailed plan for Phase 9 (DESI DR1 QSO end-to-end + fragility audit).
-- [`2026-04-23-phase10-probabilistic-redshifts.md`](2026-04-23-phase10-probabilistic-redshifts.md) — detailed plan for Phase 10 (photo-z PDF storage + ProbabilisticRedshift reader).
-- [`2026-04-23-phase11-selection-weights.md`](2026-04-23-phase11-selection-weights.md) — detailed plan for Phase 11 (generic selection/completeness weight family).
-- [`2026-05-22-phase12-carried-debt.md`](2026-05-22-phase12-carried-debt.md) — detailed plan for Phase 12 (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed D2, convert_survey loader= overload D3).
-- [`2026-05-22-phase14-performance-footprint.md`](2026-05-22-phase14-performance-footprint.md) — detailed plan for Phase 14 (suite profiling, shared eBOSS fixture, pushdown audit, optional xdist; parallel writer deferred).
-- [`2026-05-22-phase15-docs-stability.md`](2026-05-22-phase15-docs-stability.md) — detailed plan for Phase 15 (Sphinx scaffold, warning audit, visual-test goldens, CLAUDE.md).
+- [`2026-04-15-phase1-ouf-v2.md`](2026-04-15-phase1-ouf-v2.md) — Phase 1 (OUF 2.0 manifest + atomic writes + content hashing).
+- [`2026-04-15-phase3-healpix-partitioning.md`](2026-04-15-phase3-healpix-partitioning.md) — Phase 3 (HEALPix spatial partitioning + cone / SkyPatch cell pruning).
+- [`2026-04-15-phase4-unified-oneuid.md`](2026-04-15-phase4-unified-oneuid.md) — Phase 4 (CrossMatchRules policy, relocated cross-matcher, audit columns, named on-disk ONEUID indices, `WeightedCatalog.from_oneuid`).
+- [`2026-04-16-phase5-streaming-hydration.md`](2026-04-16-phase5-streaming-hydration.md) — Phase 5 (row-level pushdown via `_original_row_index`, `OneuidQuery.iter_partial`).
+- [`2026-04-16-phase6-housekeeping-combine.md`](2026-04-16-phase6-housekeeping-combine.md) — Phase 6 (`oneuniverse.weight` → `oneuniverse.combine` redesign, `default_weight_for`). Final `oneuniverse.weight` deprecation shim deleted 2026-05-28.
+- [`2026-04-20-temporal-subobject-roadmap.md`](2026-04-20-temporal-subobject-roadmap.md) — joint roadmap for Phase 7 + 8.
+- [`2026-04-20-phase7-temporal.md`](2026-04-20-phase7-temporal.md) — Phase 7 (temporal).
+- [`2026-04-20-phase8-subobject.md`](2026-04-20-phase8-subobject.md) — Phase 8 (sub-object).
+- [`2026-04-23-phase9-desi-dr1-onboarding.md`](2026-04-23-phase9-desi-dr1-onboarding.md) — Phase 9 (DESI DR1 QSO onboarding + fragility audit).
+- [`2026-04-23-phase10-probabilistic-redshifts.md`](2026-04-23-phase10-probabilistic-redshifts.md) — Phase 10 (photo-z PDFs).
+- [`2026-04-23-phase11-selection-weights.md`](2026-04-23-phase11-selection-weights.md) — Phase 11 (selection / completeness weight family).
+- [`2026-05-22-phase12-carried-debt.md`](2026-05-22-phase12-carried-debt.md) — Phase 12 (carried-over debt cleanup).
+- [`2026-05-22-phase14-performance-footprint.md`](2026-05-22-phase14-performance-footprint.md) — Phase 14 (performance + footprint).
+- [`2026-05-22-phase15-docs-stability.md`](2026-05-22-phase15-docs-stability.md) — Phase 15 (docs + stability).
 
-Phases 2–6 each get their own detailed plan document as we reach them
-(written using `superpowers:writing-plans`).
+### Generalisation (Phases 16–22, planned 2026-05-28)
 
-## Phase status
+Driven by [`../research/survey_landscape_review.md`](../research/survey_landscape_review.md)
+and [`../research/schema_generalisation_audit.md`](../research/schema_generalisation_audit.md).
+Per-phase detailed plans land as we start each.
 
-| # | Name                                    | Status       |
-|---|-----------------------------------------|--------------|
-| 1 | OUF 2.0 (typed manifest, hashes, atomic writes) | **complete (2026-04-15, 130/130 tests green)** |
-| 2 | DatasetView + pyarrow.dataset backend   | **complete (2026-04-15, 145/145 tests green)** |
-| 3 | HEALPix spatial partitioning            | **complete (2026-04-15, 156/156 tests green)** |
-| 4 | Unified ONEUID (z-type rules, subsets, named indices) | **complete (2026-04-16, 190/190 tests green)** |
-| 5 | Streaming hydration                     | **complete (2026-04-16, 198/198 tests green)** |
-| 6 | Housekeeping + `weight/` → `combine/` redesign | **complete (2026-04-20, 211/211 tests green)** |
-| 7 | Temporal data (t_obs + LIGHTCURVE + bitemporal database + versioned ONEUID) | **complete (2026-04-21, 265/265 tests green)** |
-| 8 | Sub-object hierarchy (bitemporal link sidecars) | **complete (2026-04-22, 292/292 tests green)** |
-| 9 | DESI DR1 QSO onboarding end-to-end + fragility audit | **complete (2026-04-23, 299/299 tests green; F1+F2 fixed, F3 deferred)** |
-| 10 | Probabilistic redshifts (photo-z PDFs: interp/quant/mixmod, FixedSizeList parquet, PdfSpec in manifest, ProbabilisticRedshift reader, PDF-aware weights) | **complete (2026-04-23, 326/326 tests green)** |
-| 11 | Generic selection / completeness weight family (HealpixMapWeight, FiberCollision/ZFailure/Completeness wrappers, BOSS combiner, public register_default) | **complete (2026-04-23, 345/345 tests green)** |
-| 12 | Carried-over debt cleanup (adaptive partition NSIDE F3, manifest-NSIDE cone D5, drop _data_root state D1, pandas observed= D2, convert_survey loader= overload D3) | **complete (2026-05-22, 361/361 tests green)** |
-| 14 | Performance + footprint (suite-time profiling, shared eBOSS fixture, pushdown audit, optional pytest-xdist; parallel writer T5 deferred) | **complete (2026-05-22, 364/364 tests green; suite 277s → 205s)** |
-| 15 | Docs + stability hardening (Sphinx scaffold + autodoc, warning audit + suite-wide pin, visual-test goldens, package-scoped CLAUDE.md) | **complete (2026-05-22, 365/365 tests green)** |
+| # | Name | Driver |
+|---|------|--------|
+| 16 | Observational metadata expansion (`CoordinateSpec`, `SpectrumSpec`, `z_type` registry, `ColumnDef.frame/epoch/λ-convention/nullable`) | GAIA epoch, SDSS air vs BOSS vacuum, multi-z columns |
+| 17 | Variable-length columns + generic partition stats | Lyα δ, ZTF/Rubin lightcurves, GAIA XP, DESI BITWEIGHTS, multi-filter photometry, S/N pushdown |
+| 18 | PDF polymorphism + tomographic n(z) + classification PDFs | RAIL / `qp` alignment, KiDS/DES/HSC tomographic bins |
+| 19 | Shear group + `ShearWeight` + `PipBitweightWeight` | DES Y3/Y6, KiDS-1000, HSC-Y3, Rubin shapes, DESI PIP |
+| 20 | Map-based ONEUID + multi-level sub-object chains | GW × galaxy, cluster→galaxy→spec, deblender trees |
+| 21 | `oneuniverse.measure` — MeasurementSet contract | Pillar 1/Pillar 2 boundary |
+| 22 | `CUBE` / `PARTICLE` / `GW_SKYMAP` geometries (optional) | IFU cubes, HI cubes, mock snapshots, GW skymaps |
+| 23 | Real-survey loader writes (rolled-up Phase 13) | All loaders, depends on 16–20 |
+
+## Phase status (Pillar 1)
+
+| # | Name | Status |
+|---|------|--------|
+| 1 | OUF 2.0 (typed manifest, hashes, atomic writes) | **complete (2026-04-15, 130/130)** |
+| 2 | DatasetView + pyarrow.dataset backend | **complete (2026-04-15, 145/145)** |
+| 3 | HEALPix spatial partitioning | **complete (2026-04-15, 156/156)** |
+| 4 | Unified ONEUID (z-type rules, subsets, named indices) | **complete (2026-04-16, 190/190)** |
+| 5 | Streaming hydration | **complete (2026-04-16, 198/198)** |
+| 6 | Housekeeping + `weight/` → `combine/` redesign | **complete (2026-04-20, 211/211)** |
+| 7 | Temporal data (t_obs + LIGHTCURVE + bitemporal database + versioned ONEUID) | **complete (2026-04-21, 265/265)** |
+| 8 | Sub-object hierarchy (bitemporal link sidecars) | **complete (2026-04-22, 292/292)** |
+| 9 | DESI DR1 QSO onboarding end-to-end + fragility audit | **complete (2026-04-23, 299/299; F1+F2 fixed, F3 deferred)** |
+| 10 | Probabilistic redshifts (photo-z PDFs) | **complete (2026-04-23, 326/326)** |
+| 11 | Generic selection / completeness weight family | **complete (2026-04-23, 345/345)** |
+| 12 | Carried-over debt cleanup | **complete (2026-05-22, 361/361)** |
+| 14 | Performance + footprint | **complete (2026-05-22, 364/364; suite 277s → 205s)** |
+| 15 | Docs + stability hardening | **complete (2026-05-22, 365/365)** |
+| — | `oneuniverse.weight` deprecation shim deleted | **complete (2026-05-28, 365/365)** |
+| 16 | Observational metadata expansion | planned |
+| 17 | Variable-length columns + generic partition stats | planned |
+| 18 | PDF polymorphism + tomographic n(z) | planned |
+| 19 | Shear group + weight expansion | planned |
+| 20 | Map-based ONEUID + multi-level sub-object | planned |
+| 21 | `oneuniverse.measure` — MeasurementSet contract | planned |
+| 22 | Geometry expansion (CUBE/PARTICLE/GW_SKYMAP) | optional |
+| 23 | Real-survey loader writes (rolled-up Phase 13) | planned (after 16–20) |
+
+## Pillar 2 / Pillar 3 phase plans
+
+Pillar 2 and Pillar 3 phases are **post-Pillar-1-Phase-21**
+(`MeasurementSet` must exist). Per-phase detailed plans get written
+when work begins.
+
+- Pillar 2 phases A–F: see
+  [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
+- Pillar 3 phases α–η: see
+  [`2026-05-28-pillar3-simulation-digital-twin.md`](2026-05-28-pillar3-simulation-digital-twin.md).

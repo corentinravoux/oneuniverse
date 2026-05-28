@@ -24,6 +24,12 @@ No estimators ship from this package. No forward models. Just data.
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase implementation plans (Phases 1–15 done).
 - `docs/` — Sphinx scaffold (`make html` from `docs/`).
+- `research/` — topical references + design analyses. Two new docs
+  from 2026-05-28: [`research/survey_landscape_review.md`](research/survey_landscape_review.md)
+  (full cosmology survey landscape) and
+  [`research/schema_generalisation_audit.md`](research/schema_generalisation_audit.md)
+  (gap analysis + Phase 16–21 roadmap). Consult before scoping any
+  new loader or schema change.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
 ## OUF 2.1 (format on disk)
