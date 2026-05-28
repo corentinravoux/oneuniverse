@@ -55,7 +55,7 @@ call site.
   new loader or schema change.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
-## OUF 2.1 (format on disk)
+## OUF 2.2 (format on disk)
 
 Each converted dataset lives at:
 
@@ -69,12 +69,18 @@ Each converted dataset lives at:
 [`oneuniverse/data/manifest.py`](oneuniverse/data/manifest.py).
 Sub-specs: `PartitioningSpec` (NSIDE may be coarsened by Phase 12 F3 —
 read it from the manifest, never hardcode), optional `TemporalSpec`,
-`DatasetValidity`, `PdfSpec`.
+`DatasetValidity`, `PdfSpec`, `CoordinateSpec` (Phase 16 — frame /
+epoch / PM-parallax availability), `SpectrumSpec` (Phase 16 — vacuum
+vs air, log-binning, rest-frame state, λ-unit; SIGHTLINE only).
 
 CORE columns (every POINT dataset): `ra, dec, z, z_type, z_err,
 galaxy_id, survey_id, _original_row_index, _healpix32`.
 
-`Z_TYPE_VALUES = {"spec", "phot", "phot_pdf", "pv", "none"}`.
+`Z_TYPE_REGISTRY = {"spec", "phot", "phot_pdf", "pv", "none", …}` —
+extensible at runtime via
+`oneuniverse.data.ztypes.register_z_type(name)`. The converter
+validates every chunk's `z_type` against the registry and stamps
+`Manifest.observed_z_types` automatically (Phase 16).
 
 ## Bitemporal ONEUID / sub-object
 
