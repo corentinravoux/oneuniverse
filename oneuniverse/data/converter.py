@@ -100,6 +100,7 @@ def write_ouf_dataset(
     partition_nside: Optional[int] = None,
     coordinate: Optional["CoordinateSpec"] = None,
     spectrum: Optional["SpectrumSpec"] = None,
+    column_dtypes: Optional[Dict[str, str]] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -180,6 +181,7 @@ def write_ouf_dataset(
         partitions = _write_partitions_by_healpix(
             df, out_dir, compression, stats_builder, pdf_spec,
             partition_nside=chosen_nside,
+            column_dtypes=column_dtypes,
         )
         if partitioning is None:
             partitioning = PartitioningSpec(
@@ -190,6 +192,7 @@ def write_ouf_dataset(
     else:
         partitions = _write_partitions(
             df, out_dir, partition_rows, compression, stats_builder, pdf_spec,
+            column_dtypes=column_dtypes,
         )
 
     # Original-file specs ------------------------------------------------
@@ -597,6 +600,7 @@ def _write_partitions(
     compression: str,
     stats_builder=None,
     pdf_spec: Optional[PdfSpec] = None,
+    column_dtypes: Optional[Dict[str, str]] = None,
 ) -> List[PartitionSpec]:
     """Write *df* as fixed-size Parquet partitions + return typed specs."""
     import pyarrow.parquet as pq
@@ -611,7 +615,7 @@ def _write_partitions(
 
         part_name = f"part_{i:04d}.parquet"
         part_path = out_dir / part_name
-        table = _chunk_to_table(chunk, pdf_spec)
+        table = _chunk_to_table(chunk, pdf_spec, column_dtypes=column_dtypes)
         pq.write_table(table, part_path, compression=compression)
 
         stats = stats_builder(chunk) if stats_builder else PartitionStats()
@@ -652,6 +656,7 @@ def _write_partitions_by_healpix(
     stats_builder=None,
     pdf_spec: Optional[PdfSpec] = None,
     partition_nside: int = HEALPIX_PARTITION_NSIDE,
+    column_dtypes: Optional[Dict[str, str]] = None,
 ) -> List[PartitionSpec]:
     """Write *df* as one Parquet file per partition cell.
 
@@ -689,7 +694,7 @@ def _write_partitions_by_healpix(
         rel_name = f"data/{cell_dir.name}/part_0000.parquet"
         part_path = out_dir / rel_name
         chunk = chunk.drop(columns=["_partition_cell"])
-        table = _chunk_to_table(chunk, pdf_spec)
+        table = _chunk_to_table(chunk, pdf_spec, column_dtypes=column_dtypes)
         pq.write_table(table, part_path, compression=compression)
 
         stats = stats_builder(chunk) if stats_builder else PartitionStats()
