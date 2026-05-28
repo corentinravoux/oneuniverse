@@ -25,13 +25,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from oneuniverse.data._atomic import atomic_write_text
+from oneuniverse.data.coordinate_spec import CoordinateSpec
 from oneuniverse.data.format_spec import DataGeometry
 from oneuniverse.data.pdf import PdfSpec
+from oneuniverse.data.spectrum_spec import SpectrumSpec
 from oneuniverse.data.temporal import TemporalSpec
 from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.1.0"
-SCHEMA_VERSION: str = "2.1.0"
+FORMAT_VERSION: str = "2.2.0"
+SCHEMA_VERSION: str = "2.2.0"
 
 
 class ManifestValidationError(ValueError):
@@ -117,6 +119,11 @@ class Manifest:
     temporal: Optional[TemporalSpec] = None
     validity: Optional[DatasetValidity] = None
     pdf_spec: Optional[PdfSpec] = None
+    # Phase 16: observational metadata. All None / empty by default for
+    # forward-compat with 2.1.x manifests.
+    coordinate: Optional[CoordinateSpec] = None
+    spectrum: Optional[SpectrumSpec] = None
+    observed_z_types: tuple = ()
 
     @property
     def n_rows(self) -> int:
@@ -167,6 +174,11 @@ def _to_dict(m: Manifest) -> Dict[str, Any]:
     d["temporal"] = m.temporal.to_dict() if m.temporal is not None else None
     d["validity"] = m.validity.to_dict() if m.validity is not None else None
     d["pdf_spec"] = m.pdf_spec.to_dict() if m.pdf_spec is not None else None
+    d["coordinate"] = (
+        m.coordinate.to_dict() if m.coordinate is not None else None
+    )
+    d["spectrum"] = m.spectrum.to_dict() if m.spectrum is not None else None
+    d["observed_z_types"] = list(m.observed_z_types)
     return d
 
 
@@ -200,11 +212,15 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     fmt = raw["oneuniverse_format_version"]
     if not (
         isinstance(fmt, str)
-        and (fmt.startswith("2.0") or fmt.startswith("2.1"))
+        and (
+            fmt.startswith("2.0")
+            or fmt.startswith("2.1")
+            or fmt.startswith("2.2")
+        )
     ):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
-            f"with this library (expected 2.0.x or 2.1.x)."
+            f"with this library (expected 2.0.x / 2.1.x / 2.2.x)."
         )
 
     geo = raw["geometry"]
@@ -268,6 +284,12 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     pdf_raw = raw.get("pdf_spec")
     pdf_spec = PdfSpec.from_dict(pdf_raw) if pdf_raw is not None else None
 
+    coord_raw = raw.get("coordinate")
+    coordinate = CoordinateSpec.from_dict(coord_raw) if coord_raw else None
+    spec_raw = raw.get("spectrum")
+    spectrum = SpectrumSpec.from_dict(spec_raw) if spec_raw else None
+    observed_z_types = tuple(raw.get("observed_z_types", ()))
+
     return Manifest(
         oneuniverse_format_version=fmt,
         oneuniverse_schema_version=raw["oneuniverse_schema_version"],
@@ -285,4 +307,7 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         temporal=temporal,
         validity=validity,
         pdf_spec=pdf_spec,
+        coordinate=coordinate,
+        spectrum=spectrum,
+        observed_z_types=observed_z_types,
     )
