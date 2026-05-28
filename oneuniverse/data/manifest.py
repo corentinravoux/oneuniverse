@@ -71,6 +71,9 @@ class PartitionStats:
     z_max: Optional[float] = None
     t_min: Optional[float] = None
     t_max: Optional[float] = None
+    # Phase 17: generic per-column min/max for arbitrary axes
+    # (S/N, EBV, magnitude, ...). Empty by default for forward-compat.
+    extra_ranges: Dict[str, tuple] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -205,6 +208,25 @@ def _require(raw: Dict[str, Any], key: str, path: Path) -> Any:
     return raw[key]
 
 
+def _load_partition_stats(raw: Dict[str, Any]) -> PartitionStats:
+    """Build a :class:`PartitionStats` from JSON-decoded dict.
+
+    JSON has no tuple type, so ``extra_ranges`` values arrive as
+    2-element lists; we normalise them back to tuples.
+    """
+    er = {
+        k: (float(v[0]), float(v[1]))
+        for k, v in raw.get("extra_ranges", {}).items()
+    }
+    return PartitionStats(
+        ra_min=raw.get("ra_min"), ra_max=raw.get("ra_max"),
+        dec_min=raw.get("dec_min"), dec_max=raw.get("dec_max"),
+        z_min=raw.get("z_min"), z_max=raw.get("z_max"),
+        t_min=raw.get("t_min"), t_max=raw.get("t_max"),
+        extra_ranges=er,
+    )
+
+
 def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     for key in _REQUIRED_TOP_KEYS:
         _require(raw, key, path)
@@ -238,7 +260,7 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
             n_rows=int(p["n_rows"]),
             sha256=p["sha256"],
             size_bytes=int(p["size_bytes"]),
-            stats=PartitionStats(**p.get("stats", {})),
+            stats=_load_partition_stats(p.get("stats", {})),
             healpix_cell=(
                 int(p["healpix_cell"])
                 if p.get("healpix_cell") is not None
