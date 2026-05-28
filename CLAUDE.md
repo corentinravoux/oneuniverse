@@ -5,24 +5,47 @@ packages (mainly `flip`).
 
 ## Mission
 
-oneuniverse is the **data + orchestration** layer of the three-pillar
-cosmology stack:
+oneuniverse is **all of Pillar 1**: the data + orchestration layer of
+the three-pillar cosmology stack. Pillar 1 ends when a
+`MeasurementSet` is handed to an external estimator (Pillar 2) or to
+`oneuniverse.simulation` (Pillar 3).
 
-- Pillar 1 (here): standardise, cross-match, weight survey catalogs.
-- Pillar 2: estimators (P(k), ξ(r), 1D Lyα power) — `flip` and friends.
-- Pillar 3: forward models / mini-simulations.
+- **Pillar 1 (here):** `oneuniverse.data` (ingest, schema, manifest,
+  ONEUID, sub-object, DatasetView) → `oneuniverse.combine` (weights,
+  WeightedCatalog, combination) → `oneuniverse.measure` (MeasurementSet,
+  random catalogs, windows, jackknife regions, n(z)). **No cosmology,
+  no estimators, no forward models.**
+- **Pillar 2:** estimators + likelihoods consumed by external tools
+  (`flip`, `pycorr`, `picca`, future `onecorr`). Cosmology enters
+  here.
+- **Pillar 3:** `oneuniverse.simulation` (planned) — constrained
+  forward modelling, digital twin, mini-sim zoom-ins.
 
-No estimators ship from this package. No forward models. Just data.
+See [`plans/2026-05-28-pillar1-data-combine-measure.md`](plans/2026-05-28-pillar1-data-combine-measure.md),
+[`plans/2026-05-28-pillar2-external-interfaces.md`](plans/2026-05-28-pillar2-external-interfaces.md),
+[`plans/2026-05-28-pillar3-simulation-digital-twin.md`](plans/2026-05-28-pillar3-simulation-digital-twin.md)
+for the large-scope roadmaps.
+
+**Cosmology rule.** No H₀ / Ωₘ / distance models in Pillar 1.
+Heliocentric / CMB / vacuum-air etc. are observational metadata
+(per-column `frame` / `wavelength_convention`), not cosmological
+choices. Conversion to comoving distance happens in Pillar 2/3 at
+call site.
 
 ## Package layout
 
 - `oneuniverse/data/` — schema, manifest, converter, DatasetView,
   ONEUID, sub-object links, temporal validity.
 - `oneuniverse/combine/` — `WeightedCatalog` + Weight ABC +
-  primitives (FKP, IVar, HealpixMap, PDF, BOSS combiner).
+  primitives (FKP, IVar, HealpixMap, PDF, BOSS combiner). The
+  deprecated `oneuniverse.weight` shim was deleted 2026-05-28.
+- `oneuniverse/measure/` — **planned (Phase 21)**: MeasurementSet,
+  random catalogs, window functions, HEALPix jackknife regions,
+  n(z) builders, multi-tracer bundling, downstream adapters.
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
-- `plans/` — phase-by-phase implementation plans (Phases 1–15 done).
+- `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
+  (Phases 1–15) done; generalisation (Phases 16–23) planned.
 - `docs/` — Sphinx scaffold (`make html` from `docs/`).
 - `research/` — topical references + design analyses. Two new docs
   from 2026-05-28: [`research/survey_landscape_review.md`](research/survey_landscape_review.md)
@@ -94,10 +117,16 @@ internal `_chunk_to_table(chunk, pdf_spec)` helper.
 
 ## Phase status
 
-See [`plans/README.md`](plans/README.md). Phases 1–15 complete by
-2026-05-22 — stabilisation done. Real-survey loader writes for
-BOSS/eBOSS/DESI bright-galaxy/Rubin photo-z (Phase 16+) are the
-natural next step; explicitly deferred per the 2026-05-22 forward plan.
+See [`plans/README.md`](plans/README.md).
+- Phases 1–15 complete by 2026-05-22 — stabilisation done.
+- 2026-05-28: deprecated `oneuniverse.weight` shim deleted; 365/365
+  green. Three-pillar structure formalised; Pillar 1 generalisation
+  Phases 16–23 planned (driven by the survey-landscape +
+  schema-audit research docs).
+- **Phase 16+** = observational metadata expansion + variable-length
+  columns + PDF polymorphism + shear + map-based ONEUID +
+  `oneuniverse.measure` (MeasurementSet contract). Real-survey
+  loader writes (rolled-up Phase 23) land after the schema phases.
 
 ## Test conventions
 
