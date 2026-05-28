@@ -32,6 +32,17 @@ class ColumnDef:
     unit: str  # astropy-compatible unit string, "" if dimensionless
     description: str
     required: bool = True  # within its group
+    # Phase 16 observational-metadata annotations. All optional. No
+    # cosmology assumption — only what the survey publishes.
+    frame: Optional[str] = None
+    # One of: "heliocentric", "cmb", "lsr", "galactocentric", "icrs",
+    # "galactic", "ecliptic", "observer", "AB", "Vega", … Loader-defined.
+    epoch: Optional[float] = None
+    # Decimal-year epoch for position columns (e.g. 2016.0 for GAIA DR3).
+    wavelength_convention: Optional[str] = None
+    # "vacuum" | "air" for spectral columns; None for non-spectral.
+    nullable: bool = False
+    # True if the column is allowed to contain NaN / missing rows.
 
 
 # ── Column groups ─────────────────────────────────────────────────────────
@@ -60,9 +71,12 @@ Z_TYPE_VALUES: Tuple[str, ...] = ("spec", "phot", "phot_pdf", "pv", "none")
 SPECTROSCOPIC_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("z_spec", "f4", "", "Spectroscopic redshift"),
     ColumnDef("z_spec_err", "f4", "", "Spectroscopic redshift uncertainty"),
-    ColumnDef("z_helio", "f4", "", "Heliocentric redshift", required=False),
-    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", required=False),
-    ColumnDef("cz_cmb", "f4", "km/s", "CMB-frame recession velocity", required=False),
+    ColumnDef("z_helio", "f4", "", "Heliocentric redshift", required=False,
+              frame="heliocentric"),
+    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", required=False,
+              frame="cmb"),
+    ColumnDef("cz_cmb", "f4", "km/s", "CMB-frame recession velocity",
+              required=False, frame="cmb"),
     ColumnDef("w_fkp", "f4", "", "FKP weight", required=False),
     ColumnDef("w_comp", "f4", "", "Angular completeness weight", required=False),
     ColumnDef("w_cp", "f4", "", "Fiber collision weight", required=False),
@@ -151,7 +165,7 @@ PROBABILISTIC_REDSHIFT_COLUMNS: Tuple[ColumnDef, ...] = (
 
 
 SNIA_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift"),
+    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", frame="cmb"),
     ColumnDef("mu", "f4", "mag", "Distance modulus"),
     ColumnDef("mu_err", "f4", "mag", "Distance modulus uncertainty"),
     ColumnDef("x1", "f4", "", "SALT2 stretch parameter", required=False),
