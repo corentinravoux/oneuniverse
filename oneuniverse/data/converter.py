@@ -29,7 +29,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from oneuniverse.data.coordinate_spec import CoordinateSpec
+    from oneuniverse.data.spectrum_spec import SpectrumSpec
 
 import numpy as np
 import pandas as pd
@@ -94,6 +98,8 @@ def write_ouf_dataset(
     validity: Optional[DatasetValidity] = None,
     pdf_spec: Optional[PdfSpec] = None,
     partition_nside: Optional[int] = None,
+    coordinate: Optional["CoordinateSpec"] = None,
+    spectrum: Optional["SpectrumSpec"] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -134,6 +140,19 @@ def write_ouf_dataset(
     missing = validate_columns(list(df.columns), geometry, "data")
     if missing:
         raise ValueError(f"data_df missing required columns: {missing}")
+
+    # Phase 16: validate z_type values against the runtime registry and
+    # capture the observed set for the manifest. Fail loudly rather than
+    # silently writing a manifest that breaks downstream.
+    if "z_type" in df.columns:
+        from oneuniverse.data.ztypes import assert_valid as _assert_z_types
+
+        seen = {str(v) for v in df["z_type"].dropna().unique()}
+        _assert_z_types(seen)
+        observed_z_types = tuple(sorted(seen))
+    else:
+        observed_z_types = ()
+
     if geometry is DataGeometry.SIGHTLINE:
         if objects_df is None:
             raise ValueError("SIGHTLINE geometry requires objects_df")
@@ -226,6 +245,9 @@ def write_ouf_dataset(
         temporal=temporal,
         validity=validity,
         pdf_spec=pdf_spec,
+        coordinate=coordinate,
+        spectrum=spectrum,
+        observed_z_types=observed_z_types,
     )
     write_manifest(out_dir / MANIFEST_FILENAME, manifest)
     return manifest
