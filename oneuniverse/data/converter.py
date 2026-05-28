@@ -708,38 +708,71 @@ def _write_partitions_by_healpix(
     return specs
 
 
-def _chunk_to_table(chunk: pd.DataFrame, pdf_spec: Optional[PdfSpec]):
-    """Convert a DataFrame chunk to a pyarrow Table, casting PDF list
-    columns to FixedSizeList[f4, n_components] when ``pdf_spec`` is set.
+def _chunk_to_table(
+    chunk: pd.DataFrame,
+    pdf_spec: Optional[PdfSpec],
+    *,
+    column_dtypes: Optional[Dict[str, str]] = None,
+):
+    """Convert a DataFrame chunk to a pyarrow Table.
 
-    Without ``pdf_spec``, falls back to ``pa.Table.from_pandas``.
+    Routing
+    -------
+    * Columns listed in ``column_dtypes`` are coerced according to the
+      dtype mini-language in :mod:`oneuniverse.data.dtype_lang`
+      (``f4[N]`` / ``i8[N]`` / ``list<f4>`` / ``large_list<f4>``).
+    * PDF columns implied by ``pdf_spec`` are cast to
+      ``FixedSizeList[float32, n_components]`` (Phase 10 behaviour).
+    * Remaining columns fall through to :func:`pa.Table.from_pandas`.
     """
     import pyarrow as pa
 
-    if pdf_spec is None:
-        return pa.Table.from_pandas(chunk, preserve_index=False)
+    from oneuniverse.data.dtype_lang import parse_dtype
 
-    n = int(pdf_spec.n_components)
-    list_cols = ["z_pdf_values"]
-    if pdf_spec.parameterisation == "mixmod":
-        list_cols += ["z_pdf_sigma", "z_pdf_weights"]
-    list_cols = [c for c in list_cols if c in chunk.columns]
+    column_dtypes = dict(column_dtypes or {})
 
+    # Resolve PDF list columns first so they appear in ``list_cols`` like
+    # any other variable-length payload.
+    if pdf_spec is not None:
+        n = int(pdf_spec.n_components)
+        pdf_cols = ["z_pdf_values"]
+        if pdf_spec.parameterisation == "mixmod":
+            pdf_cols += ["z_pdf_sigma", "z_pdf_weights"]
+        for c in pdf_cols:
+            if c in chunk.columns:
+                column_dtypes.setdefault(c, f"f4[{n}]")
+
+    list_cols = [c for c in column_dtypes if c in chunk.columns]
     scalar = chunk.drop(columns=list_cols)
     table = pa.Table.from_pandas(scalar, preserve_index=False)
 
-    elt_type = pa.float32()
     for col in list_cols:
-        arr = np.stack(
-            [np.asarray(r, dtype=np.float32) for r in chunk[col].to_numpy()]
-        )
-        if arr.shape[1] != n:
-            raise ValueError(
-                f"column {col!r}: expected {n} components, got {arr.shape[1]}"
+        spec = column_dtypes[col]
+        target = parse_dtype(spec)
+        if isinstance(target, pa.FixedSizeListType):
+            n_target = target.list_size
+            arr = np.stack(
+                [
+                    np.asarray(r, dtype=target.value_type.to_pandas_dtype())
+                    for r in chunk[col].to_numpy()
+                ]
             )
-        flat = pa.array(arr.reshape(-1), type=elt_type)
-        fsl = pa.FixedSizeListArray.from_arrays(flat, n)
-        table = table.append_column(col, fsl)
+            if arr.shape[1] != n_target:
+                raise ValueError(
+                    f"column {col!r}: expected {n_target} components, "
+                    f"got {arr.shape[1]}"
+                )
+            flat = pa.array(arr.reshape(-1), type=target.value_type)
+            built = pa.FixedSizeListArray.from_arrays(flat, n_target)
+        elif isinstance(target, (pa.ListType, pa.LargeListType)):
+            built = pa.array(
+                [list(r) for r in chunk[col].to_numpy()],
+                type=target,
+            )
+        else:
+            built = pa.array(chunk[col].to_numpy(), type=target)
+        table = table.append_column(col, built)
+
     return table
 
 
