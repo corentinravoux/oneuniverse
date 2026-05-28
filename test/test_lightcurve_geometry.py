@@ -39,6 +39,6 @@ def test_default_partition_rows_has_lightcurve():
     assert DataGeometry.LIGHTCURVE in DEFAULT_PARTITION_ROWS
 
 
-def test_format_version_is_2_1_0():
-    assert FORMAT_VERSION == "2.1.0"
-    assert SCHEMA_VERSION == "2.1.0"
+def test_format_version_is_2_2_0():
+    assert FORMAT_VERSION == "2.2.0"
+    assert SCHEMA_VERSION == "2.2.0"
