@@ -156,6 +156,20 @@ class DESIQSOLoader(BaseSurveyLoader):
         n_objects_approx=2_332_000,
     )
 
+    @classmethod
+    def coordinate_spec(cls):
+        from oneuniverse.data.coordinate_spec import CoordinateSpec
+        return CoordinateSpec(frame="icrs")
+
+    @classmethod
+    def spectrum_spec(cls):
+        from oneuniverse.data.spectrum_spec import SpectrumSpec
+        return SpectrumSpec(
+            wavelength_convention="vacuum",
+            log_binned=True,
+            rest_frame_corrected=False,
+        )
+
     def _load_raw(
         self,
         data_path: Optional[Path] = None,

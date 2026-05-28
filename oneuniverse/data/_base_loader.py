@@ -120,6 +120,22 @@ class BaseSurveyLoader(abc.ABC):
     def column_groups(self) -> List[str]:
         return list(self.config.column_groups)
 
+    # ── Phase 16: observational-metadata hooks ───────────────────────────
+    # Subclasses override to declare what frame / epoch / wavelength
+    # convention the underlying survey publishes. Default: None
+    # (no claim — manifest carries no observational metadata for the
+    # corresponding axis).
+
+    @classmethod
+    def coordinate_spec(cls):
+        """Return :class:`CoordinateSpec` or ``None``."""
+        return None
+
+    @classmethod
+    def spectrum_spec(cls):
+        """Return :class:`SpectrumSpec` or ``None``."""
+        return None
+
     # ── Public interface ─────────────────────────────────────────────────
 
     def load(

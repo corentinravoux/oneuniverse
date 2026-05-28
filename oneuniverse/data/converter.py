@@ -345,6 +345,10 @@ def convert_survey(
     if config.data_filename and survey_path is not None:
         original_paths.append(survey_path / config.data_filename)
 
+    # Phase 16: pull observational metadata from the loader if declared.
+    coord = loader.coordinate_spec()
+    spec = loader.spectrum_spec()
+
     manifest = write_ouf_dataset(
         df=df,
         out_dir=out_dir,
@@ -358,6 +362,8 @@ def convert_survey(
         original_format=config.data_format or "fits",
         conversion_kwargs=loader_kwargs,
         loader=LoaderSpec(name=survey_name, version="0.2.0"),
+        coordinate=coord,
+        spectrum=spec,
     )
 
     _log_summary(out_dir, survey_path, config, manifest)
