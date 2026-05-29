@@ -214,19 +214,33 @@ photo-z × spec-z calibration.
 
 **OUF bump.** None expected (extensions are forward-compatible).
 
-### Phase 22 (optional) — Geometry expansion
+### Phase 22 (optional) — Data-driven geometry expansion
 
-**Goal.** Add geometries needed for sims and exotic data.
+**Goal.** Add the remaining geometries needed for **observational**
+datasets that today's POINT / SIGHTLINE / HEALPIX / LIGHTCURVE set
+cannot represent. Pillar 1 stays data-only — mock snapshots and any
+sim-specific geometry belong to Pillar 3, not here.
 
 **Adds.**
-- `CUBE` geometry for IFU (MaNGA, SAMI, MUSE), HI cubes, 21 cm
-  intensity-mapping cubes.
-- `PARTICLE` geometry for mock snapshots (AbacusSummit, MillenniumTNG,
-  UNIT, Outer Rim).
-- `GW_SKYMAP` geometry for row-per-event HEALPix probability maps.
+- `CUBE` geometry for **observed** IFU cubes (MaNGA, SAMI, MUSE-GTO),
+  HI cubes (WALLABY pilot fields, MeerKAT MIGHTEE), 21 cm
+  intensity-mapping cubes (CHIME, HERA). Carries WCS + axis metadata
+  (RA, Dec, freq / wavelength / channel).
+- `GW_SKYMAP` geometry for row-per-event HEALPix probability maps
+  (GWTC-3/4 BAYESTAR / LALInference outputs after Phase 21's `mocpy`
+  rasterisation). Each row = one event with NSIDE + a per-row
+  `f4[npix]` payload.
 
-Defer until concrete consumers appear. Pillar 3 (simulation) is the
-likely first consumer of `PARTICLE`.
+**Out of scope.** `PARTICLE` geometry for N-body / hydro mock
+snapshots (AbacusSummit, MillenniumTNG, UNIT, Outer Rim,
+MillenniumTNG, Quijote, Buzzard, Flagship) is **owned by Pillar 3**,
+not Phase 22. Pillar 3 will introduce its own `PARTICLE` geometry
+(and any sim-bespoke formats) in its own packages once forward-model
+work begins.
+
+**Status.** Defer Phase 22 until a concrete data consumer appears
+(typical first ask: WALLABY HI cube ingest for cross-correlation with
+DESI BGS).
 
 ## 6. Loader onboarding (rolled-up Phase 13)
 
