@@ -93,6 +93,13 @@ def cross_match_surveys(
 
     # Flatten into a single stacked table.
     stacked: List[pd.DataFrame] = []
+    # Phase 21: when attribute_filters need extra columns, preserve
+    # any columns mentioned by attr-filter callables — we cannot
+    # introspect requirements, so preserve every catalog column not
+    # already in the canonical set.
+    canonical = {
+        "universal_id", "survey", "row_index", "ra", "dec", "z", "z_type",
+    }
     for name, df in catalogs.items():
         for col in ("ra", "dec"):
             if col not in df.columns:
@@ -112,6 +119,12 @@ def cross_match_surveys(
             ),
             "z_type": ztype_col,
         })
+        # Carry survey-specific columns (e.g. magnitudes for colour
+        # filters) so attribute_filters can index them.
+        for col in df.columns:
+            if col in canonical or col in part.columns:
+                continue
+            part[col] = df[col].to_numpy()
         stacked.append(part)
 
     table = pd.concat(stacked, ignore_index=True)
@@ -154,6 +167,22 @@ def cross_match_surveys(
                 continue
             if dz > dz_tol:
                 keep[i] = False
+        idx1 = idx1[keep]
+        idx2 = idx2[keep]
+
+    # Phase 21: pluggable attribute filters.
+    if idx1.size and rules.attribute_filters:
+        left = table.iloc[idx1].reset_index(drop=True)
+        right = table.iloc[idx2].reset_index(drop=True)
+        keep = np.ones(idx1.size, dtype=bool)
+        for f in rules.attribute_filters:
+            mask = np.asarray(f(left, right), dtype=bool)
+            if mask.shape != (idx1.size,):
+                raise ValueError(
+                    f"attribute_filter {f!r} must return bool[{idx1.size}], "
+                    f"got shape {mask.shape}"
+                )
+            keep &= mask
         idx1 = idx1[keep]
         idx2 = idx2[keep]
 

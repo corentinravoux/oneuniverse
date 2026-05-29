@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import FrozenSet, Mapping, Optional, Tuple
+from typing import Callable, FrozenSet, Mapping, Optional, Tuple
 
 
 ZtypePair = Tuple[str, str]
@@ -42,14 +42,28 @@ class CrossMatchRules:
     dz_tol_default: Optional[float] = 1e-3
     dz_tol_by_ztype: Mapping[ZtypePair, float] = field(default_factory=dict)
     reject_ztype: FrozenSet[ZtypePair] = field(default_factory=frozenset)
+    # Phase 21: pluggable predicates evaluated on candidate pairs.
+    # Each callable receives two pandas DataFrames of equal length
+    # (one row per candidate pair, left + right) and returns a
+    # length-N bool array — True = keep.
+    attribute_filters: Tuple[Callable, ...] = ()
 
     def __post_init__(self) -> None:
         # Normalise pair keys to sorted form so lookups are symmetric
         # and so two semantically-equal rule objects hash identically.
         norm_dz = {self._key(*k): v for k, v in dict(self.dz_tol_by_ztype).items()}
         norm_rej = frozenset(self._key(*p) for p in self.reject_ztype)
+        for f in self.attribute_filters:
+            if not callable(f):
+                raise TypeError(
+                    f"CrossMatchRules.attribute_filters: expected "
+                    f"callables, got {f!r}"
+                )
         object.__setattr__(self, "dz_tol_by_ztype", norm_dz)
         object.__setattr__(self, "reject_ztype", norm_rej)
+        object.__setattr__(
+            self, "attribute_filters", tuple(self.attribute_filters),
+        )
 
     # ── Lookups ──────────────────────────────────────────────────────
 
@@ -82,6 +96,10 @@ class CrossMatchRules:
             "reject_ztype": sorted(
                 list(self._key(*k)) for k in self.reject_ztype
             ),
+            "attribute_filters": [
+                f"{getattr(f, '__module__', '?')}.{getattr(f, '__qualname__', repr(f))}"
+                for f in self.attribute_filters
+            ],
         }
 
     def hash(self) -> str:
