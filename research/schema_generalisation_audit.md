@@ -552,9 +552,14 @@ version bump + green test suite):
   `(survey_type, sub_kind, z_type)`. No OUF bump (all schema
   additions are optional). See
   [`../plans/2026-05-29-phase19-shear-and-pip-weights.md`](../plans/2026-05-29-phase19-shear-and-pip-weights.md).
-- **Phase 20 — Map-based ONEUID / sub-object.** Probabilistic match,
-  map overlap scoring, attribute filters, multi-level chains. Unblocks
-  GW × galaxy, cluster member chains, deblender hierarchies.
+- **Phase 20 — Map-based sub-object + multi-level chains.** Landed
+  2026-05-29. Adds
+  `oneuniverse.data.subobject_map.build_subobject_links_to_map`
+  (point × HEALPix probability map at fixed NSIDE),
+  `Database.chain_subobjects(starts, relations)` walker, and
+  `SubobjectRules.relation_type / next_level`. Multi-order MOC
+  HEALPix (`mocpy`) deferred. No OUF format bump. See
+  [`../plans/2026-05-29-phase20-map-based-and-chain-subobjects.md`](../plans/2026-05-29-phase20-map-based-and-chain-subobjects.md).
 - **Phase 21 — Geometry expansion** (`CUBE`, `PARTICLE`, `GW_SKYMAP`):
   optional; pursue once a concrete consumer appears.
 
