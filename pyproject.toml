@@ -37,6 +37,8 @@ dev = [
     "pyarrow>=12.0",
     "healpy>=1.16",
     "matplotlib>=3.5",
+    # Phase 21: multi-order MOC HEALPix support for GW skymap ingest.
+    "mocpy>=0.13",
 ]
 docs = [
     "sphinx>=7.0",
