@@ -85,7 +85,7 @@ Per-phase detailed plans land as we start each.
 | 16 | Observational metadata expansion (`CoordinateSpec`, `SpectrumSpec`, extensible `z_type` registry, `ColumnDef.frame/epoch/wavelength_convention/nullable`, OUF → 2.2.0) | **complete (2026-05-28, 406/406 tests green)** |
 | 17 | Variable-length columns + generic `PartitionStats.extra_ranges` (dtype mini-language, `column_dtypes` writer kwarg, `extra_stats_columns`, `DatasetView.extra_filters`, OUF → 2.3.0) | **complete (2026-05-29, 428/428 tests green)** |
 | 18 | PDF polymorphism (`sample` / `hist`) + column aliases + `TomographicNzSpec` + `ClassificationPdfSpec` (OUF → 2.4.0) | **complete (2026-05-29, 450/450 tests green)** |
-| 19 | Shear column group + `ShearWeight` + `PipBitweightWeight` + sub-species registry key | **complete (2026-05-29; suite pending close-out)** |
+| 19 | Shear column group + `ShearWeight` + `PipBitweightWeight` + sub-species registry key | **complete (2026-05-29, 472/472 tests green)** |
 | 20 | Map-based ONEUID + multi-level sub-object | planned |
 | 21 | `oneuniverse.measure` — MeasurementSet contract | planned |
 | 22 | Geometry expansion (CUBE/PARTICLE/GW_SKYMAP) | optional |
