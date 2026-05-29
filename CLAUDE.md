@@ -123,7 +123,24 @@ Phase 20:
   matches a point catalog of parents against per-row HEALPix
   probability maps (fixed-NSIDE) and emits the canonical
   `SubobjectLinks` sidecar with ``confidence = pixel value``. Used
-  for GW host association. Multi-order MOC HEALPix (`mocpy`) deferred.
+  for GW host association.
+
+Phase 21:
+- `CrossMatchRules.attribute_filters: Tuple[Callable, ...]` —
+  pluggable predicates evaluated on candidate (left, right)
+  DataFrames; return a bool mask. The matcher applies them after
+  the dz cut. Filters are hashed by qualname so two semantically
+  equal rule objects hash identically. The matcher's row stack
+  preserves any non-canonical catalog columns (e.g. magnitudes) so
+  filters can index them.
+- CORE `composite_id: U64` (optional) — preserves the
+  survey-published composite ID alongside the canonical `int64`
+  `galaxy_id` (PLATE-MJD-FIBERID, KIDS_TILE+SeqNr, GAIA source_id, …).
+- `oneuniverse.data.moc.rasterise_moc_to_healpix(moc_path, *, nside,
+  nest=True)` bridges GW LIGO/Virgo multi-order MOC FITS to the
+  fixed-NSIDE numpy arrays consumed by
+  `build_subobject_links_to_map`. `mocpy` is an optional dev extra
+  (`pip install .[dev]`).
 
 ## Weights
 

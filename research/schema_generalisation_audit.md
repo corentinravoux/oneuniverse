@@ -557,11 +557,19 @@ version bump + green test suite):
   `oneuniverse.data.subobject_map.build_subobject_links_to_map`
   (point × HEALPix probability map at fixed NSIDE),
   `Database.chain_subobjects(starts, relations)` walker, and
-  `SubobjectRules.relation_type / next_level`. Multi-order MOC
-  HEALPix (`mocpy`) deferred. No OUF format bump. See
+  `SubobjectRules.relation_type / next_level`. No OUF format bump.
+  See
   [`../plans/2026-05-29-phase20-map-based-and-chain-subobjects.md`](../plans/2026-05-29-phase20-map-based-and-chain-subobjects.md).
-- **Phase 21 — Geometry expansion** (`CUBE`, `PARTICLE`, `GW_SKYMAP`):
-  optional; pursue once a concrete consumer appears.
+- **Phase 21 — Cleanup of deferred sub-object items.** Landed
+  2026-05-29. Adds `CrossMatchRules.attribute_filters`, optional
+  CORE `composite_id` column, and
+  `oneuniverse.data.moc.rasterise_moc_to_healpix` (mocpy optional
+  dev extra). No OUF bump. See
+  [`../plans/2026-05-29-phase21-cleanup-deferred-subobject-items.md`](../plans/2026-05-29-phase21-cleanup-deferred-subobject-items.md).
+- **Phase 22 — Data-driven geometry expansion** (`CUBE` for IFU/HI/
+  21cm, `GW_SKYMAP` for event probability maps). `PARTICLE` / mock
+  geometry moved to Pillar 3. Optional; pursue once a concrete
+  observational consumer appears.
 
 Phase 13 (real-survey loader writes for the existing schema) remains
 postponed per the 2026-05-22 forward plan. Phases 16–20 are
