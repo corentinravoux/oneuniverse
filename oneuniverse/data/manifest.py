@@ -25,15 +25,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from oneuniverse.data._atomic import atomic_write_text
+from oneuniverse.data.classification_pdf import ClassificationPdfSpec
 from oneuniverse.data.coordinate_spec import CoordinateSpec
 from oneuniverse.data.format_spec import DataGeometry
 from oneuniverse.data.pdf import PdfSpec
 from oneuniverse.data.spectrum_spec import SpectrumSpec
 from oneuniverse.data.temporal import TemporalSpec
+from oneuniverse.data.tomographic_nz import TomographicNzSpec
 from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.3.0"
-SCHEMA_VERSION: str = "2.3.0"
+FORMAT_VERSION: str = "2.4.0"
+SCHEMA_VERSION: str = "2.4.0"
 
 
 class ManifestValidationError(ValueError):
@@ -127,6 +129,9 @@ class Manifest:
     coordinate: Optional[CoordinateSpec] = None
     spectrum: Optional[SpectrumSpec] = None
     observed_z_types: tuple = ()
+    # Phase 18 additions.
+    tomographic_nz: Optional[TomographicNzSpec] = None
+    classification_pdf: Optional[ClassificationPdfSpec] = None
 
     @property
     def n_rows(self) -> int:
@@ -182,6 +187,13 @@ def _to_dict(m: Manifest) -> Dict[str, Any]:
     )
     d["spectrum"] = m.spectrum.to_dict() if m.spectrum is not None else None
     d["observed_z_types"] = list(m.observed_z_types)
+    d["tomographic_nz"] = (
+        m.tomographic_nz.to_dict() if m.tomographic_nz is not None else None
+    )
+    d["classification_pdf"] = (
+        m.classification_pdf.to_dict()
+        if m.classification_pdf is not None else None
+    )
     return d
 
 
@@ -239,11 +251,13 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
             or fmt.startswith("2.1")
             or fmt.startswith("2.2")
             or fmt.startswith("2.3")
+            or fmt.startswith("2.4")
         )
     ):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
-            f"with this library (expected 2.0.x / 2.1.x / 2.2.x / 2.3.x)."
+            f"with this library (expected 2.0.x / 2.1.x / 2.2.x / 2.3.x "
+            f"/ 2.4.x)."
         )
 
     geo = raw["geometry"]
@@ -313,6 +327,15 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     spectrum = SpectrumSpec.from_dict(spec_raw) if spec_raw else None
     observed_z_types = tuple(raw.get("observed_z_types", ()))
 
+    tnz_raw = raw.get("tomographic_nz")
+    tomographic_nz = (
+        TomographicNzSpec.from_dict(tnz_raw) if tnz_raw else None
+    )
+    cpd_raw = raw.get("classification_pdf")
+    classification_pdf = (
+        ClassificationPdfSpec.from_dict(cpd_raw) if cpd_raw else None
+    )
+
     return Manifest(
         oneuniverse_format_version=fmt,
         oneuniverse_schema_version=raw["oneuniverse_schema_version"],
@@ -333,4 +356,6 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         coordinate=coordinate,
         spectrum=spectrum,
         observed_z_types=observed_z_types,
+        tomographic_nz=tomographic_nz,
+        classification_pdf=classification_pdf,
     )
