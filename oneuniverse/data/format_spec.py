@@ -95,6 +95,15 @@ class DataGeometry(str, Enum):
     Structural twin of SIGHTLINE, time-indexed instead of wavelength-indexed.
     Example: LSST/ZTF supernovae, variable stars."""
 
+    CUBE = "cube"
+    """One row per observational cube (IFU / HI / 21cm intensity).
+    Tables: part_*.parquet only. Columns include a per-row variable-
+    length `cube` payload + `shape` triple."""
+
+    GW_SKYMAP = "gw_skymap"
+    """One row per gravitational-wave event with a per-row HEALPix
+    probability map. Tables: part_*.parquet only."""
+
 
 # ── Format version ───────────────────────────────────────────────────────
 
@@ -163,6 +172,22 @@ LIGHTCURVE_DATA_REQUIRED_COLUMNS: Tuple[str, ...] = (
     "flag",             # int32 / uint8 quality flag
 )
 
+CUBE_DATA_REQUIRED_COLUMNS: Tuple[str, ...] = (
+    "cube_id",          # int64, unique per cube
+    "ra",               # float64, cube reference RA (deg, ICRS)
+    "dec",              # float64, cube reference Dec (deg, ICRS)
+    "shape",            # int32[3] — (n_ra, n_dec, n_chan)
+    "cube",             # list<float32> — flattened cube payload
+)
+
+GW_SKYMAP_DATA_REQUIRED_COLUMNS: Tuple[str, ...] = (
+    "event_id",         # int64, unique per event
+    "event_name",       # string, e.g. "GW230529_181500"
+    "map_nside",        # int32, fixed HEALPix NSIDE per row
+    "map_nest",         # bool, ordering
+    "prob",             # f4[12 * nside²] or list<f4>
+)
+
 GEOMETRY_COLUMNS: Dict[DataGeometry, Dict[str, Tuple[str, ...]]] = {
     DataGeometry.POINT: {
         "data": POINT_REQUIRED_COLUMNS,
@@ -178,6 +203,12 @@ GEOMETRY_COLUMNS: Dict[DataGeometry, Dict[str, Tuple[str, ...]]] = {
         "objects": LIGHTCURVE_OBJECT_REQUIRED_COLUMNS,
         "data": LIGHTCURVE_DATA_REQUIRED_COLUMNS,
     },
+    DataGeometry.CUBE: {
+        "data": CUBE_DATA_REQUIRED_COLUMNS,
+    },
+    DataGeometry.GW_SKYMAP: {
+        "data": GW_SKYMAP_DATA_REQUIRED_COLUMNS,
+    },
 }
 
 
@@ -190,6 +221,8 @@ DEFAULT_PARTITION_ROWS: Dict[DataGeometry, int] = {
     DataGeometry.SIGHTLINE:  2_000_000,  # ~4 float columns per pixel → ~25 MB
     DataGeometry.HEALPIX:    500_000,    # ~2-3 float columns per pixel → ~10 MB
     DataGeometry.LIGHTCURVE: 1_000_000,  # ~6 float columns per epoch → ~20 MB
+    DataGeometry.CUBE:       1_000,      # one row per cube (heavy payload)
+    DataGeometry.GW_SKYMAP:  100,        # one row per event
 }
 
 COMPRESSION: str = "zstd"
