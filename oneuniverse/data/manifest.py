@@ -32,8 +32,8 @@ from oneuniverse.data.spectrum_spec import SpectrumSpec
 from oneuniverse.data.temporal import TemporalSpec
 from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.2.0"
-SCHEMA_VERSION: str = "2.2.0"
+FORMAT_VERSION: str = "2.3.0"
+SCHEMA_VERSION: str = "2.3.0"
 
 
 class ManifestValidationError(ValueError):
@@ -238,11 +238,12 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
             fmt.startswith("2.0")
             or fmt.startswith("2.1")
             or fmt.startswith("2.2")
+            or fmt.startswith("2.3")
         )
     ):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
-            f"with this library (expected 2.0.x / 2.1.x / 2.2.x)."
+            f"with this library (expected 2.0.x / 2.1.x / 2.2.x / 2.3.x)."
         )
 
     geo = raw["geometry"]
