@@ -55,7 +55,7 @@ call site.
   new loader or schema change.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
-## OUF 2.3 (format on disk)
+## OUF 2.4 (format on disk)
 
 Each converted dataset lives at:
 
@@ -81,6 +81,17 @@ Phase 17 adds:
   DESI BITWEIGHTS) route through
   `write_ouf_dataset(column_dtypes={"col": "list<f4>" | "f4[N]" | "i8[N]" | "large_list<f4>"})`.
   Mini-language lives in `oneuniverse.data.dtype_lang`.
+
+Phase 18 adds:
+- `PdfSpec` covers `interp / quant / mixmod / sample / hist` and
+  carries configurable column aliases (`value_column`,
+  `sigma_column`, `weights_column`) so RAIL / qp catalogs round-trip
+  without renaming. `hist` stores per-row bin heights as `f4[N]`;
+  `sample` stores per-row z-draws as `list<f4>`.
+- `TomographicNzSpec` (per-bin n(z) on a shared z grid +
+  `bin_assignment_column` int row column) and
+  `ClassificationPdfSpec` (ordered class tuple + per-row
+  `f4[n_classes]`) are dataset-level Manifest sub-specs.
 
 CORE columns (every POINT dataset): `ra, dec, z, z_type, z_err,
 galaxy_id, survey_id, _original_row_index, _healpix32`.

@@ -537,9 +537,13 @@ version bump + green test suite):
   `write_ouf_dataset(extra_stats_columns=...)`,
   `DatasetView.extra_filters`. OUF 2.3.0. See
   [`../plans/2026-05-28-phase17-variable-length-and-partition-stats.md`](../plans/2026-05-28-phase17-variable-length-and-partition-stats.md).
-- **Phase 18 — PDF polymorphism + tomographic n(z).** `sample` +
-  `hist` parameterisations, sparse grid_mask, axis_labels, tomographic
-  n(z) as a manifest-level object. RAIL `qp` roundtrip.
+- **Phase 18 — PDF polymorphism + tomographic n(z) + classification PDFs.**
+  Landed 2026-05-29. `PdfSpec` covers
+  `interp / quant / mixmod / sample / hist` and carries
+  `value_column / sigma_column / weights_column / hist_edges /
+  grid_mask / axis_labels`. New manifest sub-specs `TomographicNzSpec`
+  and `ClassificationPdfSpec`. OUF 2.4.0. See
+  [`../plans/2026-05-29-phase18-pdf-polymorphism.md`](../plans/2026-05-29-phase18-pdf-polymorphism.md).
 - **Phase 19 — Shear + weight expansion.** SHEAR_COLUMNS group,
   `ShearWeight`, `PipBitweightWeight`, registry sub_kind. Unblocks DES
   Y3, KiDS-1000, HSC-Y3, DESI bitweights.
