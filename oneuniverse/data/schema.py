@@ -164,6 +164,23 @@ PROBABILISTIC_REDSHIFT_COLUMNS: Tuple[ColumnDef, ...] = (
 )
 
 
+SHEAR_COLUMNS: Tuple[ColumnDef, ...] = (
+    ColumnDef("e1", "f4", "", "First shear component", required=False),
+    ColumnDef("e2", "f4", "", "Second shear component", required=False),
+    ColumnDef("e1_err", "f4", "", "1σ on e1", required=False),
+    ColumnDef("e2_err", "f4", "", "1σ on e2", required=False),
+    ColumnDef("R11", "f4", "", "Metacal response ∂e1/∂γ1", required=False),
+    ColumnDef("R22", "f4", "", "Metacal response ∂e2/∂γ2", required=False),
+    ColumnDef("R12", "f4", "", "Metacal off-diagonal response", required=False),
+    ColumnDef("R21", "f4", "", "Metacal off-diagonal response", required=False),
+    ColumnDef("R_S", "f4", "", "Selection response", required=False),
+    ColumnDef("m_bias", "f4", "", "Multiplicative bias (lensfit)", required=False),
+    ColumnDef("c1_bias", "f4", "", "Additive bias e1 (lensfit)", required=False),
+    ColumnDef("c2_bias", "f4", "", "Additive bias e2 (lensfit)", required=False),
+    ColumnDef("shear_weight", "f4", "", "Per-object shape weight", required=False),
+)
+
+
 SNIA_COLUMNS: Tuple[ColumnDef, ...] = (
     ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", frame="cmb"),
     ColumnDef("mu", "f4", "mag", "Distance modulus"),
@@ -185,6 +202,7 @@ COLUMN_GROUPS: Dict[str, Tuple[ColumnDef, ...]] = {
     "qso": QSO_COLUMNS,
     "snia": SNIA_COLUMNS,
     "probabilistic_redshift": PROBABILISTIC_REDSHIFT_COLUMNS,
+    "shear": SHEAR_COLUMNS,
 }
 
 
