@@ -56,7 +56,7 @@ def _minimal_manifest(**overrides) -> Manifest:
 
 
 def test_version_constants_bumped():
-    assert FORMAT_VERSION == "2.2.0"
+    assert FORMAT_VERSION == "2.3.0"
 
 
 def test_manifest_carries_coordinate_spec(tmp_path):
