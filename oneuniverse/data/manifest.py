@@ -27,15 +27,17 @@ from typing import Any, Dict, List, Optional, Union
 from oneuniverse.data._atomic import atomic_write_text
 from oneuniverse.data.classification_pdf import ClassificationPdfSpec
 from oneuniverse.data.coordinate_spec import CoordinateSpec
+from oneuniverse.data.cube_spec import CubeSpec
 from oneuniverse.data.format_spec import DataGeometry
+from oneuniverse.data.gwskymap_spec import GwSkymapSpec
 from oneuniverse.data.pdf import PdfSpec
 from oneuniverse.data.spectrum_spec import SpectrumSpec
 from oneuniverse.data.temporal import TemporalSpec
 from oneuniverse.data.tomographic_nz import TomographicNzSpec
 from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.4.0"
-SCHEMA_VERSION: str = "2.4.0"
+FORMAT_VERSION: str = "2.5.0"
+SCHEMA_VERSION: str = "2.5.0"
 
 
 class ManifestValidationError(ValueError):
@@ -132,6 +134,9 @@ class Manifest:
     # Phase 18 additions.
     tomographic_nz: Optional[TomographicNzSpec] = None
     classification_pdf: Optional[ClassificationPdfSpec] = None
+    # Phase 22 additions.
+    cube: Optional[CubeSpec] = None
+    gwskymap: Optional[GwSkymapSpec] = None
 
     @property
     def n_rows(self) -> int:
@@ -194,6 +199,8 @@ def _to_dict(m: Manifest) -> Dict[str, Any]:
         m.classification_pdf.to_dict()
         if m.classification_pdf is not None else None
     )
+    d["cube"] = m.cube.to_dict() if m.cube is not None else None
+    d["gwskymap"] = m.gwskymap.to_dict() if m.gwskymap is not None else None
     return d
 
 
@@ -252,12 +259,13 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
             or fmt.startswith("2.2")
             or fmt.startswith("2.3")
             or fmt.startswith("2.4")
+            or fmt.startswith("2.5")
         )
     ):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
             f"with this library (expected 2.0.x / 2.1.x / 2.2.x / 2.3.x "
-            f"/ 2.4.x)."
+            f"/ 2.4.x / 2.5.x)."
         )
 
     geo = raw["geometry"]
@@ -335,6 +343,10 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
     classification_pdf = (
         ClassificationPdfSpec.from_dict(cpd_raw) if cpd_raw else None
     )
+    cube_raw = raw.get("cube")
+    cube = CubeSpec.from_dict(cube_raw) if cube_raw else None
+    gwsky_raw = raw.get("gwskymap")
+    gwskymap = GwSkymapSpec.from_dict(gwsky_raw) if gwsky_raw else None
 
     return Manifest(
         oneuniverse_format_version=fmt,
@@ -358,4 +370,6 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         observed_z_types=observed_z_types,
         tomographic_nz=tomographic_nz,
         classification_pdf=classification_pdf,
+        cube=cube,
+        gwskymap=gwskymap,
     )
