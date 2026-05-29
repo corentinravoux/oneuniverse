@@ -131,6 +131,19 @@ Available primitives:
 - `FiberCollisionWeight/ZFailureWeight/CompletenessWeight` — BOSS-style
   named wrappers around `ColumnWeight`.
 - `boss_total_weight(w_sys, w_cp, w_noz, w_fkp)` — Reid 2016 combiner.
+- `ShearWeight(kind="metacal" | "lensfit", sigma_e_cols=…)` (Phase 19)
+  — `w = shear_weight / (R_eff² + σ_e²)` with
+  `R_eff = (R11+R22)/2 + R_S` (metacal) or `1 + m_bias` (lensfit).
+  DES Y3 / KiDS-1000 / HSC-Y3 / Rubin.
+- `PipBitweightWeight(mode="fraction" | "realisations")` (Phase 19)
+  — expand DESI `BITWEIGHTS: i8[N]` to a fractional weight or a
+  per-realisation 0/1 array (jackknife accumulator).
+- `default_weight_for(survey_type, z_type, *, sub_kind=None)`
+  (Phase 19) — registry key widens to
+  `(survey_type, sub_kind, z_type)`; `sub_kind=None` matches the
+  canonical pre-Phase-19 contract.
+- New `shear` schema column group: `e1 / e2 / e1_err / e2_err /
+  R11..R_S / m_bias / c1_bias / c2_bias / shear_weight`. All optional.
 
 ## Photo-z PDFs
 

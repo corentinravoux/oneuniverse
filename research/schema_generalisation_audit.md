@@ -544,9 +544,14 @@ version bump + green test suite):
   grid_mask / axis_labels`. New manifest sub-specs `TomographicNzSpec`
   and `ClassificationPdfSpec`. OUF 2.4.0. See
   [`../plans/2026-05-29-phase18-pdf-polymorphism.md`](../plans/2026-05-29-phase18-pdf-polymorphism.md).
-- **Phase 19 — Shear + weight expansion.** SHEAR_COLUMNS group,
-  `ShearWeight`, `PipBitweightWeight`, registry sub_kind. Unblocks DES
-  Y3, KiDS-1000, HSC-Y3, DESI bitweights.
+- **Phase 19 — Shear column group + weight expansion.** Landed
+  2026-05-29. Adds `SHEAR_COLUMNS` schema group,
+  `ShearWeight(kind="metacal" | "lensfit", sigma_e_cols=…)`,
+  `PipBitweightWeight(mode="fraction" | "realisations")`, and
+  registry sub-species key
+  `(survey_type, sub_kind, z_type)`. No OUF bump (all schema
+  additions are optional). See
+  [`../plans/2026-05-29-phase19-shear-and-pip-weights.md`](../plans/2026-05-29-phase19-shear-and-pip-weights.md).
 - **Phase 20 — Map-based ONEUID / sub-object.** Probabilistic match,
   map overlap scoring, attribute filters, multi-level chains. Unblocks
   GW × galaxy, cluster member chains, deblender hierarchies.
