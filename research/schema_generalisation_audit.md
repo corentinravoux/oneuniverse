@@ -566,10 +566,12 @@ version bump + green test suite):
   `oneuniverse.data.moc.rasterise_moc_to_healpix` (mocpy optional
   dev extra). No OUF bump. See
   [`../plans/2026-05-29-phase21-cleanup-deferred-subobject-items.md`](../plans/2026-05-29-phase21-cleanup-deferred-subobject-items.md).
-- **Phase 22 — Data-driven geometry expansion** (`CUBE` for IFU/HI/
-  21cm, `GW_SKYMAP` for event probability maps). `PARTICLE` / mock
-  geometry moved to Pillar 3. Optional; pursue once a concrete
-  observational consumer appears.
+- **Phase 22 — Data-driven geometry expansion.** Landed 2026-05-29.
+  Adds `DataGeometry.CUBE` (observed IFU / HI / 21cm cubes) +
+  `DataGeometry.GW_SKYMAP` (per-event probability maps), with
+  `CubeSpec` + `GwSkymapSpec` sub-specs on Manifest. `PARTICLE`
+  geometry and mock readers reassigned to Pillar 3. OUF 2.5.0. See
+  [`../plans/2026-05-29-phase22-data-driven-geometries.md`](../plans/2026-05-29-phase22-data-driven-geometries.md).
 
 Phase 13 (real-survey loader writes for the existing schema) remains
 postponed per the 2026-05-22 forward plan. Phases 16–20 are

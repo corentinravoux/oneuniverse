@@ -55,7 +55,7 @@ call site.
   new loader or schema change.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
-## OUF 2.4 (format on disk)
+## OUF 2.5 (format on disk)
 
 Each converted dataset lives at:
 
@@ -141,6 +141,19 @@ Phase 21:
   fixed-NSIDE numpy arrays consumed by
   `build_subobject_links_to_map`. `mocpy` is an optional dev extra
   (`pip install .[dev]`).
+
+Phase 22 (data-driven geometries; no mocks):
+- `DataGeometry.CUBE` — observed N-D cubes (IFU MaNGA/SAMI/MUSE, HI
+  WALLABY, 21cm CHIME/HERA). One row per cube; required columns
+  `cube_id, ra, dec, shape (i4[3]), cube (list<f4>)`. WCS / axis
+  metadata declared via `CubeSpec` on the Manifest (axes,
+  axis_units, wavelength_convention).
+- `DataGeometry.GW_SKYMAP` — per-event HEALPix probability maps
+  after `mocpy` rasterisation. One row per event; required columns
+  `event_id, event_name, map_nside, map_nest, prob (list<f4>)`.
+  `GwSkymapSpec` declares NSIDE + ordering + has_distance_extras.
+- `PARTICLE` / mock geometries are **owned by Pillar 3** — Pillar 1
+  stays data-only.
 
 ## Weights
 
