@@ -83,7 +83,7 @@ Per-phase detailed plans land as we start each.
 | 15 | Docs + stability hardening | **complete (2026-05-22, 365/365)** |
 | — | `oneuniverse.weight` deprecation shim deleted | **complete (2026-05-28, 365/365)** |
 | 16 | Observational metadata expansion (`CoordinateSpec`, `SpectrumSpec`, extensible `z_type` registry, `ColumnDef.frame/epoch/wavelength_convention/nullable`, OUF → 2.2.0) | **complete (2026-05-28, 406/406 tests green)** |
-| 17 | Variable-length columns + generic `PartitionStats.extra_ranges` (dtype mini-language, `column_dtypes` writer kwarg, `extra_stats_columns`, `DatasetView.extra_filters`, OUF → 2.3.0) | **complete (2026-05-29; suite pending close-out)** |
+| 17 | Variable-length columns + generic `PartitionStats.extra_ranges` (dtype mini-language, `column_dtypes` writer kwarg, `extra_stats_columns`, `DatasetView.extra_filters`, OUF → 2.3.0) | **complete (2026-05-29, 428/428 tests green)** |
 | 18 | PDF polymorphism + tomographic n(z) | planned |
 | 19 | Shear group + weight expansion | planned |
 | 20 | Map-based ONEUID + multi-level sub-object | planned |
