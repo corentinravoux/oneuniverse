@@ -101,6 +101,7 @@ def write_ouf_dataset(
     coordinate: Optional["CoordinateSpec"] = None,
     spectrum: Optional["SpectrumSpec"] = None,
     column_dtypes: Optional[Dict[str, str]] = None,
+    extra_stats_columns: Optional[List[str]] = None,
 ) -> Manifest:
     """Write *df* as a complete OUF 2.0 dataset under *out_dir*.
 
@@ -168,9 +169,17 @@ def write_ouf_dataset(
 
     # Default stats builder: captures all available partition columns
     # (ra, dec, z, t_obs) so per-partition pruning can filter on any of
-    # them without each caller hand-rolling a builder.
+    # them without each caller hand-rolling a builder. Phase 17:
+    # ``extra_stats_columns`` adds per-partition min/max for arbitrary
+    # axes (S/N, EBV, magnitude, …) via PartitionStats.extra_ranges.
     if stats_builder is None:
-        stats_builder = _default_stats_builder
+        extra_cols = tuple(extra_stats_columns or ())
+        if extra_cols:
+            def _builder(chunk: pd.DataFrame, _extra=extra_cols) -> PartitionStats:
+                return _default_stats_builder(chunk, extra_columns=_extra)
+            stats_builder = _builder
+        else:
+            stats_builder = _default_stats_builder
 
     # Partitions ---------------------------------------------------------
     if geometry is DataGeometry.POINT:
@@ -560,7 +569,11 @@ def get_geometry(survey_path: Path) -> DataGeometry:
 # ── Internal helpers ─────────────────────────────────────────────────────
 
 
-def _default_stats_builder(chunk: pd.DataFrame) -> PartitionStats:
+def _default_stats_builder(
+    chunk: pd.DataFrame,
+    *,
+    extra_columns: tuple = (),
+) -> PartitionStats:
     def _minmax(col: str):
         if col not in chunk.columns:
             return None, None
@@ -569,11 +582,17 @@ def _default_stats_builder(chunk: pd.DataFrame) -> PartitionStats:
     dec_lo, dec_hi = _minmax("dec")
     z_lo, z_hi = _minmax("z")
     t_lo, t_hi = _minmax("t_obs")
+    er = {}
+    for col in extra_columns:
+        lo, hi = _minmax(col)
+        if lo is not None:
+            er[col] = (lo, hi)
     return PartitionStats(
         ra_min=ra_lo, ra_max=ra_hi,
         dec_min=dec_lo, dec_max=dec_hi,
         z_min=z_lo, z_max=z_hi,
         t_min=t_lo, t_max=t_hi,
+        extra_ranges=er,
     )
 
 
