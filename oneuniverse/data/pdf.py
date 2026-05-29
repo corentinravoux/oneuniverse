@@ -202,6 +202,17 @@ class ProbabilisticRedshift:
             # rare direct-construction case for serialisation paths.
             self.values = np.asarray(values, dtype=np.float64)
             self.grid = np.arange(spec.n_components, dtype=np.float64)
+        elif spec.parameterisation == "sample":
+            # Ragged: object-dtype array of per-row 1-D float64 arrays.
+            self.values = values
+            self.grid = None
+        elif spec.parameterisation == "hist":
+            if spec.hist_edges is None:
+                raise ValueError("hist parameterisation requires hist_edges")
+            self.values = np.asarray(values, dtype=np.float64)
+            edges = np.asarray(spec.hist_edges, dtype=np.float64)
+            self.grid = 0.5 * (edges[:-1] + edges[1:])  # bin centres
+            self._edges = edges
         else:
             raise ValueError(
                 f"unsupported parameterisation {spec.parameterisation!r}"
@@ -212,11 +223,16 @@ class ProbabilisticRedshift:
         cls, df: pd.DataFrame, spec: PdfSpec,
     ) -> "ProbabilisticRedshift":
         if spec.parameterisation == "mixmod":
-            mu = np.stack(df["z_pdf_values"].to_numpy())
-            sigma = np.stack(df["z_pdf_sigma"].to_numpy())
-            w = np.stack(df["z_pdf_weights"].to_numpy())
+            mu = np.stack(df[spec.value_column].to_numpy())
+            sigma = np.stack(df[spec.sigma_column].to_numpy())
+            w = np.stack(df[spec.weights_column].to_numpy())
             return cls.from_mixmod(spec, mu, sigma, w)
-        raw = df["z_pdf_values"].to_numpy()
+        raw = df[spec.value_column].to_numpy()
+        if spec.parameterisation == "sample":
+            ragged = np.empty(len(raw), dtype=object)
+            for i, r in enumerate(raw):
+                ragged[i] = np.asarray(r, dtype=np.float64)
+            return cls(spec, ragged, grid=None)
         values = np.stack([np.asarray(r, dtype=np.float64) for r in raw])
         if spec.parameterisation == "interp":
             if spec.grid is None:
@@ -252,6 +268,15 @@ class ProbabilisticRedshift:
             return (self.values * self.grid[None, :]).sum(axis=1) * dz
         if self.spec.parameterisation == "quant":
             return np.trapz(self.values, self.grid, axis=1)
+        if self.spec.parameterisation == "sample":
+            return np.array(
+                [float(np.mean(v)) for v in self.values], dtype=np.float64,
+            )
+        if self.spec.parameterisation == "hist":
+            weights = self.values
+            tot = weights.sum(axis=1, keepdims=True)
+            tot = np.where(tot == 0.0, 1.0, tot)
+            return (weights * self.grid[None, :]).sum(axis=1) / tot.squeeze(-1)
         mu, _sigma, w = self._mixmod
         return (w * mu).sum(axis=1)
 
