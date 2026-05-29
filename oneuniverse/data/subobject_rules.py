@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+_ALLOWED_RELATION_TYPES = frozenset({
+    "containment", "causality", "association",
+})
+
+
 @dataclass(frozen=True, eq=False)
 class SubobjectRules:
     parent_survey_type: str
@@ -23,6 +28,10 @@ class SubobjectRules:
     dz_tol: Optional[float] = 5e-3
     relation: str = "contains"
     accept_ambiguous: bool = False
+    # Phase 20: semantic role of the edge, and (optional) next chain
+    # link to walk transitively via Database.chain_subobjects.
+    relation_type: str = "association"
+    next_level: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.parent_survey_type:
@@ -41,6 +50,12 @@ class SubobjectRules:
             )
         if not self.relation:
             raise ValueError("SubobjectRules: relation must be non-empty")
+        if self.relation_type not in _ALLOWED_RELATION_TYPES:
+            raise ValueError(
+                f"SubobjectRules: unknown relation_type "
+                f"{self.relation_type!r}; "
+                f"allowed: {sorted(_ALLOWED_RELATION_TYPES)}"
+            )
 
     def _canonical(self) -> dict:
         return {
@@ -50,6 +65,8 @@ class SubobjectRules:
             "dz_tol": None if self.dz_tol is None else float(self.dz_tol),
             "relation": self.relation,
             "accept_ambiguous": bool(self.accept_ambiguous),
+            "relation_type": self.relation_type,
+            "next_level": self.next_level,
         }
 
     def hash(self) -> str:

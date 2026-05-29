@@ -40,7 +40,7 @@ from oneuniverse.data.validity import DatasetValidity
 logger = logging.getLogger(__name__)
 
 SUBOBJECT_DIR = "_subobject"
-SUBOBJECT_MANIFEST_FORMAT_VERSION = 1
+SUBOBJECT_MANIFEST_FORMAT_VERSION = 2
 REQUIRED_COLUMNS: Tuple[str, ...] = (
     "parent_oneuid",
     "child_oneuid",
@@ -117,6 +117,8 @@ def _rules_from_dict(d: dict) -> SubobjectRules:
         dz_tol=None if d["dz_tol"] is None else float(d["dz_tol"]),
         relation=d["relation"],
         accept_ambiguous=bool(d["accept_ambiguous"]),
+        relation_type=d.get("relation_type", "association"),
+        next_level=d.get("next_level"),
     )
 
 
@@ -166,10 +168,13 @@ def read_subobject_links(root: Path, name: str) -> "SubobjectLinks":
         )
     raw = json.loads(man_path.read_text())
     fmt = raw.get("format_version")
-    if fmt != SUBOBJECT_MANIFEST_FORMAT_VERSION:
+    # Phase 20: v1 sidecars still parse — _rules_from_dict defaults
+    # the new fields (relation_type, next_level) when absent.
+    if fmt not in (1, SUBOBJECT_MANIFEST_FORMAT_VERSION):
         raise ValueError(
             f"read_subobject_links: unsupported format_version {fmt!r} "
-            f"for {name!r} (expected {SUBOBJECT_MANIFEST_FORMAT_VERSION})"
+            f"for {name!r} (expected 1 or "
+            f"{SUBOBJECT_MANIFEST_FORMAT_VERSION})"
         )
     table = pd.read_parquet(tbl_path)
     return SubobjectLinks(
