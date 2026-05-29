@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -116,6 +116,7 @@ class DatasetView:
         z_range: Optional[Range] = None,
         t_range: Optional[Range] = None,
         healpix_cells: Optional[Iterable[int]] = None,
+        extra_filters: Optional[Mapping[str, Range]] = None,
     ) -> List[PartitionSpec]:
         """Return partitions whose stats may overlap the given filters."""
         cell_filter = (
@@ -123,6 +124,7 @@ class DatasetView:
             if healpix_cells is not None
             else None
         )
+        extras = dict(extra_filters or {})
         keep: List[PartitionSpec] = []
         for part in self.manifest.partitions:
             if (
@@ -139,7 +141,18 @@ class DatasetView:
                 continue
             if not _range_overlaps(t_range, part.stats.t_min, part.stats.t_max):
                 continue
-            keep.append(part)
+            ok = True
+            for col, rng in extras.items():
+                er = part.stats.extra_ranges.get(col)
+                if er is None:
+                    # No partition stats for the requested column — keep
+                    # partition; row-level pushdown handles filtering.
+                    continue
+                if not _range_overlaps(rng, er[0], er[1]):
+                    ok = False
+                    break
+            if ok:
+                keep.append(part)
         return keep
 
     def _build_dataset(
@@ -165,6 +178,7 @@ class DatasetView:
         cone: Optional[Cone] = None,
         skypatch: Optional[SkyPatch] = None,
         healpix_cells: Optional[Iterable[int]] = None,
+        extra_filters: Optional[Mapping[str, Range]] = None,
     ) -> pa.Table:
         """Return a :class:`pyarrow.Table` with projection + filter pushed down.
 
@@ -174,11 +188,17 @@ class DatasetView:
         ``cone`` / ``skypatch`` / ``healpix_cells`` drive HEALPix-cell
         partition pruning on POINT datasets and add an exact
         in-cone/in-patch filter to the Parquet reader.
+
+        Phase 17: ``extra_filters={col: (lo, hi)}`` adds per-column
+        partition pruning (against ``PartitionStats.extra_ranges``) plus
+        row-level pyarrow pushdown.
         """
         cells = self._resolve_cells(cone, skypatch, healpix_cells)
+        extras = dict(extra_filters or {})
         partitions = self._select_partitions(
             ra_range=ra_range, dec_range=dec_range, z_range=z_range,
             t_range=t_range, healpix_cells=cells,
+            extra_filters=extras,
         )
         dataset = self._build_dataset(partitions)
         if dataset is None:
@@ -191,6 +211,15 @@ class DatasetView:
         expr = _range_expr(filter, ra_range, dec_range, z_range,
                            t_range, time_col)
         expr = _spatial_expr(expr, cone, skypatch)
+        for col, (lo, hi) in extras.items():
+            e = None
+            if lo is not None:
+                e = pc.field(col) >= lo
+            if hi is not None:
+                upper = pc.field(col) <= hi
+                e = upper if e is None else (e & upper)
+            if e is not None:
+                expr = e if expr is None else (expr & e)
         cols = list(columns) if columns is not None else None
         return dataset.to_table(columns=cols, filter=expr)
 
@@ -206,13 +235,14 @@ class DatasetView:
         cone: Optional[Cone] = None,
         skypatch: Optional[SkyPatch] = None,
         healpix_cells: Optional[Iterable[int]] = None,
+        extra_filters: Optional[Mapping[str, Range]] = None,
     ) -> pd.DataFrame:
         """Return a pandas :class:`DataFrame` — thin wrapper over :meth:`scan`."""
         table = self.scan(
             columns=columns, filter=filter,
             ra_range=ra_range, dec_range=dec_range, z_range=z_range,
             t_range=t_range, cone=cone, skypatch=skypatch,
-            healpix_cells=healpix_cells,
+            healpix_cells=healpix_cells, extra_filters=extra_filters,
         )
         return table.to_pandas()
 
