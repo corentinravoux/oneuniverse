@@ -1,10 +1,11 @@
-# Pillar 1 — Data, Combine, Measure
+# Pillar 1 — Data + Combine
 
-**Date:** 2026-05-28
+**Date:** 2026-05-28 (revised 2026-05-29 — `MeasurementSet` moved to
+Pillar 2).
 **Scope:** Everything inside the `oneuniverse` package. Database
-construction from raw catalogs → cross-survey combination → analysis-
-ready `MeasurementSet` handoff. **No cosmology, no estimators, no
-forward models.**
+construction from raw catalogs → cross-survey combination → typed
+parquet handoff. **No cosmology, no estimators, no forward models,
+no `MeasurementSet` (that lives in Pillar 2).**
 
 This document is a **large-scope roadmap**, not a task plan. Detailed
 task-level plans for each Phase live under
@@ -14,13 +15,13 @@ task-level plans for each Phase live under
 
 ## 1. Mission
 
-Stand-up the canonical, model-free representation of every cosmology
-survey dataset, plus the cross-survey machinery a downstream analysis
-tool needs to consume it consistently. Pillar 1 is the **only** layer
-that touches raw FITS/HDF5/CSV and the **only** layer that decides
-what columns end up in the OUF parquet. Pillar 1 ends when a
-`MeasurementSet` is handed to an external estimator or to
-`oneuniverse.simulation`.
+Stand up the canonical, model-free on-disk representation of every
+cosmology survey dataset, plus the cross-survey machinery a downstream
+analysis tool needs to consume it consistently. Pillar 1 is the
+**only** layer that touches raw FITS/HDF5/CSV and the **only** layer
+that decides what columns end up in the OUF parquet. Pillar 1 ends
+when an external tool — or Pillar 2's `MeasurementSet` builders —
+reads an OUF dataset, weight, ONEUID, or sub-object sidecar from disk.
 
 ## 2. Boundary clarity
 
@@ -30,10 +31,11 @@ what columns end up in the OUF parquet. Pillar 1 ends when a
 | Standardise into OUF parquet | Pick H₀ / Ωₘ / fiducial baseline |
 | Cross-match across surveys (ONEUID) | Convert z to comoving / luminosity distance |
 | Apply survey-published selection weights | Compute mock covariance |
-| Build random catalogs from windows | Fit theory models |
-| Assign jackknife regions | Run MCMC / Fisher |
-| Build per-bin or per-row n(z) | Forward-model the field |
-| Emit `MeasurementSet` for downstream tools | Interpret biases / nuisance parameters |
+| Sub-object link sidecars + chain walker | Build `MeasurementSet` (Pillar 2) |
+| Bitemporal validity | Build random catalogs (Pillar 2) |
+| Per-bin / per-row n(z) on-disk format (`TomographicNzSpec`) | Resample n(z) onto a common grid (Pillar 2) |
+| | Assign jackknife regions (Pillar 2) |
+| | Fit theory models / run samplers (Pillar 2/3) |
 
 See [[feedback_no_cosmology_in_pillar1]] for why H₀/Ωₘ live in
 Pillars 2/3.
@@ -44,26 +46,28 @@ Pillars 2/3.
 oneuniverse/
 ├── data/             ── ingest, schema, manifest, ONEUID, sub-object,
 │                        DatasetView, partitioning
-├── combine/          ── WeightedCatalog, Weight ABC + primitives,
-│                        ProductWeight, combiners, registry
-└── measure/          ── (NEW) MeasurementSet, random catalogs, window
-                         functions, jackknife regions, n(z) builders
+└── combine/          ── WeightedCatalog, Weight ABC + primitives,
+                         ProductWeight, combiners, registry
 ```
 
-Phases 1–15 stabilised `data/` and `combine/`. Phases 16+ add
-`measure/` and extend `data/` + `combine/` to cover the full survey
-landscape from
+`oneuniverse.measure` is **out of scope** — `MeasurementSet` and its
+helpers (random catalogs, windows, jackknife regions, n(z) resampling)
+belong to Pillar 2 and live in a separate package / repo.
+
+Phases 1–15 stabilised `data/` and `combine/`. Phases 16+ extend
+`data/` + `combine/` to cover the full survey landscape from
 [`../research/survey_landscape_review.md`](../research/survey_landscape_review.md).
 
-## 4. Status snapshot (2026-05-28)
+## 4. Status snapshot (2026-05-29)
 
-- 15 phases complete; 365/365 tests green; OUF 2.1.0 stable.
-- Real-survey loaders for BOSS/eBOSS/DESI bright-galaxy/Rubin
-  remain skeletons (Phase 13 deferred until Phases 16–20 expand the
-  schema).
+- 20 phases complete; 487/487 tests green; OUF 2.4.0 stable.
 - `oneuniverse.weight` deprecated shim removed 2026-05-28; all entry
   points come from `oneuniverse.combine`.
-- `oneuniverse.measure` does not yet exist.
+- `MeasurementSet` plumbing (Phase 21 in earlier drafts) reassigned
+  to Pillar 2 per project owner 2026-05-29; `oneuniverse.measure` will
+  **not** be created in this package.
+- Real-survey loaders for BOSS/eBOSS/DESI bright-galaxy/Rubin remain
+  skeletons (deferred to Phase 23).
 
 ## 5. Roadmap
 
@@ -185,60 +189,30 @@ diaSource`), composite-ID surveys (`PLATE-MJD-FIBERID`).
 
 **OUF bump.** 2.5.0 → 2.6.0.
 
-### Phase 21 — `oneuniverse.measure` — MeasurementSet contract
+### Phase 21 — Cleanup of deferred sub-object items (in `data/`)
 
-**Goal.** Introduce the standardised analysis-ready handoff object.
-This is the **Pillar 1 / Pillar 2 boundary**: every downstream tool
-consumes `MeasurementSet`, nothing parses OUF directly.
+**Goal.** Close out the items deferred from Phase 20: composite-ID
+support, attribute-filter cross-match rules, multi-order MOC HEALPix.
+All small, all in `data/`, no estimator dependency.
 
-**Modules.**
-- `oneuniverse/measure/measurement_set.py` — the bundle dataclass.
-- `oneuniverse/measure/window.py` — window functions (mask,
-  completeness, intersect / union).
-- `oneuniverse/measure/random.py` — random-catalog generation from
-  a window + n(z).
-- `oneuniverse/measure/jackknife.py` — HEALPix-region assignment.
-- `oneuniverse/measure/nz.py` — per-bin and per-row n(z) builders.
-- `oneuniverse/measure/multitracer.py` — joint sample bundling
-  (multiple `MeasurementSet`s sharing window / regions / frame).
+**Adds.**
+- `galaxy_id` widening to accept arbitrary tuples / byte payloads
+  for surveys with composite IDs (`PLATE-MJD-FIBERID`,
+  `KIDS_TILE+SeqNr`, …).
+- `CrossMatchRules.attribute_filters: Tuple[AttributeFilter, ...]`
+  — pluggable per-pair predicates (e.g. "only match if
+  `|color_g − color_r| < 0.1`").
+- `mocpy` integration for multi-order MOC HEALPix probability maps;
+  loader for the LIGO/Virgo native sky-localisation format that
+  delegates internally to `build_subobject_links_to_map` after
+  rasterisation to a fixed NSIDE.
 
-**Core type.**
+**Surveys unlocked.** GWTC-3/4 native MOC ingest; composite-ID
+spectroscopic surveys (BOSS+ `PLATE-MJD-FIBERID`, KiDS, GAIA
+`source_id` decoded as HEALPix); colour-aware cross-match for
+photo-z × spec-z calibration.
 
-```python
-@dataclass(frozen=True)
-class MeasurementSet:
-    catalog: pa.Table              # rows + applied weights
-    randoms: pa.Table              # drawn from window + n(z)
-    window: Window                 # mask / completeness
-    nz: Nz                         # per-bin or per-row
-    region_map: HealpixRegionMap   # jackknife / bootstrap assignment
-    metadata: MeasurementMetadata  # frame, epoch, units — no cosmology
-    covariance: Optional[CovarianceHandle] = None  # callable → C block
-
-@dataclass(frozen=True)
-class MultiTracerMeasurementSet:
-    tracers: Mapping[str, MeasurementSet]
-    shared_region_map: HealpixRegionMap
-    shared_metadata: MeasurementMetadata
-```
-
-**Contract guarantees.** Every tracer in a multi-tracer bundle shares:
-- one HEALPix jackknife region assignment (NSIDE configurable)
-- one frame / epoch convention
-- compatible n(z) grids (resampled to a common grid)
-- intersected or unioned window (caller chooses)
-- joint or per-tracer random catalogs (caller chooses)
-
-**What MeasurementSet does not own.** Estimator math, theory
-predictions, cosmology conversion, likelihoods. All deferred to
-Pillar 2 / Pillar 3.
-
-**Surveys unlocked.** All of them — `MeasurementSet` is what makes
-`oneuniverse` usable to any external analysis tool.
-
-**OUF bump.** Not applicable — `MeasurementSet` is an in-memory
-handoff, not a persisted format. (We may add `MeasurementSet.write()`
-later for caching but that's optional.)
+**OUF bump.** None expected (extensions are forward-compatible).
 
 ### Phase 22 (optional) — Geometry expansion
 
@@ -286,16 +260,15 @@ A reasonable definition of "Pillar 1 complete" is:
 
 - [ ] All 13 representative loaders above produce green-suite OUF
       datasets from real data.
-- [ ] `MeasurementSet` API stable; round-trips through `flip` and at
-      least one external tool (`pycorr` or `nbodykit`) without
-      glue code.
-- [ ] `MultiTracerMeasurementSet` round-trips through a cross-
-      correlation estimator (likely `pycorr` or a thin in-flip path).
-- [ ] Documentation: Sphinx autosummary covers `measure/`; tutorials
-      for both standard and multi-tracer workflows.
+- [ ] Sphinx autosummary covers `data/` + `combine/`; tutorials
+      for the standard ingest → ONEUID → weight workflow.
 - [ ] All cross-cutting modality items 1–17 from
-      `research/survey_landscape_review.md` covered or explicitly
-      deferred.
+      `research/survey_landscape_review.md` are covered on the
+      Pillar-1 side (where applicable) or explicitly deferred.
+- [ ] Pillar 1 emits typed-parquet artefacts (OUF datasets, ONEUID
+      indices, sub-object link sidecars) that Pillar 2 can consume
+      via the contract documented in
+      [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
 
 ## 8. Things explicitly deferred
 

@@ -1,94 +1,109 @@
-# Pillar 2 — External Scientific Tool Interfaces
+# Pillar 2 — `MeasurementSet` + External Scientific Tool Interfaces
 
-**Date:** 2026-05-28
-**Scope:** Estimators, fitters, likelihoods, and theory predictions
-**outside** the `oneuniverse` package. Pillar 2 is the consumer side
-of the `MeasurementSet` contract: every cosmology analysis tool linked
-to oneuniverse plugs in here.
+**Date:** 2026-05-28 (revised 2026-05-29 — `MeasurementSet`
+construction reassigned from Pillar 1 to Pillar 2).
+**Scope:** `MeasurementSet` construction, window / random / jackknife /
+n(z) builders, and the adapter layer that hands a `MeasurementSet`
+to every external tool. Lives **outside** the `oneuniverse` package
+(`oneuniverse` is Pillar 1 only).
 
 This document is a **large-scope roadmap**, not a task plan.
-Implementation lives in downstream packages (`flip`, future
-`onecorr`, third-party tools like `pycorr`, `nbodykit`, `picca`).
+Implementation lives in a new package (proposed name `onemeasure` or
+similar) plus downstream tools (`flip`, future `onecorr`, third-party
+`pycorr`, `nbodykit`, `picca`).
 
 ---
 
 ## 1. Mission
 
-Bridge Pillar 1's model-free `MeasurementSet` to the actual science
-— P(k), ξ(r), C_ℓ, joint multi-tracer estimators, likelihoods,
-fits — without bloating any single tool with ingest / window / random
-machinery. Pillar 2 is where **cosmology enters**: H₀, Ωₘ, distance
-models, theory templates.
+Bridge Pillar 1's on-disk OUF parquet (catalogs + weights + ONEUID +
+sub-object sidecars) to the actual science — P(k), ξ(r), C_ℓ, joint
+multi-tracer estimators, likelihoods, fits — by **owning** the
+analysis-ready `MeasurementSet` contract and the adapters every
+downstream tool consumes. Pillar 2 is where **cosmology enters**: H₀,
+Ωₘ, distance models, theory templates.
 
 ## 2. Boundary clarity
 
 | In scope | Out of scope |
 |---|---|
-| Consume `MeasurementSet` from Pillar 1 | Parse OUF parquet directly |
-| Compute estimators (P(k), ξ(r), C_ℓ, …) | Ingest raw FITS / write OUF |
-| Pick fiducial cosmology for comoving conversion | Standardise survey columns |
-| Cross-correlation between tracers | Build randoms / windows / regions |
-| Theory model evaluation (limber, CLASS, CAMB, pyCCL) | Cross-match surveys |
-| Likelihoods + samplers (cobaya, emcee, dynesty) | Apply selection weights |
-| Multi-tracer optimal weighting (Abramo-Leonard FKP) | Combine catalogs |
-| Forward-model the field | (that's Pillar 3) |
+| Read OUF parquet + ONEUID + weights from disk | Ingest raw FITS / write OUF |
+| Build randoms / windows / regions / n(z) | Cross-match surveys (Pillar 1) |
+| Construct `MeasurementSet` + `MultiTracerMeasurementSet` | Apply per-survey selection weights (Pillar 1) |
+| Adapters to flip / pycorr / picca / qp / nbodykit | Standardise survey columns (Pillar 1) |
+| Compute estimators (P(k), ξ(r), C_ℓ, …) | Forward-model the field (Pillar 3) |
+| Pick fiducial cosmology for comoving conversion | Run sims / hydro / IC sampling (Pillar 3) |
+| Theory model evaluation (limber, CLASS, CAMB, pyCCL) | |
+| Likelihoods + samplers (cobaya, emcee, dynesty) | |
+| Multi-tracer optimal weighting (Abramo-Leonard FKP) | |
 
 ## 3. Architectural shape
 
-Pillar 2 is **not a single package**. It is a contract (the
-`MeasurementSet` API) + a registry of tools that honour it.
+Pillar 2 is a **new package** (e.g. `onemeasure`) that owns the
+`MeasurementSet` builders + adapters. Estimator tools (`flip`,
+`pycorr`, `picca`, `nbodykit`) consume `MeasurementSet`s; they live
+in their own repos.
 
 ```
-                  ┌───────────────┐
-                  │ oneuniverse   │  Pillar 1 (this repo)
-                  │  .measure     │  → emits MeasurementSet
-                  └──────┬────────┘
-                         │ MeasurementSet
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-      ┌───────────┐ ┌─────────┐ ┌──────────┐  Pillar 2
-      │   flip    │ │ pycorr  │ │  picca   │  (external tools,
-      │ velocity+ │ │  2pt    │ │   Lyα    │   each owns its math)
-      │ density   │ │         │ │          │
-      └───────────┘ └─────────┘ └──────────┘
-              │          │          │
-              └──────────┼──────────┘
-                         ▼
-                  Result + covariance
+        ┌──────────────┐
+        │ oneuniverse  │  Pillar 1 (this repo)
+        │   data/      │  → OUF parquet + ONEUID + sub-object
+        │   combine/   │     sidecars on disk
+        └──────┬───────┘
+               │ disk artefacts
+        ┌──────▼───────┐
+        │  onemeasure  │  Pillar 2 (new package)
+        │              │  reads OUF → builds randoms / windows /
+        │              │  jackknife regions / n(z) → emits
+        │              │  MeasurementSet + adapters
+        └──────┬───────┘
+               │ MeasurementSet
+   ┌───────────┼───────────┐
+   ▼           ▼           ▼
+┌──────┐ ┌─────────┐ ┌──────────┐  Pillar 2 (external)
+│ flip │ │ pycorr  │ │  picca   │  estimator tools
+└──────┘ └─────────┘ └──────────┘
+   │           │           │
+   └───────────┼───────────┘
+               ▼
+       Result + covariance
 ```
 
-Pillar 2's deliverables are:
-1. **`MeasurementSet` adapters** — thin shims per tool that consume
-   the contract and convert to native tool input. May live in
-   `oneuniverse.measure.adapters` or in the tool's own repo.
-2. **Cross-tool covariance bookkeeping** — block structure for
-   joint estimators. Probably lives in a new package
-   (`onecorr` or `oneinference`).
-3. **Documentation + tutorials** showing the end-to-end workflow
-   `oneuniverse.data → .combine → .measure → tool`.
+Pillar 2 deliverables:
+1. **`onemeasure` package** — `MeasurementSet` + builders (window,
+   random, jackknife, n(z), multi-tracer).
+2. **`MeasurementSet` adapters** — thin shims per estimator tool
+   that consume the contract and convert to native tool input.
+   Live inside `onemeasure.adapters` (auditable in one place) or in
+   each tool's own repo.
+3. **Cross-tool covariance bookkeeping** — block structure for
+   joint estimators. Likely a sibling package (`onecorr` /
+   `oneinference`).
+4. **Documentation + tutorials** showing the end-to-end workflow
+   `oneuniverse.data → .combine → onemeasure → tool`.
 
 ## 4. Subsystems
 
-### 4.1 Adapters (thin layer in `oneuniverse.measure.adapters`)
+### 4.1 Adapters (thin layer in `onemeasure.adapters`)
 
-One adapter per supported tool. Lives **inside `oneuniverse`** so
-the contract stays auditable, but is opt-in (each adapter has its
-own optional dependency).
+One adapter per supported tool. Lives inside `onemeasure` so the
+contract stays auditable in one place, but is opt-in (each adapter
+has its own optional dependency).
 
 ```python
-# oneuniverse/measure/adapters/flip.py
+# onemeasure/adapters/flip.py
 def to_flip_data_vector(ms: MeasurementSet, *, kind="velocity") -> "flip.DataVector": ...
 
-# oneuniverse/measure/adapters/pycorr.py
+# onemeasure/adapters/pycorr.py
 def to_pycorr_inputs(ms: MeasurementSet) -> "pycorr.TwoPointCorrelationFunction": ...
 
-# oneuniverse/measure/adapters/nbodykit.py
+# onemeasure/adapters/nbodykit.py
 def to_nbodykit_catalog(ms: MeasurementSet) -> "nbodykit.source.CatalogSource": ...
 
-# oneuniverse/measure/adapters/picca.py
+# onemeasure/adapters/picca.py
 def to_picca_delta_dir(ms: MeasurementSet, out_dir: Path) -> Path: ...
 
-# oneuniverse/measure/adapters/qp.py
+# onemeasure/adapters/qp.py
 def to_qp_ensemble(view: DatasetView) -> "qp.Ensemble": ...
 ```
 
@@ -128,14 +143,17 @@ shared idiom:
 
 ```python
 from cosmoprimo import Cosmology
+from onemeasure import build_measurement_set
+
 cosmo = Cosmology(h=0.7, Omega_m=0.315, ...)
 
-ms = build_measurement_set(...)        # Pillar 1, cosmology-free
-result = pycorr_estimator(ms, cosmology=cosmo)   # Pillar 2 converts at call
+ms = build_measurement_set(...)        # onemeasure, cosmology-free
+result = pycorr_estimator(ms, cosmology=cosmo)   # estimator converts at call
 ```
 
-Pillar 1's `MeasurementSet` carries no `cosmology` field. Every
-Pillar 2 entry point takes cosmology as a kwarg.
+`MeasurementSet` itself carries no `cosmology` field — frame / epoch /
+unit metadata only. Every estimator entry point takes cosmology as a
+kwarg.
 
 **Engines to support.** pyCCL, CLASS (classy), cosmoprimo (recommended
 default; lightweight; cross-engine façade). Already wired in
@@ -149,10 +167,11 @@ Wraps the above for inference. Each tool owns its own choice:
 - For posterior comparison and joint multi-probe fits, wrap into
   `cobaya` likelihoods. New `onecobaya` package optional.
 
-## 5. The `MeasurementSet` contract — Pillar 2 view
+## 5. The `MeasurementSet` contract — invariants
 
-Pillar 2 tools must accept a `MeasurementSet` with the following
-guarantees from Pillar 1:
+`onemeasure` builds a `MeasurementSet` from Pillar 1 disk artefacts;
+estimator tools (`flip`, `pycorr`, `picca`, …) consume it. Every
+`MeasurementSet` carries the following invariants:
 
 1. `catalog` is a `pa.Table` with at minimum `ra`, `dec`, `z`,
    `weight`, and a `region_id` column.
@@ -172,13 +191,25 @@ For `MultiTracerMeasurementSet`:
 8. n(z) grids resampled to a common grid (caller chose intersect /
    union).
 
-Pillar 2 tools that need cosmological conversion (`z → r_comoving`)
+Estimator tools that need cosmological conversion (`z → r_comoving`)
 apply it locally, using their own fiducial.
 
 ## 6. Roadmap (large strokes)
 
-Phases here are **post-Pillar-1-Phase-21** (`oneuniverse.measure`
-must exist first).
+Pillar 2 work begins by spinning up the new `onemeasure` package and
+shipping its first `MeasurementSet` builder against the existing OUF
+2.4 disk format from Pillar 1. Phases A–F below are sequenced for
+that order.
+
+### Phase 0 — Stand up `onemeasure`
+
+- New package: `onemeasure` (separate repo).
+- Modules: `measurement_set.py`, `window.py`, `random.py`,
+  `jackknife.py`, `nz.py`, `multitracer.py`, `adapters/`.
+- Imports `oneuniverse` as a read-only dependency.
+- End-to-end test: synthetic OUF POINT dataset (with `weight` column
+  from `oneuniverse.combine`) → `MeasurementSet` → asserts
+  invariants 1–5 above.
 
 ### Phase A — `flip` accepts `MeasurementSet`
 
@@ -262,9 +293,9 @@ re-ingesting data.
 
 ## 9. Deliverables checklist (Pillar 2 minimum-viable)
 
-- [ ] `oneuniverse.measure.adapters.flip` round-trips synthetic
+- [ ] `onemeasure.adapters.flip` round-trips synthetic
       OUF → flip f×σ₈ fit.
-- [ ] `oneuniverse.measure.adapters.pycorr` round-trips synthetic
+- [ ] `onemeasure.adapters.pycorr` round-trips synthetic
       OUF → pycorr 2pt.
 - [ ] Multi-tracer cross-correlation tutorial (eBOSS × DESI BGS)
       using `MultiTracerMeasurementSet`.
@@ -277,7 +308,7 @@ re-ingesting data.
 
 - **Adapter location.** Adapters could live in `oneuniverse` (audit
   in one place) or in each tool's repo (decouples release cycles).
-  Recommend: prototype in `oneuniverse.measure.adapters`, graduate
+  Recommend: prototype in `onemeasure.adapters`, graduate
   to tool repos once stable.
 - **Optional deps proliferation.** `oneuniverse[flip]`,
   `oneuniverse[pycorr]`, `oneuniverse[picca]`, … extras list grows.
