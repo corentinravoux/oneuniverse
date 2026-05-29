@@ -25,6 +25,8 @@ class PdfParameterisation(str, Enum):
     INTERP = "interp"
     QUANT = "quant"
     MIXMOD = "mixmod"
+    SAMPLE = "sample"   # Phase 18 — variable-length per-row z-draws.
+    HIST = "hist"       # Phase 18 — per-row bin heights on shared edges.
 
 
 _KNOWN = {p.value for p in PdfParameterisation}
@@ -57,6 +59,12 @@ class PdfSpec:
     grid: Optional[List[float]]
     grid_kind: str
     quant_levels: Optional[List[float]] = None
+    hist_edges: Optional[List[float]] = None
+    value_column: str = "z_pdf_values"
+    sigma_column: str = "z_pdf_sigma"
+    weights_column: str = "z_pdf_weights"
+    grid_mask: Optional[List[bool]] = None
+    axis_labels: tuple = ("z",)
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -71,6 +79,20 @@ class PdfSpec:
             raise ValueError("interp parameterisation requires a non-empty grid")
         if self.parameterisation == "quant" and not self.quant_levels:
             raise ValueError("quant parameterisation requires quant_levels")
+        if self.parameterisation == "hist" and not self.hist_edges:
+            raise ValueError(
+                "hist parameterisation requires hist_edges of length "
+                "n_components+1"
+            )
+        if (
+            self.parameterisation == "hist"
+            and self.hist_edges is not None
+            and len(self.hist_edges) != self.n_components + 1
+        ):
+            raise ValueError(
+                f"hist_edges length {len(self.hist_edges)} must be "
+                f"n_components+1 ({self.n_components + 1})"
+            )
         # Normalise sequences to plain Python floats so JSON round-trips
         # (np.float32 / np.float64 are equality-noisy after str↔float).
         if self.grid is not None:
@@ -78,6 +100,14 @@ class PdfSpec:
         if self.quant_levels is not None:
             object.__setattr__(
                 self, "quant_levels", [float(x) for x in self.quant_levels],
+            )
+        if self.hist_edges is not None:
+            object.__setattr__(
+                self, "hist_edges", [float(x) for x in self.hist_edges],
+            )
+        if self.grid_mask is not None:
+            object.__setattr__(
+                self, "grid_mask", [bool(x) for x in self.grid_mask],
             )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -90,6 +120,18 @@ class PdfSpec:
                 [float(x) for x in self.quant_levels]
                 if self.quant_levels is not None else None
             ),
+            "hist_edges": (
+                [float(x) for x in self.hist_edges]
+                if self.hist_edges is not None else None
+            ),
+            "value_column": self.value_column,
+            "sigma_column": self.sigma_column,
+            "weights_column": self.weights_column,
+            "grid_mask": (
+                [bool(x) for x in self.grid_mask]
+                if self.grid_mask is not None else None
+            ),
+            "axis_labels": list(self.axis_labels),
             "extra": dict(self.extra),
         }
 
@@ -103,6 +145,16 @@ class PdfSpec:
             quant_levels=(
                 list(d["quant_levels"]) if d.get("quant_levels") is not None else None
             ),
+            hist_edges=(
+                list(d["hist_edges"]) if d.get("hist_edges") is not None else None
+            ),
+            value_column=d.get("value_column", "z_pdf_values"),
+            sigma_column=d.get("sigma_column", "z_pdf_sigma"),
+            weights_column=d.get("weights_column", "z_pdf_weights"),
+            grid_mask=(
+                list(d["grid_mask"]) if d.get("grid_mask") is not None else None
+            ),
+            axis_labels=tuple(d.get("axis_labels", ("z",))),
             extra=dict(d.get("extra", {})),
         )
 
