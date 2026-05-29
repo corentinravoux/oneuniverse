@@ -39,6 +39,8 @@ This is the reason the package is called *one*universe.
 | Mini-simulation zoom-ins (hydro, RT) | Generic N-body library |
 | Incremental updates as new surveys land | Long-tail engineering of legacy estimators |
 | Cosmology baseline declaration + sampling | (cosmology kept here, never in Pillar 1) |
+| `PARTICLE` geometry for N-body / hydro snapshots (AbacusSummit, MillenniumTNG, Quijote, …) | (Pillar 1 geometries are data-only) |
+| Mock-catalog geometry + readers (Buzzard, Flagship lightcones) | |
 
 ## 3. Scientific framing
 
