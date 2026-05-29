@@ -756,15 +756,22 @@ def _chunk_to_table(
     column_dtypes = dict(column_dtypes or {})
 
     # Resolve PDF list columns first so they appear in ``list_cols`` like
-    # any other variable-length payload.
+    # any other variable-length payload. Phase 18 splits the routing per
+    # parameterisation: ``sample`` -> per-row ``list<f4>``; everything
+    # else (interp / quant / mixmod / hist) -> fixed-size ``f4[N]``.
     if pdf_spec is not None:
         n = int(pdf_spec.n_components)
-        pdf_cols = ["z_pdf_values"]
-        if pdf_spec.parameterisation == "mixmod":
-            pdf_cols += ["z_pdf_sigma", "z_pdf_weights"]
-        for c in pdf_cols:
-            if c in chunk.columns:
-                column_dtypes.setdefault(c, f"f4[{n}]")
+        param = pdf_spec.parameterisation
+        if param == "sample":
+            if pdf_spec.value_column in chunk.columns:
+                column_dtypes.setdefault(pdf_spec.value_column, "list<f4>")
+        else:
+            pdf_cols = [pdf_spec.value_column]
+            if param == "mixmod":
+                pdf_cols += [pdf_spec.sigma_column, pdf_spec.weights_column]
+            for c in pdf_cols:
+                if c in chunk.columns:
+                    column_dtypes.setdefault(c, f"f4[{n}]")
 
     list_cols = [c for c in column_dtypes if c in chunk.columns]
     scalar = chunk.drop(columns=list_cols)

@@ -7,7 +7,9 @@ from oneuniverse.data.pdf import PdfParameterisation, PdfSpec
 
 
 def test_parameterisation_values():
-    assert {p.value for p in PdfParameterisation} == {"interp", "quant", "mixmod"}
+    assert {p.value for p in PdfParameterisation} == {
+        "interp", "quant", "mixmod", "sample", "hist",
+    }
 
 
 def test_pdfspec_interp_basic():
