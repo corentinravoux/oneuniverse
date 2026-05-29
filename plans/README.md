@@ -88,7 +88,7 @@ Per-phase detailed plans land as we start each.
 | 18 | PDF polymorphism (`sample` / `hist`) + column aliases + `TomographicNzSpec` + `ClassificationPdfSpec` (OUF → 2.4.0) | **complete (2026-05-29, 450/450 tests green)** |
 | 19 | Shear column group + `ShearWeight` + `PipBitweightWeight` + sub-species registry key | **complete (2026-05-29, 472/472 tests green)** |
 | 20 | Map-based sub-object (point × HEALPix probability map) + multi-level chain walker + `relation_type` / `next_level` on `SubobjectRules` | **complete (2026-05-29, 487/487 tests green)** |
-| 21 | Cleanup of deferred sub-object items (`CrossMatchRules.attribute_filters`, CORE `composite_id`, `mocpy` MOC rasteriser) | **complete (2026-05-29; suite pending close-out)** |
+| 21 | Cleanup of deferred sub-object items (`CrossMatchRules.attribute_filters`, CORE `composite_id`, `mocpy` MOC rasteriser) | **complete (2026-05-29, 499/499 tests green; 2 skipped — mocpy optional)** |
 | 22 | Data-driven geometry expansion (CUBE + GW_SKYMAP only; PARTICLE → Pillar 3) | optional |
 | 23 | Real-survey loader writes (rolled-up Phase 13) | planned (after 16–20) |
 
