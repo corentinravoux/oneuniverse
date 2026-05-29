@@ -8,17 +8,18 @@ detailed task lists live in dated phase files.
 
 The whole stack is organised around three pillars:
 
-- **Pillar 1 — Data, Combine, Measure.** Everything inside the
-  `oneuniverse` package. Database construction from raw catalogs →
-  cross-survey combination → analysis-ready `MeasurementSet`
-  handoff. No cosmology, no estimators, no forward models.
+- **Pillar 1 — Data + Combine.** Everything inside the `oneuniverse`
+  package. Database construction from raw catalogs → cross-survey
+  combination → typed parquet artefacts on disk. No cosmology, no
+  estimators, no forward models, **no `MeasurementSet`** (that
+  moved to Pillar 2 on 2026-05-29).
   See [`2026-05-28-pillar1-data-combine-measure.md`](2026-05-28-pillar1-data-combine-measure.md).
 
-- **Pillar 2 — External Scientific Tool Interfaces.** Estimators,
-  fitters, likelihoods, theory predictions consumed by tools
-  **outside** `oneuniverse` (`flip`, `pycorr`, `picca`, future
-  `onecorr`). Pillar 2 is where cosmology enters. Adapters live in
-  `oneuniverse.measure.adapters` (thin shims, no science).
+- **Pillar 2 — `MeasurementSet` + External Scientific Tool
+  Interfaces.** A new `onemeasure` package owns the `MeasurementSet`
+  contract + builders (window, random, jackknife, n(z),
+  multi-tracer) + adapters to `flip`, `pycorr`, `picca`, future
+  `onecorr`. Pillar 2 is where cosmology enters.
   See [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
 
 - **Pillar 3 — Simulation / Digital Twin.** Constrained Bayesian
@@ -59,7 +60,7 @@ Per-phase detailed plans land as we start each.
 | 18 | PDF polymorphism + tomographic n(z) + classification PDFs | RAIL / `qp` alignment, KiDS/DES/HSC tomographic bins |
 | 19 | Shear group + `ShearWeight` + `PipBitweightWeight` | DES Y3/Y6, KiDS-1000, HSC-Y3, Rubin shapes, DESI PIP |
 | 20 | Map-based ONEUID + multi-level sub-object chains | GW × galaxy, cluster→galaxy→spec, deblender trees |
-| 21 | `oneuniverse.measure` — MeasurementSet contract | Pillar 1/Pillar 2 boundary |
+| 21 | Cleanup of deferred sub-object items (composite-ID `galaxy_id`, `CrossMatchRules.attribute_filters`, `mocpy` multi-order MOC) | GWTC native ingest, composite-ID surveys, colour-aware cross-match |
 | 22 | `CUBE` / `PARTICLE` / `GW_SKYMAP` geometries (optional) | IFU cubes, HI cubes, mock snapshots, GW skymaps |
 | 23 | Real-survey loader writes (rolled-up Phase 13) | All loaders, depends on 16–20 |
 
@@ -87,15 +88,16 @@ Per-phase detailed plans land as we start each.
 | 18 | PDF polymorphism (`sample` / `hist`) + column aliases + `TomographicNzSpec` + `ClassificationPdfSpec` (OUF → 2.4.0) | **complete (2026-05-29, 450/450 tests green)** |
 | 19 | Shear column group + `ShearWeight` + `PipBitweightWeight` + sub-species registry key | **complete (2026-05-29, 472/472 tests green)** |
 | 20 | Map-based sub-object (point × HEALPix probability map) + multi-level chain walker + `relation_type` / `next_level` on `SubobjectRules` | **complete (2026-05-29, 487/487 tests green)** |
-| 21 | `oneuniverse.measure` — MeasurementSet contract | planned |
+| 21 | Cleanup of deferred sub-object items (composite-ID `galaxy_id`, `CrossMatchRules.attribute_filters`, `mocpy` MOC) | planned |
 | 22 | Geometry expansion (CUBE/PARTICLE/GW_SKYMAP) | optional |
 | 23 | Real-survey loader writes (rolled-up Phase 13) | planned (after 16–20) |
 
 ## Pillar 2 / Pillar 3 phase plans
 
-Pillar 2 and Pillar 3 phases are **post-Pillar-1-Phase-21**
-(`MeasurementSet` must exist). Per-phase detailed plans get written
-when work begins.
+Pillar 2 begins with Phase 0: standing up the new `onemeasure` package
+(MeasurementSet + builders + adapters) against the current OUF 2.4
+format. Pillar 3 follows once `onemeasure` ships its first adapter.
+Per-phase detailed plans get written when work begins.
 
 - Pillar 2 phases A–F: see
   [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).

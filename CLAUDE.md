@@ -12,9 +12,8 @@ the three-pillar cosmology stack. Pillar 1 ends when a
 
 - **Pillar 1 (here):** `oneuniverse.data` (ingest, schema, manifest,
   ONEUID, sub-object, DatasetView) → `oneuniverse.combine` (weights,
-  WeightedCatalog, combination) → `oneuniverse.measure` (MeasurementSet,
-  random catalogs, windows, jackknife regions, n(z)). **No cosmology,
-  no estimators, no forward models.**
+  WeightedCatalog, combination). **No cosmology, no estimators, no
+  forward models, no `MeasurementSet` (that's Pillar 2).**
 - **Pillar 2:** estimators + likelihoods consumed by external tools
   (`flip`, `pycorr`, `picca`, future `onecorr`). Cosmology enters
   here.
@@ -39,9 +38,10 @@ call site.
 - `oneuniverse/combine/` — `WeightedCatalog` + Weight ABC +
   primitives (FKP, IVar, HealpixMap, PDF, BOSS combiner). The
   deprecated `oneuniverse.weight` shim was deleted 2026-05-28.
-- `oneuniverse/measure/` — **planned (Phase 21)**: MeasurementSet,
-  random catalogs, window functions, HEALPix jackknife regions,
-  n(z) builders, multi-tracer bundling, downstream adapters.
+- `oneuniverse/measure/` — **moved to Pillar 2 (2026-05-29).** A
+  separate `onemeasure` package will own `MeasurementSet` + builders
+  + adapters. `oneuniverse` produces typed parquet artefacts on
+  disk; `onemeasure` reads them.
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
@@ -175,10 +175,14 @@ See [`plans/README.md`](plans/README.md).
   green. Three-pillar structure formalised; Pillar 1 generalisation
   Phases 16–23 planned (driven by the survey-landscape +
   schema-audit research docs).
-- **Phase 16+** = observational metadata expansion + variable-length
-  columns + PDF polymorphism + shear + map-based ONEUID +
-  `oneuniverse.measure` (MeasurementSet contract). Real-survey
-  loader writes (rolled-up Phase 23) land after the schema phases.
+- 2026-05-29: Phases 16–20 complete; OUF 2.4.0; 487/487 tests green.
+- **Phase 16–20** delivered observational metadata, variable-length
+  columns, PDF polymorphism, shear + PIP, and map-based sub-object
+  chains. Remaining Pillar 1 work: Phase 21 (deferred sub-object
+  items — composite IDs, attribute filters, mocpy MOC), Phase 22
+  (optional CUBE/PARTICLE/GW_SKYMAP geometries), Phase 23 (rolled-up
+  real-survey loader writes). `MeasurementSet` and adapters were
+  reassigned to Pillar 2 (separate `onemeasure` package).
 
 ## Test conventions
 
