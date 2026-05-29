@@ -55,7 +55,7 @@ call site.
   new loader or schema change.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
-## OUF 2.2 (format on disk)
+## OUF 2.3 (format on disk)
 
 Each converted dataset lives at:
 
@@ -72,6 +72,15 @@ read it from the manifest, never hardcode), optional `TemporalSpec`,
 `DatasetValidity`, `PdfSpec`, `CoordinateSpec` (Phase 16 — frame /
 epoch / PM-parallax availability), `SpectrumSpec` (Phase 16 — vacuum
 vs air, log-binning, rest-frame state, λ-unit; SIGHTLINE only).
+
+Phase 17 adds:
+- `PartitionStats.extra_ranges: Dict[str, (lo, hi)]` populated when
+  `write_ouf_dataset(extra_stats_columns=[...])` is set; `DatasetView`
+  prunes + pushes down via `extra_filters={col: (lo, hi)}`.
+- Variable-length / fixed-size payloads (Lyα δ, lightcurves, GAIA XP,
+  DESI BITWEIGHTS) route through
+  `write_ouf_dataset(column_dtypes={"col": "list<f4>" | "f4[N]" | "i8[N]" | "large_list<f4>"})`.
+  Mini-language lives in `oneuniverse.data.dtype_lang`.
 
 CORE columns (every POINT dataset): `ra, dec, z, z_type, z_err,
 galaxy_id, survey_id, _original_row_index, _healpix32`.

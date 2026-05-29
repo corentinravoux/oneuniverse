@@ -531,9 +531,12 @@ version bump + green test suite):
   No cosmology. OUF 2.2.0. See
   [`../plans/2026-05-28-phase16-observational-metadata.md`](../plans/2026-05-28-phase16-observational-metadata.md).
 - **Phase 17 — Variable-length columns + generic partition stats.**
-  Converter accepts `list_columns` / `struct_columns` / dynamic
-  `extra_ranges`. Unblocks Lyα ingest as canonical OUF rather than
-  picca-sidecar. DatasetView pushdown on arbitrary columns.
+  Landed 2026-05-29. Adds `_chunk_to_table(column_dtypes=...)` with a
+  small dtype mini-language (`f4[N]`, `i8[N]`, `list<f4>`,
+  `large_list<f4>`), `PartitionStats.extra_ranges`,
+  `write_ouf_dataset(extra_stats_columns=...)`,
+  `DatasetView.extra_filters`. OUF 2.3.0. See
+  [`../plans/2026-05-28-phase17-variable-length-and-partition-stats.md`](../plans/2026-05-28-phase17-variable-length-and-partition-stats.md).
 - **Phase 18 — PDF polymorphism + tomographic n(z).** `sample` +
   `hist` parameterisations, sparse grid_mask, axis_labels, tomographic
   n(z) as a manifest-level object. RAIL `qp` roundtrip.
