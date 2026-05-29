@@ -58,6 +58,12 @@ CORE_COLUMNS: Tuple[ColumnDef, ...] = (
     # Identifiers
     ColumnDef("galaxy_id", "i8", "", "Unique ID in oneuniverse"),
     ColumnDef("survey_id", "U32", "", "Source survey name"),
+    # Phase 21: optional survey-published composite ID preserved
+    # verbatim (PLATE-MJD-FIBERID, KIDS_TILE+SeqNr, GAIA source_id, …).
+    ColumnDef("composite_id", "U64", "",
+              "Survey-published composite ID (PLATE-MJD-FIBERID, "
+              "KIDS_TILE+SeqNr, GAIA source_id, …); optional",
+              required=False),
     # Technical / bookkeeping
     ColumnDef("_original_row_index", "i8", "",
               "Row index in the original survey file (for audit/join-back)"),
