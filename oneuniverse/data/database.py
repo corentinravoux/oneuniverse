@@ -607,6 +607,28 @@ class OneuniverseDatabase:
             name=name, oneuid_name=oneuid_name,
         )
 
+    def chain_subobjects(
+        self,
+        starts: Sequence[int],
+        relations: Sequence[str],
+        *,
+        as_of: Optional[dt.datetime] = None,
+    ) -> list:
+        """Walk a sequence of named sub-object link sidecars in order.
+
+        Returns the sorted union of leaf-level oneuids reachable from
+        ``starts`` after following all ``relations`` in order. Each
+        relation name is loaded via :meth:`load_subobject_links` and
+        its ``.table`` handed to
+        :func:`oneuniverse.data.chain.chain_subobjects_tables`.
+        """
+        from oneuniverse.data.chain import chain_subobjects_tables
+        link_tables = [
+            self.load_subobject_links(name=r, as_of=as_of).table
+            for r in relations
+        ]
+        return chain_subobjects_tables(starts, link_tables)
+
     def load_subobject_links(
         self,
         name: str = "default",
