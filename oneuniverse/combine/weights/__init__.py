@@ -12,6 +12,7 @@ from oneuniverse.combine.weights.pdf import (
     PdfMeanRedshiftWeight,
     PdfWidthIVarWeight,
 )
+from oneuniverse.combine.weights.pip import PipBitweightWeight
 from oneuniverse.combine.weights.quality import (
     ColumnWeight,
     ConstantWeight,
@@ -20,6 +21,7 @@ from oneuniverse.combine.weights.quality import (
 from oneuniverse.combine.weights.registry import (
     default_weight_for, register_default, unregister_default,
 )
+from oneuniverse.combine.weights.shear import ShearWeight
 from oneuniverse.combine.weights.selection import (
     CompletenessWeight,
     FiberCollisionWeight,
@@ -38,6 +40,8 @@ __all__ = [
     "HealpixMapWeight",
     "PdfMeanRedshiftWeight",
     "PdfWidthIVarWeight",
+    "PipBitweightWeight",
+    "ShearWeight",
     "CompletenessWeight",
     "FiberCollisionWeight",
     "ZFailureWeight",
