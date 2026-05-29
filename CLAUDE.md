@@ -112,6 +112,19 @@ validates every chunk's `z_type` against the registry and stamps
 - `database.as_of(when)` returns a filtered clone;
   `load_oneuid(name, as_of=...)` resolves the right archived version.
 
+Phase 20:
+- `SubobjectRules` carries `relation_type` ∈
+  ``{containment, causality, association}`` and an optional
+  `next_level` pointing at the next link sidecar in a chain.
+- `Database.chain_subobjects(starts=[…], relations=[name1, name2, …])`
+  walks a sequence of link sidecars and returns the union of leaf
+  oneuids (cluster → galaxy → spectrum, deblender hierarchies, …).
+- `oneuniverse.data.subobject_map.build_subobject_links_to_map`
+  matches a point catalog of parents against per-row HEALPix
+  probability maps (fixed-NSIDE) and emits the canonical
+  `SubobjectLinks` sidecar with ``confidence = pixel value``. Used
+  for GW host association. Multi-order MOC HEALPix (`mocpy`) deferred.
+
 ## Weights
 
 `WeightedCatalog.from_oneuid(index, database).fill_defaults(db,
