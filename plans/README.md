@@ -114,13 +114,15 @@ MPI/GPU reads first-class; mini-simulation runs deferred indefinitely
   Defines OUF-Sim format (input+output split), `SimDatabase`,
   `SimConverter`, `SimDatasetView` (partial access), region-selection
   orchestration → `SimulationRequest`, lineage + convertibility.
-- Phase S2+ (skeleton, AbacusSummit backend, orchestration) get
-  detailed plans when work begins.
+- **Phase S2 — `oneuniverse.simulation` skeleton + types** (executed):
+  [`2026-06-01-phaseS2-oufsim-skeleton.md`](2026-06-01-phaseS2-oufsim-skeleton.md).
+- Phase S3+ (AbacusSummit backend, orchestration) get detailed plans
+  when work begins.
 
 | Phase | Name | Status |
 |---|---|---|
 | S1 | OUF-Sim architecture proposal | **complete (2026-06-01, doc only)** |
-| S2 | `oneuniverse.sim` skeleton + types + no-Pillar-1-import lint guard | planned |
+| S2 | `oneuniverse.simulation` skeleton + types + no-Pillar-1-import lint guard | **complete (2026-06-01, 571/571 tests green; +49 sim)** |
 | S3 | First backend (AbacusSummit ASDF/pack9) + partial-access PoC (MPI + GPU) | planned |
 | S4 | SimDatabase + region index + lineage | planned |
 | S5 | Orchestration: region selection → SimulationRequest | planned |

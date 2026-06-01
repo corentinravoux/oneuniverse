@@ -42,6 +42,15 @@ call site.
   separate `onemeasure` package will own `MeasurementSet` + builders
   + adapters. `oneuniverse` produces typed parquet artefacts on
   disk; `onemeasure` reads them.
+- `oneuniverse/simulation/` — **Pillar 3 (OUF-Sim)**, standalone.
+  Types for the simulation storage + orchestration substrate:
+  `OUFSimManifest`, `ExecutionPlan`/`BackendCapabilities` (optimisation
+  substrate), `SimConverter` ABC + registry, `RegionSpec`,
+  `SimulationRequest`, `Cube`/`Cone`/`SkyPatch` selectors,
+  `CosmologySpec`/`UnitFrameSpec`/`ProvenanceSpec`. **Zero imports**
+  from `oneuniverse.data` / `combine` (guarded by
+  `test_sim_no_pillar1_imports.py`). Backends + partial-access reads
+  land in Phase S3+. See [[pillar3-partial-access-and-minimal-deps]].
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
