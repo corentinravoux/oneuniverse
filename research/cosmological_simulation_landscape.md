@@ -30,28 +30,41 @@ model) that this doc recommends.
 
 ## 1. Pillar 3 framing
 
-Pillar 3 ≡ digital twin. Per the project owner (2026-05-29 +
-2026-06-01):
+Pillar 3 ≡ digital twin **substrate**. Per the project owner
+(2026-05-29 + 2026-06-01):
 
 - Pillar 3 stores + orchestrates simulations in **any form**;
-  it does not yet run new simulations.
-- `MeasurementSet` (Pillar 2) consumes both data (from
-  `oneuniverse` Pillar 1) and synthetic data of identical shape from
-  Pillar 3 — that symmetry is the digital-twin design principle.
-- **No mocks in Pillar 1.** All mock-catalog ingestion (Buzzard,
-  Flagship-2 galaxy catalog, CosmoDC2, AbacusSummit_HOD, UNIT-EZmock,
-  etc.) is Pillar 3 territory.
-- **PARTICLE / mock geometries belong here**, not in Pillar 1.
+  it does **not** run simulations. Mini-simulation runs are
+  deferred indefinitely.
+- **Partial access is the load-bearing constraint.** Simulations
+  are TB–PB per snapshot; the whole sim never fits in memory.
+  Every public reader must take a mandatory selector
+  (spatial / temporal / structural) and return either a lazy view
+  or a chunked iterator.
+- **Minimal cross-pillar coupling.** Pillar 3 is a standalone
+  subpackage / package. It does **not** import from
+  `oneuniverse.data` or `oneuniverse.combine`. Communication with
+  Pillar 1 / Pillar 2 is through file artefacts (OUF parquet,
+  MeasurementSet contracts), not Python imports.
+- **MPI-collective + GPU-direct reads** are first-class
+  optimisation targets, not afterthoughts.
+- No mocks in Pillar 1. All mock-catalog ingestion (Buzzard,
+  Flagship-2 galaxy catalog, CosmoDC2, AbacusSummit_HOD,
+  UNIT-EZmock) is Pillar 3 territory.
+- `PARTICLE` / mock geometries belong here, not in Pillar 1.
 
 Pillar 3 deliverables — what we will build:
 1. **OUF-Sim format** (Section 6): a manifest-of-manifests that wraps
-   native simulation files + sidecar indexes + provenance.
-2. **Adapters** to existing readers (`yt`, `halotools`, `ytree`,
+   native simulation files + sidecar partial-access indexes +
+   provenance.
+2. **Selector API** with mandatory spatial / temporal / structural
+   filters; `iter_*` / lazy-view returns; opt-in MPI + GPU paths.
+3. **Adapters** to existing readers (`yt`, `halotools`, `ytree`,
    `abacusutils`, `illustris_python`, `swiftsimio`, `nbodykit`,
-   `genericio`, …).
-3. **Cross-snapshot + cross-representation queries** (halo →
+   `genericio`, `bigfile`, …) — never re-implement what they do.
+4. **Cross-snapshot + cross-representation queries** (halo →
    particles, halo → progenitor chain, snapshot → lightcone shell).
-4. **Suite-level orchestration** (AbacusSummit grid of cosmologies,
+5. **Suite-level orchestration** (AbacusSummit grid of cosmologies,
    CAMELS Latin-Hypercube, BORG posterior chain).
 
 What Pillar 3 explicitly is **not**:
@@ -60,6 +73,11 @@ What Pillar 3 explicitly is **not**:
   duplicate the petabytes.
 - Not a cosmology engine. Cosmological theory + comoving conversion
   remain Pillar 2.
+- Not a sampler / forward modeller. BORG-like HMC, JaxPM gradient
+  flows, IC posterior inference are downstream consumers, not
+  Pillar 3.
+- Not coupled to Pillar 1. Zero imports from `oneuniverse.data` or
+  `oneuniverse.combine`.
 
 ---
 
@@ -516,9 +534,23 @@ simulation data stays at NERSC / Cosma / ALCF / MPA.
 
 ## 6. Proposed OUF-Sim format
 
-**Design principle: manifest of manifests.** Pillar 3 stores a
-*manifest* that points at native files + adds an indexing layer.
-Native readers stay authoritative; OUF adds cross-cutting structure.
+**Three design principles (all load-bearing):**
+
+1. **Manifest of manifests.** Pillar 3 stores a *manifest* that
+   points at native files + adds an indexing layer. Native readers
+   stay authoritative; OUF adds cross-cutting structure. **No
+   re-encoding.**
+2. **Partial access first.** Every reader takes a mandatory
+   selector. Whole-snapshot loads are an explicit opt-in escape
+   hatch with a loud docstring warning. Indexes (HEALPix tile,
+   octree node, halo→particle pointer, tree branch range) are
+   mandatory, not optional.
+3. **MPI + GPU read paths are first-class.** Backends declare
+   `BackendCapabilities` up-front; reader API accepts
+   `mpi_comm=` and `device="cuda:0"` and dispatches to native
+   parallel-HDF5 / GenericIO / BigFile / `kvikIO` / Zarr-v3-sharded
+   accordingly. Single-process reads remain functional but never
+   block the parallel paths.
 
 ### 6.1 On-disk layout
 
