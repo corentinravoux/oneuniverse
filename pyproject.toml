@@ -19,6 +19,7 @@ dependencies = [
     "astropy>=5.0",
     "pyarrow>=12.0",
     "healpy>=1.16",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
