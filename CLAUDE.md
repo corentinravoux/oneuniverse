@@ -47,12 +47,17 @@ call site.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
   (Phases 1–15) done; generalisation (Phases 16–23) planned.
 - `docs/` — Sphinx scaffold (`make html` from `docs/`).
-- `research/` — topical references + design analyses. Two new docs
-  from 2026-05-28: [`research/survey_landscape_review.md`](research/survey_landscape_review.md)
-  (full cosmology survey landscape) and
-  [`research/schema_generalisation_audit.md`](research/schema_generalisation_audit.md)
-  (gap analysis + Phase 16–21 roadmap). Consult before scoping any
-  new loader or schema change.
+- `research/` — topical references + design analyses.
+  - [`research/survey_landscape_review.md`](research/survey_landscape_review.md)
+    — full cosmology survey landscape (Pillar 1 driver).
+  - [`research/schema_generalisation_audit.md`](research/schema_generalisation_audit.md)
+    — Pillar 1 schema gap analysis + Phase 16–22 roadmap.
+  - [`research/cosmological_simulation_landscape.md`](research/cosmological_simulation_landscape.md)
+    — Pillar 3 (digital twin) reference: codes, public suites, on-
+    disk representations, proposed OUF-Sim manifest-of-manifests
+    format (2026-06-01).
+  Consult before scoping any new loader, schema change, or Pillar-3
+  ingestor.
 - `test/` — pytest suite (~3:30 wall-clock, 364+ tests).
 
 ## OUF 2.5 (format on disk)
