@@ -20,6 +20,10 @@ the orchestration layer that later phases implement.
 3. **MPI-collective + GPU-direct reads first-class.**
 4. **Mini-simulation runs deferred indefinitely** — Pillar 3 stores +
    indexes + selects regions; it does **not** run simulations.
+5. **Optimisation is load-bearing** (pinned 2026-06-01) — every
+   heavy-memory / heavy-CPU-time step runs sequential-streamed
+   (bounded memory), MPI-collective, or GPU. No unbounded
+   in-memory path exists. See §6.4.
 
 ---
 
@@ -564,6 +568,109 @@ Backends declare `BackendCapabilities(supports_mpi, supports_gpu_direct,
 single-process CPU. The API must expose `mpi_comm` + `device` from
 day one even when every backend declares `False`.
 
+### 6.4 Execution model — optimisation is load-bearing
+
+**Mandate (pinned 2026-06-01).** Optimisation is one of the most
+important parts of this module. **Every heavy-memory or heavy-CPU-time
+step must run in one of three modes: sequential-streamed (bounded
+memory), MPI-collective, or GPU.** No heavy step may materialise an
+unbounded array in a single process's RAM. This applies not only to
+reads (Section 6.1–6.3) but to **every** operation in the module —
+index building, region extraction, halo↔particle joins, lightcone
+stitching, cross-region aggregation, projection conversion.
+
+#### 6.4.1 Heavy-step taxonomy
+
+A "heavy step" is any operation whose working set can exceed a single
+node's memory or whose wall-clock is dominated by I/O / compute over
+TB–PB inputs. The recurring heavy steps in OUF-Sim:
+
+| Heavy step | Where | Default mode | MPI | GPU |
+|---|---|---|---|---|
+| Sidecar index build (HEALPix tile, octree, KD-tree) | ingest / convert | sequential-streamed | ✓ collective | partial (sort/bin on GPU) |
+| Halo → particle pointer build | convert | sequential-streamed | ✓ | partial |
+| Region extraction (cone / cube → particle subset) | view | sequential-streamed (chunked iterator) | ✓ per-rank-local | ✓ kvikIO/cudf |
+| Lightcone onion-shell stitch | view | sequential per-pixel | ✓ per-tile | ✓ (HEALPix on GPU) |
+| Merger-tree branch walk | view | sequential (depth-first range scan) | — | — (small) |
+| Cross-region aggregation (P(k), HMF over a suite) | analysis | sequential-streamed | ✓ collective | ✓ (FFT on GPU) |
+| Projection conversion (particle → halo-centric re-index) | convert | sequential-streamed | ✓ | partial |
+| Field-grid sub-region read | view | chunked (Zarr) | ✓ | ✓ cucim |
+
+The contract: **no heavy step has a "load everything" code path** that
+isn't an explicit, loud opt-in. Each is implemented as a generator /
+collective / device kernel with a declared memory budget.
+
+#### 6.4.2 `ExecutionPlan`
+
+Every heavy operation returns or accepts an `ExecutionPlan` declaring
+how it will run + its memory budget:
+
+```python
+class ExecutionMode(str, Enum):
+    SEQUENTIAL = "sequential"      # streamed, bounded memory
+    MPI        = "mpi"             # collective, per-rank-local
+    GPU        = "gpu"             # device-resident, GPUDirect where possible
+
+@dataclass(frozen=True)
+class ExecutionPlan:
+    mode: ExecutionMode
+    memory_budget_bytes: int       # hard cap on per-process working set
+    batch_rows: Optional[int]      # chunk size for SEQUENTIAL / GPU
+    mpi_comm: Optional["MPI.Comm"]
+    device: Optional[str]          # "cuda:0", …
+    n_chunks_estimate: int         # for progress / scheduling
+```
+
+Resolution rule: if the caller does not specify a mode, the framework
+picks **the most parallel mode the backend supports**, falling back
+to `SEQUENTIAL` with a chunk size sized to `memory_budget_bytes`.
+`SEQUENTIAL` is never "load all" — it is streamed with a bounded
+working set.
+
+#### 6.4.3 Memory budget enforcement
+
+- Every heavy operation takes a `memory_budget_bytes` (default: a
+  fraction of detected free RAM, or a config default like 4 GiB).
+- The chunk size (`batch_rows`) is derived from the budget + row
+  width, never hardcoded to "the whole snapshot".
+- Operations that *cannot* honour a budget (a backend with no
+  streaming reader) must declare `supports_streaming=False` and are
+  refused for inputs above the budget unless the caller passes an
+  explicit `allow_unbounded=True` escape hatch (loud docstring).
+
+#### 6.4.4 `BackendCapabilities` extended
+
+```python
+@dataclass(frozen=True)
+class BackendCapabilities:
+    name: str
+    native_format: str
+    supports_mpi: bool
+    supports_gpu_direct: bool
+    supports_random_access: bool   # KD-tree / Hilbert key range
+    supports_streaming: bool       # bounded-memory chunked iterator
+    requires_extra: Tuple[str, ...]
+    # 2026-06-01: per-heavy-step execution capability.
+    heavy_step_modes: Mapping[str, Tuple[ExecutionMode, ...]]
+    # e.g. {"index_build": (SEQUENTIAL, MPI),
+    #       "region_extract": (SEQUENTIAL, MPI, GPU)}
+```
+
+The reader / converter consults `heavy_step_modes` and refuses a mode
+the backend cannot deliver, rather than silently degrading to an
+unbounded in-memory path.
+
+#### 6.4.5 Why this is non-negotiable
+
+A 2 Gpc/h 6912³ AbacusSummit snapshot is ~3 TB of particles; a
+FLAMINGO 2.8 Gpc snapshot is multi-TB; an Outer Rim HACC snapshot
+is rank-chunked across thousands of files. A single-process
+"read the snapshot, then filter" approach is impossible — it OOMs
+before the filter runs. **The optimisation is the architecture**: the
+only way to touch these data is streamed / MPI / GPU from the first
+byte. The `ExecutionPlan` + memory-budget machinery makes the
+impossible path un-writable by construction.
+
 ## 7. Orchestration — region selection → simulation request
 
 The new headline requirement: **the OUF-Sim database is the basis to
@@ -720,8 +827,12 @@ Pillar-1 interaction is file-path-based only.
   matrix (~18 Layer-2 readers cover the entire public landscape).
 - The `OUFSimManifest`, `ProductDecl`, `SimConverter`,
   `SimDatasetView`, `SimDatabase`, `SimulationRequest`,
-  `BackendCapabilities`, `RegionSpec` type sketches.
+  `BackendCapabilities`, `ExecutionPlan`, `RegionSpec` type sketches.
 - The per-product extensible selector taxonomy + MPI/GPU posture.
+- The **execution model** (§6.4): every heavy step runs
+  sequential-streamed / MPI / GPU with a declared `memory_budget_bytes`;
+  no unbounded in-memory path exists by construction. Optimisation is
+  load-bearing, not an afterthought.
 - The lineage + convertibility model.
 - The mapping to the OUF data stack.
 - Eight open design questions.
