@@ -147,8 +147,17 @@ oufsim_<sim_name>/
 │   │   ├── shells.parquet
 │   │   ├── healpix_shells/             # FITS / Zarr
 │   │   └── pixel_shell_lookup.parquet
-│   ├── fields/                # regular Cartesian grids (PM δ, κ cubes)
-│   │   └── *.zarr             # Zarr v3 + sharding (cloud + GPU friendly)
+│   ├── fields/                # regular Cartesian grids (PM δ, κ cubes,
+│   │   └── *.zarr             #   GR tensor cubes) — Zarr v3 + sharding
+│   ├── phase_space/           # tessellation / sheet (ColDICE, GAMER ψ)
+│   │   ├── index.parquet      # (patch_id, bbox6d, native_path, n_simplex)
+│   │   └── native/            # simplex vertices + connectivity, or ψ-AMR
+│   ├── gr_fields/             # full-GR 4-tensor on (3+1) mesh
+│   │   ├── index.parquet      # (slice_id, t, gauge, field, native_path)
+│   │   └── native/            # Carpet/Chombo HDF5 per time-slice/level
+│   ├── checkpoints/           # differentiable forward-model state
+│   │   ├── index.parquet      # (ckpt_id, step, a, native_path, framework)
+│   │   └── native/            # orbax (pmwd/JaxPM) / BigFile (FastPM)
 │   └── ic_posterior/          # constrained-realisation chain (optional)
 │       ├── chain_manifest.parquet
 │       └── samples_native/
@@ -156,9 +165,15 @@ oufsim_<sim_name>/
     └── regions.parquet        # (region_id, kind, bbox/cone, z, refs)
 ```
 
-`input/` + `output/` split is the new requirement: an OUF-Sim record
-captures both sides of a simulation. Input drives reproducibility +
-re-launch; output is the science product.
+`input/` + `output/` split: an OUF-Sim record captures both sides of
+a simulation. Input drives reproducibility + re-launch; output is the
+science product. The `output/` subdirectories cover **all eleven
+storage primitives** from the research landscape (Section 3.5);
+`snapshots/` carries both DM-only and hydro particle tables, `fields/`
+carries regular Cartesian grids, `phase_space/` / `gr_fields/` /
+`checkpoints/` / `ic_posterior/` carry the four non-particle, non-grid
+representations. Any subdirectory absent ⇒ that product not present
+for this sim (recorded in `manifest.products`).
 
 ### 3.3 Manifest contract
 
@@ -179,7 +194,9 @@ class OUFSimManifest:
     has_input: bool
     has_output: bool
     products: Tuple[str, ...]           # "snapshots","halos","tree",
-                                        # "lightcone","fields","ic_posterior"
+                                        # "lightcone","fields",
+                                        # "phase_space","gr_fields",
+                                        # "checkpoints","ic_posterior"
     n_snapshots: int
     redshifts: Tuple[float, ...]
     box_size: Optional[float]           # in unit_frame length units
@@ -211,9 +228,64 @@ access.
 - **Lightcone shell + pixel lookup** — `(shell_id, z_min, z_max, nside,
   ordering, path)` plus `(pixel_id, shell_id, z)` for onion-shell
   stitching.
+- **Field-grid chunk index** — `(field, chunk_id, bbox, zarr_key)` for
+  regular Cartesian grids + GR tensor cubes (Zarr-native chunking +
+  this manifest = sub-region grid reads).
+- **Phase-space patch index** — `(patch_id, bbox6d, native_path,
+  n_simplex)` for ColDICE tessellation; bbox6d is the 6-D
+  (x, v) bounding box so a 3-D spatial cone maps to candidate patches.
+- **GR slice index** — `(slice_id, t, gauge, refinement_level, field,
+  native_path, bbox)` for Carpet/Chombo per-time-slice tensor output.
+- **Checkpoint index** — `(ckpt_id, step, a, framework, native_path)`
+  for differentiable forward-model state (orbax / BigFile); no
+  spatial sub-index (checkpoints reload whole-state by design).
 
 Sidecar indexes are parquet (small, queryable) or Zarr (large
-per-pixel maps). Native files are **read-only**.
+per-pixel / per-chunk maps). Native files are **read-only**. A given
+backend builds only the indexes its products need; the converter
+declares which (Section 5).
+
+### 3.5 Coverage of all simulation shapes
+
+The format must represent **every** storage primitive + code class
+from [`../research/cosmological_simulation_landscape.md`](../research/cosmological_simulation_landscape.md)
+(§4 representations, §2 codes). Audit:
+
+| Research primitive (§4) | OUF-Sim product | Partial-access index | Primary native readers |
+|---|---|---|---|
+| 4.1 Particle table (DM-only) | `snapshots/` | HEALPix tile + KD-tree | Gadget HDF5, ASDF/pack9, GenericIO, BigFile |
+| 4.2 Particle table (hydro/SPH/Voronoi) | `snapshots/` (extra fields) | HEALPix tile + KD-tree + halo-ptr | Gadget HDF5 (swiftsimio / illustris_python) |
+| 4.3 AMR hierarchical mesh | `snapshots/` (AMR) | Octree node | RAMSES Fortran, AMReX, Enzo HDF5 (via yt) |
+| 4.4 Regular Cartesian grid | `fields/` (Zarr) | Field-grid chunk | Zarr, NumPy, HDF5 |
+| 4.5 Halo catalog | `snapshots/halos_native/` | Halo→particle pointer | ROCKSTAR, Subfind, CompaSO, AHF, VELOCIraptor |
+| 4.6 Merger-tree graph | `merger_tree/` | Branch index | SubLink, Consistent Trees, HBT+, LHaloTree (via ytree) |
+| 4.7 HEALPix lightcone shell | `lightcone/healpix_shells/` | Shell + pixel lookup | FITS HEALPix, Zarr |
+| 4.8 Galaxy/halo lightcone catalog | `lightcone/` (parquet) | Shell + HEALPix tile | parquet (HEALPix-partitioned), FITS |
+| 4.9 Phase-space sheet | `phase_space/` | Phase-space patch (bbox6d) | ColDICE binary, GAMER HDF5 |
+| 4.10 Full-GR 4-tensor on mesh | `gr_fields/` | GR slice (t, gauge, level) | Carpet/Chombo HDF5, gevolution HDF5 |
+| 4.11 IC posterior chain | `ic_posterior/` | Chain manifest | BORG HDF5, MANTICORE HDF5 |
+| 4.12 Differentiable checkpoint | `checkpoints/` | Checkpoint index | orbax (pmwd/JaxPM), BigFile (FastPM) |
+
+| Research code class (§2) | `sim_kind` | Covered by |
+|---|---|---|
+| 2.1 Pure N-body (tree/TreePM/FMM/P3M) | `nbody` | snapshots + halos + tree + lightcone |
+| 2.2 N-body + SPH | `sph` | snapshots (hydro fields) + halos + tree |
+| 2.3 Moving-mesh (AREPO) | `sph` (Voronoi flag) | snapshots (cell-as-particle) + halos + tree |
+| 2.4 AMR hydro | `amr` | snapshots (octree) + halos |
+| 2.5 PM / fast / forward-model | `pm` | snapshots + fields + (BORG → ic_posterior) |
+| 2.6 Full GR | `gr` | gr_fields + snapshots (particles) |
+| 2.7 Hybrid / radiative-transfer | `sph` / `amr` (rt flag) | snapshots + fields (photon bands) |
+| 2.8 Constrained / forward-model | `constrained` | ic_posterior + snapshots + lightcone |
+| 2.9 Phase-space / Vlasov / ψDM | `phase_space` | phase_space + fields (ψ grid) |
+| 2.10 Emulators / surrogate suites | `nbody`/`sph` (suite bundle) | snapshots + fields + P(k) tables (as fields) |
+| 2.11 Differentiable / inverse | `differentiable` | checkpoints + fields |
+
+**Result: every primitive + every code class has a product + index +
+reader.** No simulation shape in the research landscape falls outside
+the format. The four non-particle / non-grid representations (phase-
+space, GR tensor, IC posterior chain, differentiable checkpoint) get
+dedicated `output/` subdirectories + index types rather than being
+forced into the particle model.
 
 ## 4. SimDatabase
 
@@ -257,40 +329,177 @@ The "database with easy access" requirement means:
   → `SimDatasetView`.
 - No whole-DB scan on open; the index is parquet, read on demand.
 
-## 5. Converters
+## 5. Converters — the modularity core
 
-Twin of survey loaders. Pluggable, registered, user-extensible —
-because there are nearly infinite ways to simulate and to represent
-a simulation.
+Twin of survey loaders, but the converter layer is the **single most
+important extensibility surface** in Pillar 3. Adding a new simulation
+code must be straightforward: drop in one converter module, register
+it, done. Everything else (database, view, orchestration) is
+code-agnostic and never needs touching.
 
-### 5.1 Two converter families
+Design goal: **a new-code author writes only the format-specific glue;
+all index-building, manifest-writing, lineage, partial-access wiring
+is provided by the framework.**
+
+### 5.1 Layered converter design (separation of concerns)
+
+Three decoupled layers so a new converter reuses ~90% of existing
+machinery:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 3 — Converter (per code, the ONLY thing a new code      │
+│           author writes)                                       │
+│   detect() + read_native() + declare products/units/cosmology │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ uses
+┌───────────────────────────▼──────────────────────────────────┐
+│ Layer 2 — NativeReaderAdapter (per native FORMAT, shared      │
+│           across codes that share a format)                    │
+│   GadgetHDF5Reader, ASDFPack9Reader, GenericIOReader,          │
+│   RamsesFortranReader, AMReXPlotfileReader, BigFileReader,     │
+│   ZarrReader, FitsHealpixReader, OrbaxReader, CarpetHDF5Reader,│
+│   ColdiceReader, ConsistentTreesReader, SubLinkReader, …       │
+│   → delegates to yt / abacusutils / swiftsimio / ytree /       │
+│     genericio / bigfile (lazy optional deps)                   │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ feeds
+┌───────────────────────────▼──────────────────────────────────┐
+│ Layer 1 — IndexBuilder toolkit (format-agnostic, framework-   │
+│           provided; a converter calls these, never reimplements)│
+│   HealpixTileIndexer, OctreeNodeIndexer, KDTreeIndexer,        │
+│   HaloParticlePointerIndexer, MergerTreeBranchIndexer,         │
+│   LightconeShellIndexer, FieldChunkIndexer,                    │
+│   PhaseSpacePatchIndexer, GrSliceIndexer, CheckpointIndexer    │
+│   + ManifestWriter + ProvenanceWriter + UnitFrameWriter        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**The key insight:** most new codes share a *native format* with an
+existing code (Section 5.5). A new code on Gadget HDF5 (e.g. a new
+SWIFT-physics variant) needs **only** a thin Layer-3 converter that
+reuses the existing `GadgetHDF5Reader` (Layer 2) and the existing
+index builders (Layer 1). Even a genuinely new format only requires
+one new Layer-2 reader; Layers 1 + 3 mostly compose.
+
+### 5.2 Two converter families
 
 - **Input converters** — `(native IC + config + cosmology) →
-  OUF-Sim input/`. E.g. read a Gadget parameter file + MUSIC IC +
-  CAMB transfer function → standardised `input/` record.
+  OUF-Sim input/`. Read a parameter file + IC field + transfer
+  function → standardised `input/` record. Enables reproducibility +
+  re-launch.
 - **Output converters** — `(native snapshot / halo / tree /
-  lightcone / field) → OUF-Sim output/`. E.g.
-  `AbacusSummitOutputConverter` wraps ASDF/pack9 + CompaSO + native
-  lightcone, builds the sidecar indexes, emits the manifest.
+  lightcone / field / phase-space / GR / checkpoint) → OUF-Sim
+  output/`. Wrap native files + build sidecar indexes + emit manifest.
 
-### 5.2 Converter ABC
+A code typically ships both (paired by `code` name), but either may
+exist alone (some public products have output only).
+
+### 5.3 Converter ABC (Layer 3 — the minimal contract)
 
 ```python
+@dataclass(frozen=True)
+class ProductDecl:
+    product: str                    # "snapshots" | "halos" | "tree" | …
+    native_format: str              # "Gadget HDF5" | "ASDF/pack9" | …
+    indexes: Tuple[str, ...]        # which Layer-1 indexers to run
+    fields: Tuple[str, ...]         # canonical field names exposed
+
 class SimConverter(abc.ABC):
-    capabilities: BackendCapabilities
+    code: ClassVar[str]                     # "Gadget-4", "AREPO", "ABACUS"
+    sim_kind: ClassVar[str]                 # "nbody" | "sph" | "amr" | …
+    capabilities: ClassVar[BackendCapabilities]
 
     @abc.abstractmethod
-    def detect(self, path: Path) -> bool: ...
+    def detect(self, path: Path) -> bool:
+        """Sniff a directory; return True if this converter handles it."""
+
     @abc.abstractmethod
+    def declare_products(self, src: Path) -> Tuple[ProductDecl, ...]:
+        """List products found at src + which indexes each needs."""
+
+    @abc.abstractmethod
+    def read_cosmology(self, src: Path) -> dict: ...
+    @abc.abstractmethod
+    def read_unit_frame(self, src: Path) -> dict: ...
+
+    # Provided by the framework — a converter rarely overrides:
     def convert(self, src: Path, out: Path, *, projection: str = "native",
-                build_indexes: bool = True) -> OUFSimManifest: ...
+                build_indexes: bool = True) -> OUFSimManifest:
+        """Default: for each declared product, wrap native files,
+        run the declared Layer-1 indexers, write manifest +
+        cosmology + unit_frame + provenance. Override only for
+        format quirks."""
 ```
 
 `@register class AbacusSummitOutputConverter(SimConverter): …` — same
-registry idiom as Pillar 1 survey loaders. Converters **never
-re-encode** native particle data; they wrap + index.
+registry idiom as Pillar 1 survey loaders. The base `convert()` is
+**concrete**: it iterates `declare_products()`, dispatches each to its
+Layer-2 reader + Layer-1 indexers, and assembles the manifest. A
+converter author writes `detect`, `declare_products`,
+`read_cosmology`, `read_unit_frame` — four small methods — and
+inherits everything else.
 
-### 5.3 Projection choice (the convertibility requirement)
+Converters **never re-encode** native particle/cell data; they wrap +
+index.
+
+### 5.4 Adding a new simulation code — the straightforward path
+
+For a new code **on an existing native format** (the common case):
+
+1. Subclass `SimConverter`; set `code`, `sim_kind`, `capabilities`.
+2. Implement `detect()` (e.g. check for a signature file/header).
+3. Implement `declare_products()` returning `ProductDecl`s that
+   reference **existing** Layer-2 readers + Layer-1 indexers.
+4. Implement `read_cosmology()` + `read_unit_frame()` (parse the
+   header / parameter file).
+5. `@register`. Done — no database / view / orchestration changes.
+
+For a new code **with a genuinely new native format**, add **one**
+Layer-2 reader (a `NativeReaderAdapter` exposing
+`iter_chunks(selector) -> Iterator[pa.Table]` + `read_region(...)`),
+delegating to the code's own Python reader where one exists. Then
+follow steps 1–5. The Layer-1 index builders are format-agnostic and
+do not change.
+
+A unit-test harness (`SimConverterContractTest`) validates any new
+converter against the contract: detect round-trip, manifest
+schema-validity, index completeness, partial-access correctness
+(a cone read through OUF-Sim must equal the native reader's cone
+read), unit-frame declaration present. New code authors run this to
+prove conformance.
+
+### 5.5 Native-format sharing → converter reuse
+
+Most public codes cluster onto a few native formats (from the
+research landscape §5.5). Each format = one Layer-2 reader, shared:
+
+| Native format (Layer 2 reader) | Codes / suites sharing it |
+|---|---|
+| Gadget HDF5 | Gadget-3/-4, GIZMO, SWIFT, AREPO, TNG, EAGLE, SIMBA, FIRE, MTNG, FLAMINGO (via swiftsimio), BAHAMAS, Magneticum |
+| ASDF / pack9 | AbacusSummit, AbacusCosmos |
+| GenericIO | HACC: Outer Rim, Last Journey, Q-Continuum, Mira-Titan |
+| RAMSES Fortran multi-file | Horizon-AGN, NewHorizon, OBELISK, SPHINX |
+| AMReX plotfile | Nyx, CASTRO, ERF |
+| Enzo HDF5 hierarchy | Enzo, Renaissance, RomulusC |
+| BigFile | FastPM, MP-Gadget |
+| orbax checkpoint | pmwd, JaxPM |
+| Carpet / Chombo HDF5 | Einstein Toolkit, GRChombo, gevolution |
+| ColDICE binary | ColDICE (phase-space) |
+| GAMER HDF5 | GAMER-2 (ψDM) |
+| Subfind HDF5 | TNG, EAGLE, MTNG, Auriga, FABLE (halo product) |
+| CompaSO ASDF | AbacusSummit (halo product) |
+| ROCKSTAR + Consistent Trees | Quijote, Aemulus, Uchuu, UNIT (halo + tree) |
+| SubLink / LHaloTree HDF5 | TNG, MTNG, EAGLE (tree product) |
+| FITS HEALPix | Buzzard, FLAMINGO maps, GLASS (lightcone) |
+| parquet (HEALPix-partitioned) | CosmoDC2, Flagship-2, Uchuu mocks (lightcone catalog) |
+| BORG HDF5 chain | BORG family, MANTICORE, SIBELIUS-DARK (ic_posterior) |
+
+≈ 18 Layer-2 readers cover the **entire** public landscape. Adding
+the 100th simulation code is, in the overwhelming majority, a
+4-method Layer-3 converter against a reader that already exists.
+
+### 5.6 Projection choice (the convertibility requirement)
 
 A single native simulation can be converted into **multiple
 OUF-Sim databases** with different projections:
@@ -301,6 +510,7 @@ OUF-Sim databases** with different projections:
 - `projection="lightcone"` — lightcone-centric; HEALPix-shell index
   primary.
 - `projection="field"` — gridded-field-centric; Zarr cubes primary.
+- `projection="phase_space"` — sheet-centric (ColDICE / ψDM).
 
 Each projection is a distinct OUF-Sim record, linked back to the
 source via a `converted_projection` lineage edge. Mirrors the OUF
@@ -315,12 +525,21 @@ mandatory selector + optional MPI/GPU directive.
 ### 6.1 Selector taxonomy (uniform across backends)
 
 - **Spatial**: `cube(xlo,xhi,ylo,yhi,zlo,zhi)`, `cone(lon,lat,radius)`,
-  `skypatch(...)`, `tiles=[...]` (HEALPix), `octree_node=id` (AMR).
-- **Temporal**: `z=`, `snapshot=`, `shell_z_range=(zlo,zhi)`.
+  `skypatch(...)`, `tiles=[...]` (HEALPix), `octree_node=id` (AMR),
+  `bbox6d=...` (phase-space patch), `grid_region=...` (field chunk).
+- **Temporal**: `z=`, `snapshot=`, `shell_z_range=(zlo,zhi)`,
+  `gr_slice_t=...` (GR time-slice), `step=...` (checkpoint).
 - **Structural**: `halo_id=` (→ member particles via pointer),
   `tree_branch(start_halo_id=)` (→ progenitor chain),
-  `chain_link=` (→ realised snapshot), `level_range=(lo,hi)` (AMR).
+  `chain_link=` (→ realised snapshot), `level_range=(lo,hi)` (AMR),
+  `gauge=...` (GR field).
 - **Projection**: `fields=(...)` — column subset at I/O time.
+
+The selector set is **extensible per product**: each product type
+declares the selectors its index supports (a particle table supports
+spatial + structural; a GR field supports `gr_slice_t` + `gauge` +
+`grid_region`; a checkpoint supports only `step`). The view raises
+informatively if a product is asked for an unsupported selector.
 
 ### 6.2 Return contract
 
@@ -492,14 +711,20 @@ Pillar-1 interaction is file-path-based only.
 
 **Phase S1 delivers (this document):**
 - The three-layer architecture (format / database / orchestration).
-- The OUF-Sim on-disk format with input + output split.
-- The `OUFSimManifest`, `SimConverter`, `SimDatasetView`,
-  `SimDatabase`, `SimulationRequest`, `BackendCapabilities`,
-  `RegionSpec` type sketches.
-- The partial-access selector taxonomy + MPI/GPU posture.
+- The OUF-Sim on-disk format with input + output split, covering
+  **all eleven storage primitives + all code classes** from the
+  research landscape (§3.5 coverage matrix — no sim shape left out).
+- The **3-layer modular converter design** (Converter / NativeReader
+  / IndexBuilder), the 4-method `SimConverter` contract, the
+  "add a new code in 5 steps" path, and the native-format sharing
+  matrix (~18 Layer-2 readers cover the entire public landscape).
+- The `OUFSimManifest`, `ProductDecl`, `SimConverter`,
+  `SimDatasetView`, `SimDatabase`, `SimulationRequest`,
+  `BackendCapabilities`, `RegionSpec` type sketches.
+- The per-product extensible selector taxonomy + MPI/GPU posture.
 - The lineage + convertibility model.
 - The mapping to the OUF data stack.
-- Eight resolved/open design questions.
+- Eight open design questions.
 
 **Phase S1 does NOT deliver:** any code. No package skeleton, no
 backend, no converter. Implementation is later phases.
