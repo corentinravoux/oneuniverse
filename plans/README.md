@@ -96,10 +96,32 @@ Per-phase detailed plans land as we start each.
 
 Pillar 2 begins with Phase 0: standing up the new `onemeasure` package
 (MeasurementSet + builders + adapters) against the current OUF 2.4
-format. Pillar 3 follows once `onemeasure` ships its first adapter.
-Per-phase detailed plans get written when work begins.
+format. Per-phase detailed plans get written when work begins.
 
 - Pillar 2 phases A–F: see
   [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
-- Pillar 3 phases α–η: see
+
+Pillar 3 (simulation storage + orchestration; digital-twin substrate)
+started 2026-06-01 with an architecture proposal. Standalone package;
+partial-access API is load-bearing; minimal cross-pillar coupling;
+MPI/GPU reads first-class; mini-simulation runs deferred indefinitely
+(see [[pillar3-partial-access-and-minimal-deps]] in memory).
+
+- Pillar 3 large-scope roadmap:
   [`2026-05-28-pillar3-simulation-digital-twin.md`](2026-05-28-pillar3-simulation-digital-twin.md).
+- **Phase S1 — OUF-Sim architecture proposal** (doc only, no code):
+  [`2026-06-01-phaseS1-oufsim-architecture.md`](2026-06-01-phaseS1-oufsim-architecture.md).
+  Defines OUF-Sim format (input+output split), `SimDatabase`,
+  `SimConverter`, `SimDatasetView` (partial access), region-selection
+  orchestration → `SimulationRequest`, lineage + convertibility.
+- Phase S2+ (skeleton, AbacusSummit backend, orchestration) get
+  detailed plans when work begins.
+
+| Phase | Name | Status |
+|---|---|---|
+| S1 | OUF-Sim architecture proposal | **complete (2026-06-01, doc only)** |
+| S2 | `oneuniverse.sim` skeleton + types + no-Pillar-1-import lint guard | planned |
+| S3 | First backend (AbacusSummit ASDF/pack9) + partial-access PoC (MPI + GPU) | planned |
+| S4 | SimDatabase + region index + lineage | planned |
+| S5 | Orchestration: region selection → SimulationRequest | planned |
+| S6 | Second backend (Gadget HDF5) + projection converters | planned |
