@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -32,6 +32,10 @@ class SimStore:
         self.manifest = read_json(self.root / "manifest.json")
         self.layout = self.manifest.get("store_layout", {})
         self.last_read_stats: Dict[str, int] = {}
+        self._index_cache: Dict[str, list] = {}
+
+    def clear_cache(self) -> None:
+        self._index_cache.clear()
 
     # -- introspection ----------------------------------------------------
     @property
@@ -43,11 +47,20 @@ class SimStore:
         return tuple(self.manifest.get("redshifts", ()))
 
     def _index_rows(self, rel_index: str):
-        return pq.read_table(self.root / rel_index).to_pylist()
+        """Read a sidecar index, memoised per store (S6 index cache)."""
+        if rel_index not in self._index_cache:
+            self._index_cache[rel_index] = (
+                pq.read_table(self.root / rel_index).to_pylist())
+        return self._index_cache[rel_index]
 
     # -- point catalogues (particles / halos) -----------------------------
-    def read_box(self, product: str, z: float, cube: Cube) -> Dict[str, np.ndarray]:
-        """Return columns inside ``cube`` for a point product at redshift z."""
+    def read_box(self, product: str, z: float, cube: Cube, *,
+                 columns: Optional[Sequence[str]] = None) -> Dict[str, np.ndarray]:
+        """Return columns inside ``cube`` for a point product at redshift z.
+
+        ``columns`` projects the read (fewer bytes off disk); x/y/z are always
+        read for the cube cut and dropped afterwards if not requested.
+        """
         zt = f"z{float(z):.3f}"
         info = self.layout[product][zt]
         rows = self._index_rows(info["index"])
@@ -56,9 +69,12 @@ class SimStore:
                if cube_overlaps_bbox(cube, (r["xlo"], r["xhi"], r["ylo"],
                                             r["yhi"], r["zlo"], r["zhi"]))]
         self.last_read_stats = {"chunks_total": len(rows), "chunks_read": len(hit)}
+        read_cols = None
+        if columns is not None:
+            read_cols = list(dict.fromkeys(list(columns) + ["x", "y", "z"]))
         cols: Dict[str, list] = {}
         for r in hit:
-            table = pq.read_table(prod_dir / r["file"])
+            table = pq.read_table(prod_dir / r["file"], columns=read_cols)
             for name in table.column_names:
                 cols.setdefault(name, []).append(
                     table.column(name).to_numpy(zero_copy_only=False))
@@ -68,7 +84,10 @@ class SimStore:
         m = ((out["x"] >= cube.xlo) & (out["x"] <= cube.xhi)
              & (out["y"] >= cube.ylo) & (out["y"] <= cube.yhi)
              & (out["z"] >= cube.zlo) & (out["z"] <= cube.zhi))
-        return {k: v[m] for k, v in out.items()}
+        out = {k: v[m] for k, v in out.items()}
+        if columns is not None:
+            out = {k: out[k] for k in columns}
+        return out
 
     # -- field (regular grid) ---------------------------------------------
     def read_field_box(self, z: float, cube: Cube):
