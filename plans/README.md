@@ -119,11 +119,20 @@ MPI/GPU reads first-class; mini-simulation runs deferred indefinitely
 - Phase S3+ (AbacusSummit backend, orchestration) get detailed plans
   when work begins.
 
+Backends-first was dropped 2026-06-01: real simulation formats
+(AbacusSummit ASDF/pack9, Gadget HDF5, AMR/HACC/BORG/BigFile) are
+**all deferred to the future bucket**. Instead the architecture is
+finished against a **dummy linear simulation** — a pure-numpy
+Eisenstein–Hu power spectrum + linear-theory LSS generator that emits
+every product type (field/voxel, particles, halos, lightcone). Same
+strategy as Pillar 1 starting on synthetic DR1 fixtures.
+
 | Phase | Name | Status |
 |---|---|---|
 | S1 | OUF-Sim architecture proposal | **complete (2026-06-01, doc only)** |
 | S2 | `oneuniverse.simulation` skeleton + types + no-Pillar-1-import lint guard | **complete (2026-06-01, 571/571 tests green; +49 sim)** |
-| S3 | First backend (AbacusSummit ASDF/pack9) + partial-access PoC (MPI + GPU) | planned |
-| S4 | SimDatabase + region index + lineage | planned |
-| S5 | Orchestration: region selection → SimulationRequest | planned |
-| S6 | Second backend (Gadget HDF5) + projection converters | planned |
+| S3 | Dummy linear simulation generator (`oneuniverse.simulation.linear`): Eisenstein–Hu P(k), growth D(z), Gaussian field (mesh/voxel), Zel'dovich particles, toy halos | planned |
+| S4 | IndexBuilder toolkit + `LinearSimConverter` (real `convert()`; sidecar indexes for field/particle/halo; add lightcone + merger-tree products) | planned |
+| S5 | `SimDatasetView` partial-access reads on dummy data (ExecutionPlan streaming + memory budget; MPI/GPU hooks) | planned |
+| S6 | `SimDatabase` + lineage + region-selection orchestration → `SimulationRequest` (validated on dummy multi-z + zoom region) | planned |
+| future | **Real-format backends** (AbacusSummit ASDF/pack9, Gadget HDF5, AMR/HACC/BORG/BigFile), Wave-1 ingest, mini-sim runs + IC samplers (deferred indefinitely) |
