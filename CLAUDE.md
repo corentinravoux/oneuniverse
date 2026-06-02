@@ -49,8 +49,17 @@ call site.
   `SimulationRequest`, `Cube`/`Cone`/`SkyPatch` selectors,
   `CosmologySpec`/`UnitFrameSpec`/`ProvenanceSpec`. **Zero imports**
   from `oneuniverse.data` / `combine` (guarded by
-  `test_sim_no_pillar1_imports.py`). Backends + partial-access reads
-  land in Phase S3+. See [[pillar3-partial-access-and-minimal-deps]].
+  `test_sim_no_pillar1_imports.py`). Real-format backends +
+  partial-access reads land in Phase S4+. See
+  [[pillar3-partial-access-and-minimal-deps]].
+- `oneuniverse/simulation/linear/` — pure-numpy **dummy linear
+  simulation** (Eisenstein–Hu P(k), growth D(z), Gaussian field /
+  voxel, Zel'dovich particles, toy halos). The synthetic source used
+  to finish + test the OUF-Sim machinery before any real backend.
+  `generate_linear_sim(out, cosmo, box_size=, n_grid=, redshifts=,
+  seed=)` writes a native layout (`config.yaml` + per-z
+  `field.npy` / `particles.npy` / `halos.parquet`). Deps: numpy +
+  pyarrow + pyyaml only.
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation

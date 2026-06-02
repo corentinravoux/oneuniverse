@@ -85,7 +85,7 @@ def test_detect_converter(tmp_path):
 
 
 def test_convert_not_implemented_in_s2(tmp_path):
-    """convert() lands in Phase S3 — S2 ABC raises NotImplementedError."""
+    """convert() lands in Phase S4 — S2/S3 ABC raises NotImplementedError."""
     conv = _DummyConverter()
-    with pytest.raises(NotImplementedError, match="S3"):
+    with pytest.raises(NotImplementedError, match="S4"):
         conv.convert(tmp_path, tmp_path / "out")
