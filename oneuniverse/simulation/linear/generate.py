@@ -27,6 +27,7 @@ from oneuniverse.simulation.linear._cosmo import require_cosmo
 from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.simulation.linear.halos import find_peaks
 from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
+from oneuniverse.simulation.linear.tree import build_merger_tree
 from oneuniverse.simulation.linear.zeldovich import zeldovich_particles
 
 
@@ -63,6 +64,7 @@ def generate_linear_sim(
     (out / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
     fields_by_z = {}
+    halos_by_z = {}
     for z in redshifts:
         zdir = out / _ztag(z)
         zdir.mkdir(parents=True, exist_ok=True)
@@ -80,8 +82,14 @@ def generate_linear_sim(
         np.save(zdir / "particles.npy", parts)
 
         halos = find_peaks(field, box_size=box_size, threshold=halo_threshold)
+        halos_by_z[float(z)] = halos
         table = pa.table({k: pa.array(v) for k, v in halos.items()})
         pq.write_table(table, zdir / "halos.parquet")
+
+    if len(redshifts) >= 2:
+        tree = build_merger_tree(halos_by_z, box_size=box_size)
+        tree_table = pa.table({k: pa.array(v) for k, v in tree.items()})
+        pq.write_table(tree_table, out / "tree.parquet")
 
     if with_lightcone:
         lc = build_lightcone_catalog(

@@ -59,6 +59,11 @@ class LinearSimConverter(SimConverter):
             ProductDecl("halos", "linear parquet", ("cartesian_chunk",),
                         ("halo_id", "x", "y", "z", "delta_peak", "mass")),
         ]
+        if (Path(src) / "tree.parquet").is_file():
+            decls.append(ProductDecl(
+                "tree", "linear parquet (edges)", ("single",),
+                ("descendant_id", "progenitor_id", "z_desc", "z_prog"),
+            ))
         if (Path(src) / "lightcone.parquet").is_file():
             decls.append(ProductDecl(
                 "lightcone", "linear parquet (sky)", ("healpix_nest",),
