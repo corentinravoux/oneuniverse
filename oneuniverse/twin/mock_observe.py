@@ -2,8 +2,16 @@
 
 A stand-in for the Pillar-1 data side. Expected count per cell
 λ = n̄_cell · max(0, 1 + b·δ); counts ~ Poisson(λ). Returns the counts and
-the observed tracer overdensity δ_g = counts/n̄_cell − 1. Linear-bias +
+the observed tracer overdensity δ_g = counts/⟨counts⟩ − 1. Linear-bias +
 clip (simplest; lognormal/HOD are later complexifications).
+
+**Caveat (measured):** the clip biases the *effective* tracer bias low once
+the field is non-linear (σ_cell≳1): e.g. at σ_cell≈1.8 a requested b=1.5
+samples as b_eff≈0.6. Fine for correlation diagnostics r(k) (normalisation-
+independent), but absolute-power work (Wiener gain, constrained realization)
+must either operate in the linear regime (higher z / coarser cells) or fit
+b_eff + shot noise from the data. A lognormal/HOD mock that preserves bias
+is the proper fix (future).
 """
 from __future__ import annotations
 
