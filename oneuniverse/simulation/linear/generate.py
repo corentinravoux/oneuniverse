@@ -14,6 +14,7 @@ the Phase-S4 LinearSimConverter will wrap into OUF-Sim:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Sequence, Union
 
@@ -26,7 +27,9 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.linear._cosmo import require_cosmo
 from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.simulation.linear.halos import find_peaks
+from oneuniverse.simulation.linear.gr_fields import potential_field
 from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
+from oneuniverse.simulation.linear.phase_space import phase_space_sheet
 from oneuniverse.simulation.linear.tree import build_merger_tree
 from oneuniverse.simulation.linear.zeldovich import zeldovich_particles
 
@@ -85,6 +88,18 @@ def generate_linear_sim(
         halos_by_z[float(z)] = halos
         table = pa.table({k: pa.array(v) for k, v in halos.items()})
         pq.write_table(table, zdir / "halos.parquet")
+
+        ps = phase_space_sheet(c, box_size=box_size, n_grid=n_grid, z=z,
+                               seed=seed)
+        pq.write_table(pa.table({k: pa.array(v) for k, v in ps.items()}),
+                       zdir / "phase_space.parquet")
+        np.save(zdir / "gr_field.npy", potential_field(field, box_size=box_size))
+
+    # Reproducible IC / checkpoint descriptor (the deterministic IC; no run).
+    (out / "checkpoint.json").write_text(json.dumps({
+        "seed": int(seed), "box_size": float(box_size), "n_grid": int(n_grid),
+        "redshifts": [float(z) for z in redshifts], "cosmology": c.to_dict(),
+    }, indent=2))
 
     if len(redshifts) >= 2:
         tree = build_merger_tree(halos_by_z, box_size=box_size)

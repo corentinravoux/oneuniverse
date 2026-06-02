@@ -9,7 +9,9 @@ from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.simulation.linear.generate import generate_linear_sim
 from oneuniverse.simulation.linear.growth import growth_factor, growth_rate
 from oneuniverse.simulation.linear.halos import find_peaks
+from oneuniverse.simulation.linear.gr_fields import potential_field
 from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
+from oneuniverse.simulation.linear.phase_space import phase_space_sheet
 from oneuniverse.simulation.linear.tree import build_merger_tree
 from oneuniverse.simulation.linear.power_spectrum import (
     linear_power,
@@ -24,5 +26,6 @@ __all__ = [
     "growth_factor", "growth_rate",
     "generate_density_field", "zeldovich_particles", "find_peaks",
     "build_lightcone_catalog", "build_merger_tree",
+    "phase_space_sheet", "potential_field",
     "generate_linear_sim", "LinearSimConverter",
 ]
