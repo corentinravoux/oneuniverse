@@ -22,6 +22,11 @@ from oneuniverse.twin.engine import (
 from oneuniverse.twin.engines import LinearForwardEngine, WienerReconstruction
 from oneuniverse.twin.mock_challenge import run_mock_challenge
 from oneuniverse.twin.mock_observe import mock_tracer_field
+from oneuniverse.twin.mock_survey import (
+    ball_mask,
+    radial_completeness,
+    slab_mask,
+)
 from oneuniverse.twin.validation import RecoveryMetrics, recover_metrics
 from oneuniverse.twin.verify import cross_correlation, power_ratio
 from oneuniverse.twin.wiener import wiener_reconstruct
@@ -30,6 +35,7 @@ __all__ = [
     "mock_tracer_field", "wiener_reconstruct",
     "cross_correlation", "power_ratio", "run_mock_challenge",
     "recover_metrics", "RecoveryMetrics",
+    "slab_mask", "ball_mask", "radial_completeness",
     "ReconstructionEngine", "ForwardEngine", "Observation", "ProductBundle",
     "register_engine", "get_engine", "registered_engines",
     "WienerReconstruction", "LinearForwardEngine",
