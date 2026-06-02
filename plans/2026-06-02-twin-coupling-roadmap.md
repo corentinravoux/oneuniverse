@@ -7,10 +7,10 @@
 **Decision (owner, 2026-06-02):** twin/coupling (P1+P3) is the focus for the
 next several months; the community product (P1+P2) waits. Build a **clean
 skeleton on simplified datasets + mocks** before touching real survey
-loading. **S5–S7 (OUF-Sim optimisation + product coverage) are PAUSED** —
-nothing needs scale yet. **Stage 8 (resimulation) stays the big goal**; we
-start its *skeleton* at the end of the C-series (the PM mini-sim doubles as
-the second engine).
+loading. **Sequence: C2 → C3 → C4 → C5 → S5 → S6 → S7 → S8** — the coupling
+skeleton first, then the simulation-substrate phases, then the big
+resimulation stage (its S8.1 fast-PM mini-sim doubles as the second forward
+engine).
 
 **Through-line:** the twin loop is `data → reconstruct → field → forward →
 products → compare`. C1 proved it (Wiener + r(k)). The C-series makes that
@@ -64,25 +64,29 @@ unconstrained small-scale variance) — the correct IC for resimulation:
 
 ---
 
-## Big stage: S8 — resimulation orchestration (skeleton starts at end of C5)
+## After the C-series: S5 → S6 → S7 → S8 (owner, 2026-06-02)
 
-Full plan: [`2026-06-02-phaseS8-resimulation-orchestration.md`](2026-06-02-phaseS8-resimulation-orchestration.md)
-(S8.0 research ✅; sCOLA + zoom ICs + separate-universe; feasible as
-controlled approximation). **Start the skeleton after C5:**
-- **S8.1 — fast-PM mini-simulator** is the natural next piece: it is the
-  **second `ForwardEngine`** (alongside the linear engine), and the forward
-  half of the loop. Build its skeleton first (CIC + FFT-Poisson + leapfrog),
-  validated vs linear growth.
-- Then `resim/` skeleton (farfield, ic_extract, coupling, merge, verify
-  stubs) wiring C5's constrained IC → S8.1 PM → Gate-2.
-- S8.2–S8.6 follow per the S8 plan.
+Once the coupling skeleton (C2–C5) is in place, run the simulation-substrate
+phases in order, then the big resimulation stage:
+
+- **S5** — OUF-Sim write-path optimisation + full product coverage
+  (tree/phase_space/gr_fields/checkpoints/ic_posterior).
+- **S6** — OUF-Sim read-path optimisation (benchmark + tests).
+- **S7** — AMR octree layout + input/IC products.
+- **S8** — **resimulation orchestration (the big stage)**, six sub-phases
+  (S8.0 research ✅; sCOLA + zoom ICs + separate-universe; feasible as
+  controlled approximation). S8.1 fast-PM mini-sim is the **second
+  `ForwardEngine`** + the forward half of the loop; then the `resim/`
+  machinery (farfield, ic_extract, coupling, merge, verify) wiring C5's
+  constrained IC → PM → Gate-2/3. Full plan:
+  [`2026-06-02-phaseS8-resimulation-orchestration.md`](2026-06-02-phaseS8-resimulation-orchestration.md).
+
+Full sequence: **C2 → C3 → C4 → C5 → S5 → S6 → S7 → S8**.
 
 ---
 
-## Paused / deferred
+## Deferred
 
-- **S5 / S6 / S7** (OUF-Sim write-opt, read-opt, AMR+IC): **paused** — resume
-  only when a real workload needs scale. Plans remain on file.
 - **Track A — P1+P2** (community cross-correlation facilitator: `onemeasure`
   / MeasurementSet → flip): **deferred several months** (owner decision).
 
