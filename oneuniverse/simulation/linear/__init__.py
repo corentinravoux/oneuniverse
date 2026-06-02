@@ -10,6 +10,7 @@ from oneuniverse.simulation.linear.generate import generate_linear_sim
 from oneuniverse.simulation.linear.growth import growth_factor, growth_rate
 from oneuniverse.simulation.linear.halos import find_peaks
 from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
+from oneuniverse.simulation.linear.tree import build_merger_tree
 from oneuniverse.simulation.linear.power_spectrum import (
     linear_power,
     sigma_R,
@@ -22,5 +23,6 @@ __all__ = [
     "transfer_eh_nowiggle", "unnormalised_power", "sigma_R", "linear_power",
     "growth_factor", "growth_rate",
     "generate_density_field", "zeldovich_particles", "find_peaks",
-    "build_lightcone_catalog", "generate_linear_sim", "LinearSimConverter",
+    "build_lightcone_catalog", "build_merger_tree",
+    "generate_linear_sim", "LinearSimConverter",
 ]

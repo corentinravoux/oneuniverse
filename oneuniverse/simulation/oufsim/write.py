@@ -285,6 +285,22 @@ def write_oufsim_store(
             layout["halos"][zt]["index"] = f"halos/{zt}/{INDEX_FILE}"
 
     products = ["snapshots", "fields", "halos"]
+
+    tree_path = native_dir / "tree.parquet"
+    if tree_path.is_file():
+        tree = _read_parquet_cols(tree_path)
+        tdir = store / "tree"
+        tdir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.table(tree), tdir / "part_0000.parquet",
+                       compression=_COMPRESSION)
+        n_edges = int(len(next(iter(tree.values())))) if tree else 0
+        _write_index(tdir / INDEX_FILE,
+                     [{"partition": 0, "n_rows": n_edges,
+                       "file": "part_0000.parquet"}])
+        layout["tree"] = {"partition": "single", "n_rows": n_edges,
+                          "dir": "tree", "index": f"tree/{INDEX_FILE}"}
+        products.append("tree")
+
     lc_path = native_dir / "lightcone.parquet"
     if lc_path.is_file():
         lc = _read_parquet_cols(lc_path)
@@ -301,6 +317,11 @@ def write_oufsim_store(
         ProductDecl("halos", "linear parquet", ("cartesian_chunk",),
                     ("halo_id", "x", "y", "z", "delta_peak", "mass")),
     )
+    if "tree" in products:
+        decls = decls + (ProductDecl(
+            "tree", "linear parquet (edges)", ("single",),
+            ("descendant_id", "progenitor_id", "z_desc", "z_prog"),
+        ),)
     if "lightcone" in products:
         decls = decls + (ProductDecl(
             "lightcone", "linear parquet (sky)", ("healpix_nest",),
