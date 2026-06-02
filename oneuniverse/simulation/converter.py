@@ -4,7 +4,7 @@ A new simulation code is added by subclassing SimConverter and
 implementing four small methods (detect, declare_products,
 read_cosmology, read_unit_frame), then @register. The concrete
 ``convert()`` orchestration (wrap native files + run Layer-1 index
-builders + emit manifest) lands in Phase S3; here it raises
+builders + emit manifest) lands in Phase S4; here it raises
 NotImplementedError so the contract is testable now.
 """
 from __future__ import annotations
@@ -47,11 +47,11 @@ class SimConverter(abc.ABC):
                 build_indexes: bool = True):
         """Wrap native files + build indexes + emit manifest.
 
-        Concrete implementation lands in Phase S3 (needs the Layer-1
+        Concrete implementation lands in Phase S4 (needs the Layer-1
         IndexBuilder toolkit + ManifestWriter). Until then this raises.
         """
         raise NotImplementedError(
-            "SimConverter.convert is implemented in Phase S3 "
+            "SimConverter.convert is implemented in Phase S4 "
             "(needs the Layer-1 IndexBuilder toolkit)."
         )
 

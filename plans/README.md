@@ -131,7 +131,7 @@ strategy as Pillar 1 starting on synthetic DR1 fixtures.
 |---|---|---|
 | S1 | OUF-Sim architecture proposal | **complete (2026-06-01, doc only)** |
 | S2 | `oneuniverse.simulation` skeleton + types + no-Pillar-1-import lint guard | **complete (2026-06-01, 571/571 tests green; +49 sim)** |
-| S3 | Dummy linear simulation generator (`oneuniverse.simulation.linear`): Eisenstein–Hu P(k), growth D(z), Gaussian field (mesh/voxel), Zel'dovich particles, toy halos | planned |
+| S3 | Dummy linear simulation generator (`oneuniverse.simulation.linear`): Eisenstein–Hu P(k), growth D(z), Gaussian field (mesh/voxel), Zel'dovich particles, toy halos | **complete (2026-06-02, 601/601 tests green; +30 linear)** |
 | S4 | IndexBuilder toolkit + `LinearSimConverter` (real `convert()`; sidecar indexes for field/particle/halo; add lightcone + merger-tree products) | planned |
 | S5 | `SimDatasetView` partial-access reads on dummy data (ExecutionPlan streaming + memory budget; MPI/GPU hooks) | planned |
 | S6 | `SimDatabase` + lineage + region-selection orchestration → `SimulationRequest` (validated on dummy multi-z + zoom region) | planned |
