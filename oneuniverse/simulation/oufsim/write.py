@@ -24,7 +24,9 @@ import pyarrow.parquet as pq
 import yaml
 
 from oneuniverse.simulation._version import OUFSIM_FORMAT_VERSION
+from oneuniverse.simulation.capabilities import BackendCapabilities
 from oneuniverse.simulation.cosmology import CosmologySpec
+from oneuniverse.simulation.execution import ExecutionMode, ExecutionPlan
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
 from oneuniverse.simulation.oufsim._parallel import map_partitions
@@ -41,6 +43,22 @@ from oneuniverse.simulation.unit_frame import UnitFrameSpec
 OUFSIM_SUBDIR = "oufsim"
 INDEX_FILE = "_index.parquet"
 _COMPRESSION = "snappy"  # same default as OUF
+
+# Heavy write steps + the modes the OUF-Sim writer can actually deliver.
+# A requested ExecutionPlan mode absent here is refused (Rule 5: never
+# silently degrade to an unbounded in-memory path).
+_WRITE_CAPS = BackendCapabilities(
+    name="oufsim-writer",
+    native_format="parquet + .npy tiles",
+    supports_mpi=True,
+    supports_streaming=True,
+    heavy_step_modes={
+        "particle_chunking": (ExecutionMode.SEQUENTIAL, ExecutionMode.MPI),
+        "parquet_write": (ExecutionMode.SEQUENTIAL, ExecutionMode.MPI),
+        "field_tiling": (ExecutionMode.SEQUENTIAL,),
+    },
+)
+_HEAVY_STEPS = ("particle_chunking", "parquet_write", "field_tiling")
 
 
 def _ztag(z: float) -> str:
@@ -193,12 +211,27 @@ def write_oufsim_store(
     batch_rows: Optional[int] = None,
     n_threads: int = 1,
     use_mpi: bool = False,
+    plan: Optional[ExecutionPlan] = None,
     overwrite: bool = False,
 ) -> Path:
     """Convert a native linear-sim ``native_dir`` to an OUF-Sim store.
 
-    Returns the ``…/{sim_name}/oufsim`` directory.
+    Returns the ``…/{sim_name}/oufsim`` directory. If an ``ExecutionPlan`` is
+    given, its mode is enforced against the writer's declared capabilities
+    (unsupported mode → ValueError, never a silent fallback — Rule 5).
     """
+    if plan is not None:
+        for step in _HEAVY_STEPS:
+            if not _WRITE_CAPS.supports(step, plan.mode):
+                raise ValueError(
+                    f"{step}: ExecutionMode.{plan.mode.name} not supported "
+                    f"by the OUF-Sim writer (allowed: "
+                    f"{[m.name for m in _WRITE_CAPS.modes_for(step)]})"
+                )
+        if plan.mode == ExecutionMode.MPI:
+            use_mpi = True
+        if plan.batch_rows is not None:
+            batch_rows = plan.batch_rows
     native_dir = Path(native_dir)
     cfg = yaml.safe_load((native_dir / "config.yaml").read_text())
     box_size = float(cfg["box_size"])
