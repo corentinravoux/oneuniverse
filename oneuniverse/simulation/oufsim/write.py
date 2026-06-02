@@ -15,6 +15,7 @@ HEALPix super-pixel) so a selector reads only the overlapping pieces.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 from pathlib import Path
 from typing import Dict, Optional, Union
 
@@ -284,7 +285,41 @@ def write_oufsim_store(
             layout["halos"][zt]["dir"] = f"halos/{zt}"
             layout["halos"][zt]["index"] = f"halos/{zt}/{INDEX_FILE}"
 
+        ps_path = zdir / "phase_space.parquet"
+        if ps_path.is_file():
+            ps = _read_parquet_cols(ps_path)
+            qpos = np.stack([ps["qx"], ps["qy"], ps["qz"]], axis=1)
+            layout.setdefault("phase_space", {})[zt] = _write_chunked_catalog(
+                store / "phase_space" / zt, ps, qpos, box_size,
+                particle_chunk_nside, batch_rows=batch_rows,
+                n_threads=n_threads, use_mpi=use_mpi,
+            )
+            layout["phase_space"][zt]["dir"] = f"phase_space/{zt}"
+            layout["phase_space"][zt]["index"] = f"phase_space/{zt}/{INDEX_FILE}"
+
+        gr_path = zdir / "gr_field.npy"
+        if gr_path.is_file():
+            layout.setdefault("gr_fields", {})[zt] = _write_field_tiles(
+                store / "gr_fields" / zt, np.load(gr_path), box_size,
+                field_tile_cells,
+            )
+            layout["gr_fields"][zt]["dir"] = f"gr_fields/{zt}"
+            layout["gr_fields"][zt]["index"] = f"gr_fields/{zt}/{INDEX_FILE}"
+
     products = ["snapshots", "fields", "halos"]
+    if "phase_space" in layout:
+        products.append("phase_space")
+    if "gr_fields" in layout:
+        products.append("gr_fields")
+
+    ckpt_path = native_dir / "checkpoint.json"
+    if ckpt_path.is_file():
+        cdir = store / "checkpoints"
+        cdir.mkdir(parents=True, exist_ok=True)
+        write_json(cdir / "descriptor.json", json.loads(ckpt_path.read_text()))
+        layout["checkpoints"] = {"dir": "checkpoints",
+                                 "descriptor": "checkpoints/descriptor.json"}
+        products.append("checkpoints")
 
     tree_path = native_dir / "tree.parquet"
     if tree_path.is_file():
@@ -317,6 +352,19 @@ def write_oufsim_store(
         ProductDecl("halos", "linear parquet", ("cartesian_chunk",),
                     ("halo_id", "x", "y", "z", "delta_peak", "mass")),
     )
+    if "phase_space" in products:
+        decls = decls + (ProductDecl(
+            "phase_space", "linear parquet (Lagrangian sheet)",
+            ("cartesian_chunk",),
+            ("qx", "qy", "qz", "x", "y", "z", "vx", "vy", "vz"),
+        ),)
+    if "gr_fields" in products:
+        decls = decls + (ProductDecl(
+            "gr_fields", "linear .npy mesh (potential)", ("grid_tile",),
+            ("phi",)),)
+    if "checkpoints" in products:
+        decls = decls + (ProductDecl(
+            "checkpoints", "json IC descriptor", (), ("seed", "cosmology")),)
     if "tree" in products:
         decls = decls + (ProductDecl(
             "tree", "linear parquet (edges)", ("single",),
