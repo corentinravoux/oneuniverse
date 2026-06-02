@@ -27,6 +27,7 @@ from oneuniverse.simulation._version import OUFSIM_FORMAT_VERSION
 from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
+from oneuniverse.simulation.oufsim._parallel import map_partitions
 from oneuniverse.simulation.oufsim.index import (
     cartesian_chunk_ids,
     chunk_coords,
@@ -60,13 +61,17 @@ def _write_chunked_catalog(
     box_size: float,
     n_side: int,
     batch_rows: Optional[int] = None,
+    n_threads: int = 1,
+    use_mpi: bool = False,
 ) -> dict:
-    """Cube-chunk a point catalogue, one chunk written at a time.
+    """Cube-chunk a point catalogue; one file per chunk, written in parallel.
 
     Streaming: no global sorted *copy* of every column (the S4 hotspot) — we
     keep only the int ``order`` index and gather one chunk's rows at a time;
     bounding boxes are fused into a single ``minimum.at``/``maximum.at`` pass.
-    ``batch_rows`` is reserved for the MPI/threaded path (Task 2).
+    Per-chunk writes (the 52% hotspot) dispatch across threads / MPI ranks
+    via ``map_partitions``; the index is reassembled deterministically.
+    ``batch_rows`` is reserved for capping the per-rank working set.
     """
     prod_dir.mkdir(parents=True, exist_ok=True)
     chunk_ids = cartesian_chunk_ids(pos, box_size, n_side)
@@ -79,26 +84,30 @@ def _write_chunked_catalog(
     np.minimum.at(lo, chunk_ids, pos)
     np.maximum.at(hi, chunk_ids, pos)
 
-    # Group rows by chunk via argsort, but gather one chunk at a time so the
-    # working set is a single chunk, not a sorted copy of the whole snapshot.
     order = np.argsort(chunk_ids, kind="stable")
     ids_sorted = chunk_ids[order]
     uniq, starts = np.unique(ids_sorted, return_index=True)
     starts = list(starts) + [len(order)]
-    rows = []
-    for i, cid in enumerate(uniq):
-        idx_c = order[starts[i]:starts[i + 1]]
-        fname = f"part_{int(cid):04d}.parquet"
+    specs = [(int(cid), order[starts[i]:starts[i + 1]])
+             for i, cid in enumerate(uniq)]
+
+    def _write_one(spec):
+        cid, idx_c = spec
+        fname = f"part_{cid:04d}.parquet"
         table = pa.table({k: v[idx_c] for k, v in columns.items()})
         pq.write_table(table, prod_dir / fname, compression=_COMPRESSION)
-        cx, cy, cz = chunk_coords(int(cid), n_side)
-        rows.append({
-            "chunk_id": int(cid), "cx": cx, "cy": cy, "cz": cz,
+        cx, cy, cz = chunk_coords(cid, n_side)
+        return {
+            "chunk_id": cid, "cx": cx, "cy": cy, "cz": cz,
             "xlo": float(lo[cid, 0]), "xhi": float(hi[cid, 0]),
             "ylo": float(lo[cid, 1]), "yhi": float(hi[cid, 1]),
             "zlo": float(lo[cid, 2]), "zhi": float(hi[cid, 2]),
             "n_rows": int(counts[cid]), "file": fname,
-        })
+        }
+
+    rows = map_partitions(_write_one, specs, n_threads=n_threads,
+                          use_mpi=use_mpi)
+    rows.sort(key=lambda r: r["chunk_id"])      # deterministic index order
     _write_index(prod_dir / INDEX_FILE, rows)
     return {"partition": "cartesian_chunk", "n_side": int(n_side),
             "n_chunks": int(len(uniq)), "n_rows": int(len(pos))}
@@ -182,6 +191,8 @@ def write_oufsim_store(
     field_tile_cells: int = 32,
     lightcone_nside_part: int = 2,
     batch_rows: Optional[int] = None,
+    n_threads: int = 1,
+    use_mpi: bool = False,
     overwrite: bool = False,
 ) -> Path:
     """Convert a native linear-sim ``native_dir`` to an OUF-Sim store.
@@ -216,6 +227,7 @@ def write_oufsim_store(
         layout["snapshots"][zt] = _write_chunked_catalog(
             store / "snapshots" / zt, pcols, parts[:, :3],
             box_size, particle_chunk_nside, batch_rows=batch_rows,
+            n_threads=n_threads, use_mpi=use_mpi,
         )
         layout["snapshots"][zt]["dir"] = f"snapshots/{zt}"
         layout["snapshots"][zt]["index"] = f"snapshots/{zt}/{INDEX_FILE}"
@@ -234,7 +246,7 @@ def write_oufsim_store(
             layout["halos"][zt] = _write_chunked_catalog(
                 store / "halos" / zt, halos, hpos,
                 box_size, max(1, particle_chunk_nside // 2),
-                batch_rows=batch_rows,
+                batch_rows=batch_rows, n_threads=n_threads, use_mpi=use_mpi,
             )
             layout["halos"][zt]["dir"] = f"halos/{zt}"
             layout["halos"][zt]["index"] = f"halos/{zt}/{INDEX_FILE}"
