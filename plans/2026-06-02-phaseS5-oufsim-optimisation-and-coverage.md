@@ -469,8 +469,11 @@ Cover the remaining `PRODUCT_KINDS` with trivial linear-theory models:
 
 Formalise `SimStore` into a `SimDatasetView` that returns **typed,
 batched** iterators honouring `ExecutionPlan` (batch size from
-`batch_rows`; MPI/GPU read hooks declared, threaded fallback) — the read
-analogue of the write optimisation.
+`batch_rows`; MPI/GPU read hooks declared, threaded fallback). This task
+delivers a **correct** streaming reader only — read-path *optimisation*
+and benchmarking (column projection, predicate pushdown, index cache,
+parallel reads, Morton order) are Phase S6
+([`2026-06-02-phaseS6-oufsim-read-optimisation.md`](2026-06-02-phaseS6-oufsim-read-optimisation.md)).
 
 **Files:** Create `oufsim/view.py`; Test `test/test_oufsim_view.py`.
 
