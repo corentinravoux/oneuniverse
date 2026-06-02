@@ -4,10 +4,12 @@ simulation: Eisenstein-Hu P(k) + Gaussian field + Zel'dovich particles
 
 Standalone (Rule 1): no imports from oneuniverse.data / combine.
 """
+from oneuniverse.simulation.linear.converter import LinearSimConverter
 from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.simulation.linear.generate import generate_linear_sim
 from oneuniverse.simulation.linear.growth import growth_factor, growth_rate
 from oneuniverse.simulation.linear.halos import find_peaks
+from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
 from oneuniverse.simulation.linear.power_spectrum import (
     linear_power,
     sigma_R,
@@ -20,5 +22,5 @@ __all__ = [
     "transfer_eh_nowiggle", "unnormalised_power", "sigma_R", "linear_power",
     "growth_factor", "growth_rate",
     "generate_density_field", "zeldovich_particles", "find_peaks",
-    "generate_linear_sim",
+    "build_lightcone_catalog", "generate_linear_sim", "LinearSimConverter",
 ]

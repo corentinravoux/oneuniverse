@@ -49,17 +49,30 @@ call site.
   `SimulationRequest`, `Cube`/`Cone`/`SkyPatch` selectors,
   `CosmologySpec`/`UnitFrameSpec`/`ProvenanceSpec`. **Zero imports**
   from `oneuniverse.data` / `combine` (guarded by
-  `test_sim_no_pillar1_imports.py`). Real-format backends +
-  partial-access reads land in Phase S4+. See
-  [[pillar3-partial-access-and-minimal-deps]].
+  `test_sim_no_pillar1_imports.py`). Real-format backends land in
+  `future`. See [[pillar3-partial-access-and-minimal-deps]].
 - `oneuniverse/simulation/linear/` — pure-numpy **dummy linear
   simulation** (Eisenstein–Hu P(k), growth D(z), Gaussian field /
-  voxel, Zel'dovich particles, toy halos). The synthetic source used
-  to finish + test the OUF-Sim machinery before any real backend.
-  `generate_linear_sim(out, cosmo, box_size=, n_grid=, redshifts=,
-  seed=)` writes a native layout (`config.yaml` + per-z
-  `field.npy` / `particles.npy` / `halos.parquet`). Deps: numpy +
-  pyarrow + pyyaml only.
+  voxel, Zel'dovich particles, toy halos, toy HEALPix lightcone).
+  The synthetic source used to build + test the OUF-Sim machinery
+  before any real backend. `generate_linear_sim(out, cosmo,
+  box_size=, n_grid=, redshifts=, seed=)` writes a native layout
+  (`config.yaml` + per-z `field.npy` / `particles.npy` /
+  `halos.parquet` + `lightcone.parquet`). `LinearSimConverter` is the
+  reference `SimConverter`. Deps: numpy + pyarrow + pyyaml + healpy.
+- `oneuniverse/simulation/oufsim/` — the **OUF-Sim on-disk store**,
+  mirroring OUF's stack: `manifest.json` (atomic JSON) + pyarrow
+  parquet partitions + HEALPix-NEST sky partitions + memmap `.npy`
+  field tiles, each product carrying a sidecar `_index.parquet`
+  (per-chunk bbox / super-pixel) for **partial-access** reads.
+  `write_oufsim_store(native, out_root, sim_name=)` builds it;
+  `SimStore(root).read_box / read_field_box / read_cone` reads only
+  the overlapping partitions (`.last_read_stats`). Layer-1 index
+  toolkit in `oufsim/index.py`. Demo store + profiling + plots at
+  `/home/ravoux/Documents/Science/Cosmography/oneuniverse_simulation/linsim_demo`
+  (`scripts/build_demo_oufsim.py`). Optimisation hotspots +
+  next-phase plan: `research/2026-06-02-oufsim-optimization-findings.md`,
+  `plans/2026-06-02-phaseS5-oufsim-optimisation-and-coverage.md`.
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
