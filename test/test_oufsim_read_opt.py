@@ -68,3 +68,12 @@ def test_index_cache_avoids_reread(tmp_path):
     finally:
         pq.read_table = orig
     assert calls["n"] == 0                      # index served from cache
+
+
+def test_parallel_read_matches_serial(tmp_path):
+    s = SimStore(_store(tmp_path))
+    cube = Cube(0, 150, 0, 150, 0, 150)
+    a = s.read_box("snapshots", 0.0, cube, n_threads=1)
+    b = s.read_box("snapshots", 0.0, cube, n_threads=4)
+    assert len(a["x"]) == len(b["x"])
+    np.testing.assert_array_equal(np.sort(a["x"]), np.sort(b["x"]))

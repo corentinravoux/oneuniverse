@@ -17,6 +17,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from oneuniverse.simulation.oufsim._io import read_json
+from oneuniverse.simulation.oufsim._parallel import map_partitions
 from oneuniverse.simulation.oufsim.index import (
     cone_partition_pixels,
     cube_overlaps_bbox,
@@ -55,11 +56,13 @@ class SimStore:
 
     # -- point catalogues (particles / halos) -----------------------------
     def read_box(self, product: str, z: float, cube: Cube, *,
-                 columns: Optional[Sequence[str]] = None) -> Dict[str, np.ndarray]:
+                 columns: Optional[Sequence[str]] = None,
+                 n_threads: int = 1) -> Dict[str, np.ndarray]:
         """Return columns inside ``cube`` for a point product at redshift z.
 
         ``columns`` projects the read (fewer bytes off disk); x/y/z are always
         read for the cube cut and dropped afterwards if not requested.
+        ``n_threads`` reads the overlapping chunks in parallel (deterministic).
         """
         zt = f"z{float(z):.3f}"
         info = self.layout[product][zt]
@@ -72,12 +75,17 @@ class SimStore:
         read_cols = None
         if columns is not None:
             read_cols = list(dict.fromkeys(list(columns) + ["x", "y", "z"]))
+
+        def _read_one(r):
+            t = pq.read_table(prod_dir / r["file"], columns=read_cols)
+            return {name: t.column(name).to_numpy(zero_copy_only=False)
+                    for name in t.column_names}
+
+        tables = map_partitions(_read_one, hit, n_threads=n_threads)
         cols: Dict[str, list] = {}
-        for r in hit:
-            table = pq.read_table(prod_dir / r["file"], columns=read_cols)
-            for name in table.column_names:
-                cols.setdefault(name, []).append(
-                    table.column(name).to_numpy(zero_copy_only=False))
+        for tbl in tables:                         # input order -> deterministic
+            for name, arr in tbl.items():
+                cols.setdefault(name, []).append(arr)
         if not cols:
             return {}
         out = {k: np.concatenate(v) for k, v in cols.items()}
