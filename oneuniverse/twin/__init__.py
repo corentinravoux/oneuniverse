@@ -10,3 +10,12 @@ tracers) -> constrain (Wiener filter) -> verify (cross-correlation r(k)).
 All linear theory + FFT, deterministic. The synthetic "data" is replaced
 by real Pillar-1 selection as the first data-side complexification.
 """
+from oneuniverse.twin.mock_challenge import run_mock_challenge
+from oneuniverse.twin.mock_observe import mock_tracer_field
+from oneuniverse.twin.verify import cross_correlation, power_ratio
+from oneuniverse.twin.wiener import wiener_reconstruct
+
+__all__ = [
+    "mock_tracer_field", "wiener_reconstruct",
+    "cross_correlation", "power_ratio", "run_mock_challenge",
+]

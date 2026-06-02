@@ -73,6 +73,17 @@ call site.
   (`scripts/build_demo_oufsim.py`). Optimisation hotspots +
   next-phase plan: `research/2026-06-02-oufsim-optimization-findings.md`,
   `plans/2026-06-02-phaseS5-oufsim-optimisation-and-coverage.md`.
+- `oneuniverse/twin/` — the **data↔simulation coupling layer** (the
+  third layer per the substrate ADR; may import BOTH `simulation` and
+  `data`, which neither pillar may host — `simulation/` stays Rule-1
+  clean, the guard scans `simulation/` only). MVP = the **mock
+  challenge**: truth field → `mock_tracer_field` (biased Poisson
+  tracers) → `wiener_reconstruct` (constrain) → `cross_correlation`
+  r(k) vs truth (verify). `run_mock_challenge(...)` returns r(k), the
+  feasibility number (scale where r=0.5 per survey n̄). Demo + plots at
+  `…/oneuniverse_simulation/mock_challenge` (`scripts/mock_challenge_demo.py`).
+  ADR + plan: `research/2026-06-02-adr-oneuniverse-as-general-substrate.md`,
+  `plans/2026-06-02-phaseC1-minimal-coupling-mock-challenge.md`.
 - `oneuniverse/data/surveys/` — registered loaders. Add new ones with
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
