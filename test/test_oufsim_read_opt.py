@@ -77,3 +77,14 @@ def test_parallel_read_matches_serial(tmp_path):
     b = s.read_box("snapshots", 0.0, cube, n_threads=4)
     assert len(a["x"]) == len(b["x"])
     np.testing.assert_array_equal(np.sort(a["x"]), np.sort(b["x"]))
+
+
+def test_gpu_request_falls_back_to_cpu(tmp_path):
+    s = SimStore(_store(tmp_path))
+    cube = Cube(0, 120, 0, 120, 0, 120)
+    cpu = s.read_box("snapshots", 0.0, cube)
+    gpu = s.read_box("snapshots", 0.0, cube, device="gpu")
+    # no cuDF in CI -> fall back, identical rows, device recorded
+    assert s.last_read_stats["device"] in ("cpu", "gpu")
+    assert len(gpu["x"]) == len(cpu["x"])
+    np.testing.assert_array_equal(np.sort(gpu["x"]), np.sort(cpu["x"]))

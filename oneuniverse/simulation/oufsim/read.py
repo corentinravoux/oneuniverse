@@ -57,12 +57,16 @@ class SimStore:
     # -- point catalogues (particles / halos) -----------------------------
     def read_box(self, product: str, z: float, cube: Cube, *,
                  columns: Optional[Sequence[str]] = None,
-                 n_threads: int = 1) -> Dict[str, np.ndarray]:
+                 n_threads: int = 1,
+                 device: str = "cpu") -> Dict[str, np.ndarray]:
         """Return columns inside ``cube`` for a point product at redshift z.
 
         ``columns`` projects the read (fewer bytes off disk); x/y/z are always
         read for the cube cut and dropped afterwards if not requested.
         ``n_threads`` reads the overlapping chunks in parallel (deterministic).
+        ``device="gpu"`` uses a cuDF GPU-direct read when available, else
+        falls back to CPU (never errors); the resolved device is recorded in
+        ``last_read_stats["device"]``.
         """
         zt = f"z{float(z):.3f}"
         info = self.layout[product][zt]
@@ -71,12 +75,25 @@ class SimStore:
         hit = [r for r in rows
                if cube_overlaps_bbox(cube, (r["xlo"], r["xhi"], r["ylo"],
                                             r["yhi"], r["zlo"], r["zhi"]))]
-        self.last_read_stats = {"chunks_total": len(rows), "chunks_read": len(hit)}
+        use_gpu = False
+        if device == "gpu":
+            try:
+                import cudf  # noqa: F401
+                use_gpu = True
+            except ImportError:
+                use_gpu = False
+        self.last_read_stats = {"chunks_total": len(rows),
+                                "chunks_read": len(hit),
+                                "device": "gpu" if use_gpu else "cpu"}
         read_cols = None
         if columns is not None:
             read_cols = list(dict.fromkeys(list(columns) + ["x", "y", "z"]))
 
         def _read_one(r):
+            if use_gpu:
+                import cudf
+                gdf = cudf.read_parquet(prod_dir / r["file"], columns=read_cols)
+                return {name: gdf[name].to_numpy() for name in gdf.columns}
             t = pq.read_table(prod_dir / r["file"], columns=read_cols)
             return {name: t.column(name).to_numpy(zero_copy_only=False)
                     for name in t.column_names}
