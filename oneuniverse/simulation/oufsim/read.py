@@ -58,7 +58,8 @@ class SimStore:
     def read_box(self, product: str, z: float, cube: Cube, *,
                  columns: Optional[Sequence[str]] = None,
                  n_threads: int = 1,
-                 device: str = "cpu") -> Dict[str, np.ndarray]:
+                 device: str = "cpu",
+                 pushdown: bool = False) -> Dict[str, np.ndarray]:
         """Return columns inside ``cube`` for a point product at redshift z.
 
         ``columns`` projects the read (fewer bytes off disk); x/y/z are always
@@ -88,13 +89,21 @@ class SimStore:
         read_cols = None
         if columns is not None:
             read_cols = list(dict.fromkeys(list(columns) + ["x", "y", "z"]))
+        # predicate pushdown: row-group min/max stats prune groups outside the
+        # cube (effective once rows are Morton-clustered at write time).
+        filters = None
+        if pushdown:
+            filters = [("x", ">=", cube.xlo), ("x", "<=", cube.xhi),
+                       ("y", ">=", cube.ylo), ("y", "<=", cube.yhi),
+                       ("z", ">=", cube.zlo), ("z", "<=", cube.zhi)]
 
         def _read_one(r):
             if use_gpu:
                 import cudf
                 gdf = cudf.read_parquet(prod_dir / r["file"], columns=read_cols)
                 return {name: gdf[name].to_numpy() for name in gdf.columns}
-            t = pq.read_table(prod_dir / r["file"], columns=read_cols)
+            t = pq.read_table(prod_dir / r["file"], columns=read_cols,
+                              filters=filters)
             return {name: t.column(name).to_numpy(zero_copy_only=False)
                     for name in t.column_names}
 
