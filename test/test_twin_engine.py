@@ -12,7 +12,7 @@ from oneuniverse.twin.engine import (
     get_engine,
     registered_engines,
 )
-from oneuniverse.twin.engines import LinearForwardEngine, WienerReconstruction
+from oneuniverse.twin.engines import LinearForwardEngine, PMForwardEngine, WienerReconstruction
 from oneuniverse.twin.mock_challenge import run_mock_challenge
 from oneuniverse.twin.mock_observe import mock_tracer_field
 from oneuniverse.twin.wiener import wiener_reconstruct
@@ -72,3 +72,14 @@ def test_c1_loop_through_contract_unchanged():
     ref = run_mock_challenge(c, box_size=box, n_grid=n, nbar=nbar, bias=b,
                              seed=seed)
     np.testing.assert_array_equal(rec, ref["rec"])
+
+
+def test_two_forward_engines_satisfy_contract():
+    from oneuniverse.twin.engine import ProductBundle, registered_engines
+    from oneuniverse.twin.engines import LinearForwardEngine, PMForwardEngine
+    from oneuniverse.simulation.oufsim import write_oufsim_store  # noqa: F401
+    assert {"linear", "fastpm", "wiener"} <= set(registered_engines())
+    c = _cosmo()
+    out = PMForwardEngine().forward(cosmo=c, box_size=200.0, n_grid=32,
+                                    z=0.0, seed=2, n_steps=12)
+    assert isinstance(out, ProductBundle) and out.fields["delta"].shape == (32,) * 3
