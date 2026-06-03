@@ -125,6 +125,28 @@ def run_zoom(cosmo: CosmologySpec, coarse_buffer_ic: np.ndarray, *,
     return {"inner": inner, "n_fine": n_fine, "box_buf": box_buf}
 
 
+def run_coupled_from_store(cosmo: CosmologySpec, store_root, *,
+                           z_field: float = 0.0, **kwargs) -> Dict:
+    """Resimulate reading the parent IC field from a ``SimStore`` (the
+    architecture wiring: the resim consumes a stored product, not a
+    regenerated field).
+
+    Note (physical): the Zel'dovich displacement is *non-local* — a region's
+    large-scale displacement depends on the whole field — so exact partial
+    access to only the buffer region needs the COLA global-LPT / local-residual
+    split (deferred). Here the field is read from the store (partial-access API)
+    and passed in; the memory-bounded-to-buffer optimisation rides on COLA.
+    """
+    from oneuniverse.simulation.oufsim import SimStore
+    from oneuniverse.simulation.selectors import Cube
+
+    s = SimStore(store_root)
+    box = float(s.manifest["box_size"])
+    ng = int(s.manifest["n_grid"])
+    field, _ = s.read_field_box(z_field, Cube(0, box, 0, box, 0, box))
+    return run_coupled(cosmo, box=box, n_grid=ng, ic_field=field, **kwargs)
+
+
 def full_target_slice(delta_full: np.ndarray, *, box: float, n_grid: int,
                       target_lo: float, target_side: float) -> np.ndarray:
     """The full-box reference field restricted to the target cube."""
