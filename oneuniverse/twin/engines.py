@@ -53,3 +53,29 @@ class LinearForwardEngine(ForwardEngine):
             meta={"engine": self.name, "box_size": box_size,
                   "n_grid": n_grid, "z": z, "seed": seed},
         )
+
+
+@register_engine
+class PMForwardEngine(ForwardEngine):
+    """Non-linear forward model — the fast particle-mesh mini-sim."""
+    name = "fastpm"
+
+    def forward(self, *, cosmo: CosmologySpec, box_size: float, n_grid: int,
+                z: float = 0.0, seed: int = 0,
+                ic: Optional[np.ndarray] = None,
+                z_start: float = 9.0, n_steps: int = 20) -> ProductBundle:
+        from oneuniverse.simulation.pm.deposit import deposit_cic
+        from oneuniverse.simulation.pm.run import run_pm, zeldovich_pm_ic
+
+        pos, p0 = zeldovich_pm_ic(cosmo, box=box_size, n_grid=n_grid,
+                                  z_start=z_start, seed=seed)
+        x, _ = run_pm(pos, p0, box=box_size, n_grid=n_grid, cosmo=cosmo,
+                      a_start=1.0 / (1.0 + z_start), a_end=1.0 / (1.0 + z),
+                      n_steps=n_steps)
+        rho = deposit_cic(x, n_grid, box_size)
+        delta = rho / rho.mean() - 1.0
+        return ProductBundle(
+            fields={"delta": delta},
+            meta={"engine": self.name, "box_size": box_size, "n_grid": n_grid,
+                  "z": z, "seed": seed, "z_start": z_start},
+        )

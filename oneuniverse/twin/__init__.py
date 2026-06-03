@@ -19,7 +19,11 @@ from oneuniverse.twin.engine import (
     register_engine,
     registered_engines,
 )
-from oneuniverse.twin.engines import LinearForwardEngine, WienerReconstruction
+from oneuniverse.twin.engines import (
+    LinearForwardEngine,
+    PMForwardEngine,
+    WienerReconstruction,
+)
 from oneuniverse.twin.mock_challenge import run_mock_challenge
 from oneuniverse.twin.mock_observe import mock_tracer_field
 from oneuniverse.twin.mock_survey import (
@@ -40,5 +44,5 @@ __all__ = [
     "constrained_realization",
     "ReconstructionEngine", "ForwardEngine", "Observation", "ProductBundle",
     "register_engine", "get_engine", "registered_engines",
-    "WienerReconstruction", "LinearForwardEngine",
+    "WienerReconstruction", "LinearForwardEngine", "PMForwardEngine",
 ]
