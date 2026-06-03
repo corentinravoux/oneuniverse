@@ -49,7 +49,7 @@ large k. The end-to-end data-driven loop exists in the orchestrator.
 
 ---
 
-## S10 — True zoom: multi-resolution refined ICs  · closes gap #2 (critical)
+## S10 — True zoom: multi-resolution refined ICs  · closes gap #2 (critical) · ✅ DONE 2026-06-02
 
 **Problem.** `run_coupled` uses the *parent* resolution — a same-res isolated
 re-run, no fidelity gain. Real resimulation = *higher resolution* in the
@@ -119,7 +119,7 @@ memory ≈ buffer size, not box size.
 
 ---
 
-## S12 — Merge: multi-region tiling + conservation  · closes gaps #4, #11
+## S12 — Merge: multi-region tiling + conservation  · closes gaps #4, #11 · ✅ DONE 2026-06-02
 
 **Problem.** No merge — one region only; can't rebuild a global field.
 
@@ -141,7 +141,7 @@ seam discontinuity below threshold; mass conserved to ~%.
 
 ---
 
-## S13 — Orchestration completeness: persistence + lineage + ensemble  · closes gap #9
+## S13 — Orchestration completeness: persistence + lineage + ensemble  · closes gap #9 · ✅ DONE 2026-06-02
 
 **Problem.** `SimDatabase` state is in-memory only; no ensemble mode.
 
@@ -165,7 +165,7 @@ is produced, cataloged, and lineage-linked.
 
 ---
 
-## S14 — Generality proof: external-style store-boundary contract  · closes gap #6
+## S14 — Generality proof: external-style store-boundary contract  · closes gap #6 · ✅ DONE 2026-06-02
 
 **Problem.** Generality is asserted with 2 in-house engines called directly;
 there is no *external-style* boundary proving a real code would plug in the
