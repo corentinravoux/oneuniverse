@@ -455,3 +455,46 @@ def write_oufsim_store(
     payload["n_grid"] = n_grid
     write_json(store / "manifest.json", payload)
     return store
+
+
+def ingest_field(out_root: Union[str, Path], sim_name: str, *,
+                 cosmo: CosmologySpec, box_size: float, field: np.ndarray,
+                 z: float = 0.0, sim_kind: str = "pm",
+                 field_tile_cells: int = 16, overwrite: bool = False) -> Path:
+    """Ingest a single engine-produced field as a minimal OUF-Sim store.
+
+    The output half of the store-boundary contract: any ForwardEngine writes
+    its product back through this, so the orchestrator only ever exchanges
+    store paths with the engine (a real code plugs in the same way).
+    """
+    store = Path(out_root) / sim_name / OUFSIM_SUBDIR
+    if store.exists():
+        if not overwrite:
+            raise FileExistsError(f"{store} exists; pass overwrite=True")
+        import shutil
+        shutil.rmtree(store)
+    store.mkdir(parents=True)
+    zt = _ztag(z)
+    info = _write_field_tiles(store / "fields" / zt, np.asarray(field),
+                              box_size, field_tile_cells)
+    info["dir"] = f"fields/{zt}"
+    info["index"] = f"fields/{zt}/{INDEX_FILE}"
+    manifest = OUFSimManifest(
+        oufsim_format_version=OUFSIM_FORMAT_VERSION, sim_name=sim_name,
+        sim_kind=sim_kind, code="forward_engine", code_version=None,
+        layout_schema="per_cosmology_phase_snapshot", backends=("engine",),
+        has_input=False, has_output=True, products=("fields",),
+        n_snapshots=1, redshifts=(float(z),), box_size=float(box_size),
+        n_particles=None, cosmology=cosmo,
+        unit_frame=UnitFrameSpec(length_unit="Mpc/h", mass_unit="Msun/h",
+                                 velocity_unit="km/s peculiar", frame="box"),
+        provenance=ProvenanceSpec(
+            code="forward_engine", code_version=None, git_hash=None,
+            original_paths=(), ingested_utc=_dt.datetime.now(
+                _dt.timezone.utc).isoformat(), converter="ingest_field"),
+    )
+    payload = manifest.to_dict()
+    payload["store_layout"] = {"fields": {zt: info}}
+    payload["n_grid"] = int(np.asarray(field).shape[0])
+    write_json(store / "manifest.json", payload)
+    return store

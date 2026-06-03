@@ -32,6 +32,7 @@ from oneuniverse.twin.mock_survey import (
     slab_mask,
 )
 from oneuniverse.twin.constrained import constrained_realization
+from oneuniverse.twin.store_boundary import run_engine_to_store
 from oneuniverse.twin.validation import RecoveryMetrics, recover_metrics
 from oneuniverse.twin.verify import cross_correlation, power_ratio
 from oneuniverse.twin.wiener import wiener_reconstruct
@@ -45,4 +46,5 @@ __all__ = [
     "ReconstructionEngine", "ForwardEngine", "Observation", "ProductBundle",
     "register_engine", "get_engine", "registered_engines",
     "WienerReconstruction", "LinearForwardEngine", "PMForwardEngine",
+    "run_engine_to_store",
 ]

@@ -44,10 +44,11 @@ class LinearForwardEngine(ForwardEngine):
     def forward(self, *, cosmo: CosmologySpec, box_size: float, n_grid: int,
                 z: float = 0.0, seed: int = 0,
                 ic: Optional[np.ndarray] = None) -> ProductBundle:
-        # ``ic`` is reserved (the PM engine will integrate it); the linear
-        # engine returns the growth-scaled linear field for the seed.
-        delta = generate_density_field(cosmo, box_size=box_size,
-                                       n_grid=n_grid, z=z, seed=seed)
+        # if a z=0 IC field is supplied (the store-boundary path), the linear
+        # forward is that field; otherwise generate one from the seed.
+        delta = (np.asarray(ic, float) if ic is not None
+                 else generate_density_field(cosmo, box_size=box_size,
+                                             n_grid=n_grid, z=z, seed=seed))
         return ProductBundle(
             fields={"delta": delta},
             meta={"engine": self.name, "box_size": box_size,
@@ -65,10 +66,17 @@ class PMForwardEngine(ForwardEngine):
                 ic: Optional[np.ndarray] = None,
                 z_start: float = 9.0, n_steps: int = 20) -> ProductBundle:
         from oneuniverse.simulation.pm.deposit import deposit_cic
-        from oneuniverse.simulation.pm.run import run_pm, zeldovich_pm_ic
+        from oneuniverse.simulation.pm.run import (
+            run_pm, zeldovich_pm_ic, zeldovich_pm_ic_from_field,
+        )
 
-        pos, p0 = zeldovich_pm_ic(cosmo, box=box_size, n_grid=n_grid,
-                                  z_start=z_start, seed=seed)
+        if ic is not None:                         # store-boundary IC path
+            pos, p0 = zeldovich_pm_ic_from_field(cosmo, np.asarray(ic, float),
+                                                 box=box_size, n_grid=n_grid,
+                                                 z_start=z_start)
+        else:
+            pos, p0 = zeldovich_pm_ic(cosmo, box=box_size, n_grid=n_grid,
+                                      z_start=z_start, seed=seed)
         x, _ = run_pm(pos, p0, box=box_size, n_grid=n_grid, cosmo=cosmo,
                       a_start=1.0 / (1.0 + z_start), a_end=1.0 / (1.0 + z),
                       n_steps=n_steps)
