@@ -12,6 +12,7 @@ from oneuniverse.simulation.resim.coupling import (
     run_coupled,
     run_full_reference,
     run_zoom,
+    run_coupled_from_store,
 )
 from oneuniverse.simulation.resim.zoom import refine_ic
 from oneuniverse.simulation.resim.farfield import far_field_box, far_field_potential
@@ -20,5 +21,5 @@ from oneuniverse.simulation.resim.verify import gate1_consistency, gate2_dynamic
 
 __all__ = ["extract_region", "gate1_consistency",
            "far_field_potential", "far_field_box",
-           "run_full_reference", "run_coupled", "run_zoom",
+           "run_full_reference", "run_coupled", "run_zoom", "run_coupled_from_store",
            "full_target_slice", "refine_ic", "gate2_dynamical"]
