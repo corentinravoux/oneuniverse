@@ -1,5 +1,21 @@
 # Phase S11b — COLA-frame coupling (the proper version)
 
+> **STATUS 2026-06-02 — T1+T2 DONE, T3+ DEFERRED (honest).**
+> ✅ **T1+T2 (the core):** `resim/cola.py` `cola_run_pm` — the COLA frame works
+> and is verified: **5-step COLA reproduces a 25-step full-PM on large scales
+> to ~2–3 %** (r_lowk 0.985, P/Pfull 1.02). COLA's headline benefit (large
+> scales carried by the analytic LPT → few PM steps).
+> ⚠️ **T3 (sCOLA buffer coupling for smaller buffers) — DEFERRED.** Three
+> implementations tried, **none beat the uncoupled S8.5 run**: (a) naive
+> end-of-run far-field injection (S11) double-counts; (b) sub-grid-Ψ COLA tile
+> (corr 0.09 — Ψ from the periodic sub-grid is wrong at the tile edge);
+> (c) full-box-Ψ-override COLA tile (corr 0.34–0.42, still below uncoupled
+> 0.38–0.70, inconsistent at larger buffer). **Conclusion:** correct sub-box
+> sCOLA needs **exact LPT boundary conditions on the tile** (Tassev & Eisenstein
+> 2015; Leclercq et al. 2020) — substantial, deferred to a dedicated sCOLA
+> phase. Shipping a coupling *worse* than uncoupled would be dishonest. The
+> verified few-step COLA frame stands on its own.
+
 > Replaces the deferred COLA part of S11. Linear (full-sim) + fast-PM
 > (mini-sim) stand in for real codes; structure first. Implements the
 > **LPT-subtraction frame** so the large scales (incl. the external tide) are
