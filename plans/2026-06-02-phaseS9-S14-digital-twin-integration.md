@@ -77,7 +77,20 @@ amplitude; large-scale modes preserved. Actual fidelity gain demonstrated.
 
 ---
 
-## S11 — COLA far-field coupling + partial-access resim  · closes gaps #3, #5
+## S11 — COLA far-field coupling + partial-access resim  · closes gaps #3, #5 · ⚠️ PARTIAL 2026-06-02
+
+> **Status (honest):** partial-access **store wiring done** (`run_coupled_from_store`
+> — the resim consumes the parent IC from a `SimStore`). The **COLA far-field
+> coupling is DEFERRED**: an experiment showed a *naive* far-field/external-tide
+> injection helps at small buffer (+0.09) but **hurts at larger buffer (−0.08)**
+> — it double-counts modes near the buffer cut. A correct COLA needs the
+> LPT-subtraction frame (evolve the residual relative to the 2LPT trajectory,
+> subtract the LPT force — no double-count), which is real work. Shipping the
+> inconsistent version would violate the "no unphysical aspects" rule, so it is
+> deferred to **S11b**. Physical tie-in: true region-local partial access (memory
+> bounded to the buffer) *requires* the same global-LPT / local-residual split —
+> so S11b unlocks both the smaller-buffer accuracy **and** the bounded-memory
+> resim at once.
 
 **Problem.** `far_field_potential` (S8.2) is built but **unused** — super-
 buffer tides are dropped, so buffers must be large (sCOLA-*lite*). And
