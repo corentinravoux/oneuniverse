@@ -63,6 +63,44 @@ def run_pm(pos: np.ndarray, vel: np.ndarray, *, box: float, n_grid: int,
     return x, p
 
 
+def _zeldovich_displacement(delta_z0: np.ndarray, box: float,
+                            n_grid: int) -> np.ndarray:
+    """Zel'dovich displacement Ψ (z=0) of a z=0 density field: Ψ_k = i k/k² δ_k."""
+    n = n_grid
+    dk = np.fft.rfftn(delta_z0)
+    kx = np.fft.fftfreq(n, d=box / n) * 2.0 * np.pi
+    kz = np.fft.rfftfreq(n, d=box / n) * 2.0 * np.pi
+    kxg, kyg, kzg = np.meshgrid(kx, kx, kz, indexing="ij")
+    k2 = kxg ** 2 + kyg ** 2 + kzg ** 2
+    k2[0, 0, 0] = 1.0
+    psi = []
+    for kg in (kxg, kyg, kzg):
+        pk = 1j * kg / k2 * dk
+        pk[0, 0, 0] = 0.0
+        psi.append(np.fft.irfftn(pk, s=(n, n, n)).ravel())
+    return np.stack(psi, axis=1)
+
+
+def zeldovich_pm_ic_from_field(cosmo: CosmologySpec, delta_z0: np.ndarray, *,
+                               box: float, n_grid: int, z_start: float
+                               ) -> Tuple[np.ndarray, np.ndarray]:
+    """Build (positions, momenta) for a PM run from a *provided* z=0 density
+    field — e.g. a constrained realization. Ψ(z_start) = D(z_start)·Ψ(z=0).
+    """
+    from oneuniverse.simulation.linear.growth import growth_factor, growth_rate
+
+    cell = box / n_grid
+    psi0 = _zeldovich_displacement(np.asarray(delta_z0, float), box, n_grid)
+    disp = growth_factor(z_start, cosmo) * psi0          # D(0)=1
+    g = (np.arange(n_grid) + 0.5) * cell
+    qx, qy, qz = np.meshgrid(g, g, g, indexing="ij")
+    q = np.stack([qx.ravel(), qy.ravel(), qz.ravel()], axis=1)
+    pos = (q + disp) % box
+    a0 = 1.0 / (1.0 + z_start)
+    p0 = a0 ** 2 * growth_rate(z_start, cosmo) * _E(a0, cosmo.omega_m) * disp
+    return pos, p0
+
+
 def zeldovich_pm_ic(cosmo: CosmologySpec, *, box: float, n_grid: int,
                     z_start: float, seed: int = 0) -> Tuple[np.ndarray, np.ndarray]:
     """Build (positions, canonical momenta) for a PM run from Zel'dovich ICs.
@@ -70,15 +108,10 @@ def zeldovich_pm_ic(cosmo: CosmologySpec, *, box: float, n_grid: int,
     The growing-mode momentum p = a²·f·E·Ψ (Ψ = displacement at a_start) is
     what makes the PM reproduce linear growth; starting from rest under-grows.
     """
-    from oneuniverse.simulation.linear.growth import growth_rate
-    from oneuniverse.simulation.linear.zeldovich import zeldovich_particles
-
-    a0 = 1.0 / (1.0 + z_start)
-    pos, _ = zeldovich_particles(cosmo, box_size=box, n_grid=n_grid,
-                                 z=z_start, seed=seed)
-    g = (np.arange(n_grid) + 0.5) * box / n_grid
-    qx, qy, qz = np.meshgrid(g, g, g, indexing="ij")
-    q = np.stack([qx.ravel(), qy.ravel(), qz.ravel()], axis=1)
-    disp = (pos - q + box / 2.0) % box - box / 2.0
-    p0 = a0 ** 2 * growth_rate(z_start, cosmo) * _E(a0, cosmo.omega_m) * disp
-    return pos, p0
+    from oneuniverse.simulation.linear.gaussian_field import (
+        generate_density_field,
+    )
+    delta0 = generate_density_field(cosmo, box_size=box, n_grid=n_grid,
+                                    z=0.0, seed=seed)
+    return zeldovich_pm_ic_from_field(cosmo, delta0, box=box, n_grid=n_grid,
+                                      z_start=z_start)
