@@ -123,6 +123,34 @@ class SimStore:
             out = {k: out[k] for k in columns}
         return out
 
+    # -- AMR (base sub-grid + refined octree nodes) -----------------------
+    def read_amr_box(self, z: float, cube: Cube):
+        """Return (base sub-grid, refined-node rows) overlapping ``cube``.
+
+        Base from the regular field tiles; refined nodes pruned to those whose
+        parent cell centre falls inside the cube (octree-node partial access).
+        """
+        base, origin = self.read_field_box(z, cube)
+        zt = f"z{float(z):.3f}"
+        info = self.layout["fields_amr"][zt]
+        t = pq.read_table(self.root / info["dir"].split("/")[0] /
+                          zt / "refined.parquet")
+        cols = {n: t.column(n).to_numpy(zero_copy_only=False)
+                for n in t.column_names}
+        n_total = len(cols["parent_ix"])
+        box = float(self.manifest["box_size"])
+        ng = int(self.manifest["n_grid"])
+        cell = box / ng
+        cx = (cols["parent_ix"] + 0.5) * cell
+        cy = (cols["parent_iy"] + 0.5) * cell
+        cz = (cols["parent_iz"] + 0.5) * cell
+        m = ((cx >= cube.xlo) & (cx <= cube.xhi)
+             & (cy >= cube.ylo) & (cy <= cube.yhi)
+             & (cz >= cube.zlo) & (cz <= cube.zhi))
+        self.last_read_stats = {"nodes_total": n_total,
+                                "nodes_read": int(m.sum())}
+        return base, {k: v[m] for k, v in cols.items()}
+
     # -- field (regular grid) ---------------------------------------------
     def read_field_box(self, z: float, cube: Cube):
         """Stitch the field sub-grid covering ``cube`` from memmap tiles.
