@@ -30,6 +30,7 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.execution import ExecutionMode, ExecutionPlan
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
+from oneuniverse.simulation.oufsim._morton import morton_key
 from oneuniverse.simulation.oufsim._parallel import map_partitions
 from oneuniverse.simulation.oufsim.index import (
     cartesian_chunk_ids,
@@ -82,6 +83,8 @@ def _write_chunked_catalog(
     batch_rows: Optional[int] = None,
     n_threads: int = 1,
     use_mpi: bool = False,
+    row_order: str = "none",
+    row_group_size: Optional[int] = None,
 ) -> dict:
     """Cube-chunk a point catalogue; one file per chunk, written in parallel.
 
@@ -112,9 +115,14 @@ def _write_chunked_catalog(
 
     def _write_one(spec):
         cid, idx_c = spec
+        if row_order == "morton":
+            # cluster rows spatially so each row-group spans a small bbox
+            key = morton_key(pos[idx_c], box_size)
+            idx_c = idx_c[np.argsort(key, kind="stable")]
         fname = f"part_{cid:04d}.parquet"
         table = pa.table({k: v[idx_c] for k, v in columns.items()})
-        pq.write_table(table, prod_dir / fname, compression=_COMPRESSION)
+        pq.write_table(table, prod_dir / fname, compression=_COMPRESSION,
+                       row_group_size=row_group_size)
         cx, cy, cz = chunk_coords(cid, n_side)
         return {
             "chunk_id": cid, "cx": cx, "cy": cy, "cz": cz,
@@ -212,6 +220,8 @@ def write_oufsim_store(
     batch_rows: Optional[int] = None,
     n_threads: int = 1,
     use_mpi: bool = False,
+    row_order: str = "none",
+    row_group_size: Optional[int] = None,
     plan: Optional[ExecutionPlan] = None,
     overwrite: bool = False,
 ) -> Path:
@@ -262,6 +272,7 @@ def write_oufsim_store(
             store / "snapshots" / zt, pcols, parts[:, :3],
             box_size, particle_chunk_nside, batch_rows=batch_rows,
             n_threads=n_threads, use_mpi=use_mpi,
+            row_order=row_order, row_group_size=row_group_size,
         )
         layout["snapshots"][zt]["dir"] = f"snapshots/{zt}"
         layout["snapshots"][zt]["index"] = f"snapshots/{zt}/{INDEX_FILE}"
