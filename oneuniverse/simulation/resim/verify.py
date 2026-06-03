@@ -45,3 +45,17 @@ def gate1_consistency(mini_ic: np.ndarray, parent_sub: np.ndarray, *,
     passed = bool(cell_corr > 0.95 and np.nanmedian(low) > 0.9)
     return {"k": k, "r": r, "cell_corr": cell_corr,
             "r_lowk": float(np.nanmedian(low)), "passed": passed}
+
+
+def gate2_dynamical(inner: np.ndarray, reference: np.ndarray, *,
+                    box_size: float) -> Dict:
+    """Post-run (sufficient) check: the resimulated inner region matches the
+    full-box reference on the shared volume after evolution. The empirical
+    feasibility verdict — its large-scale ``r_lowk`` is the headline number.
+    """
+    k, r = _cross_r(inner, reference, box_size)
+    cell_corr = float(np.corrcoef(inner.ravel(), reference.ravel())[0, 1])
+    low = r[k < np.median(k)]
+    r_lowk = float(np.nanmedian(low))
+    return {"k": k, "r": r, "cell_corr": cell_corr, "r_lowk": r_lowk,
+            "passed": bool(r_lowk > 0.8)}
