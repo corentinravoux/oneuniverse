@@ -52,3 +52,21 @@ def test_amr_and_ic_in_store(tmp_path):
     assert "ic_posterior" in s.products
     man = json.load(open(store / "manifest.json"))
     assert man["has_input"] is True
+
+
+def test_read_amr_box(tmp_path):
+    from oneuniverse.simulation.linear import generate_linear_sim
+    from oneuniverse.simulation.oufsim import SimStore, write_oufsim_store
+    from oneuniverse.simulation.selectors import Cube
+    native = generate_linear_sim(tmp_path / "n", _cosmo(), box_size=256.0,
+                                 n_grid=32, redshifts=(0.0,), seed=4)
+    store = write_oufsim_store(native, tmp_path / "s", sim_name="d")
+    s = SimStore(store)
+    base, refined = s.read_amr_box(0.0, Cube(0, 80, 0, 80, 0, 80))
+    assert base.ndim == 3
+    # refined nodes pruned to the cube
+    assert s.last_read_stats["nodes_read"] <= s.last_read_stats["nodes_total"]
+    if len(refined["parent_ix"]):
+        cell = 256.0 / 32
+        cx = (refined["parent_ix"] + 0.5) * cell
+        assert cx.max() <= 80.0
