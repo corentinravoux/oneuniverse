@@ -13,13 +13,17 @@ the buffer; super-buffer tides are dropped (the irreducible truncation).
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
 from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.pm.deposit import deposit_cic
-from oneuniverse.simulation.pm.run import run_pm, zeldovich_pm_ic
+from oneuniverse.simulation.pm.run import (
+    run_pm,
+    zeldovich_pm_ic,
+    zeldovich_pm_ic_from_field,
+)
 
 
 def _cubic_cells(centre_lo: float, side: float, cell: float) -> Tuple[int, int]:
@@ -43,13 +47,16 @@ def run_full_reference(cosmo: CosmologySpec, *, box: float, n_grid: int,
 
 def run_coupled(cosmo: CosmologySpec, *, box: float, n_grid: int,
                 target_lo: float, target_side: float, buffer: float,
-                z_start: float, z_end: float, seed: int,
+                z_start: float, z_end: float, seed: Optional[int] = None,
+                ic_field: Optional[np.ndarray] = None,
                 n_steps: int = 20) -> Dict:
     """Resimulate a cubic target with a buffer; return inner-region field.
 
     The cubic target is ``[target_lo, target_lo+target_side]`` on each axis;
-    the buffer cube pads it by ``buffer`` per side. Returns the inner-target
-    overdensity sub-grid + bookkeeping.
+    the buffer cube pads it by ``buffer`` per side. The IC comes either from a
+    ``seed`` (fresh Zel'dovich) or a provided ``ic_field`` (a z=0 density
+    field, e.g. a constrained realization — the data-driven path). Returns the
+    inner-target overdensity sub-grid + bookkeeping.
     """
     cell = box / n_grid
     bsize = target_side + 2.0 * buffer
@@ -60,9 +67,13 @@ def run_coupled(cosmo: CosmologySpec, *, box: float, n_grid: int,
     origin = bi0 * cell
     box_buf = n_buf * cell
 
-    # full Zel'dovich IC + Lagrangian grid
-    pos, p0 = zeldovich_pm_ic(cosmo, box=box, n_grid=n_grid,
-                              z_start=z_start, seed=seed)
+    # full IC (from a provided field, or fresh from a seed) + Lagrangian grid
+    if ic_field is not None:
+        pos, p0 = zeldovich_pm_ic_from_field(cosmo, ic_field, box=box,
+                                             n_grid=n_grid, z_start=z_start)
+    else:
+        pos, p0 = zeldovich_pm_ic(cosmo, box=box, n_grid=n_grid,
+                                  z_start=z_start, seed=seed if seed else 0)
     g = (np.arange(n_grid) + 0.5) * cell
     qx, qy, qz = np.meshgrid(g, g, g, indexing="ij")
     q = np.stack([qx.ravel(), qy.ravel(), qz.ravel()], axis=1)

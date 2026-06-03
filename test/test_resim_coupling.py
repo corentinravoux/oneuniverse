@@ -53,3 +53,18 @@ def test_gate3_buffer_convergence():
     cs = np.corrcoef(small["inner"].ravel(), ref.ravel())[0, 1]
     cb = np.corrcoef(big["inner"].ravel(), ref.ravel())[0, 1]
     assert cb > cs                      # bigger buffer -> better inner match
+
+
+def test_run_coupled_accepts_ic_field():
+    # data-driven path: provide a z=0 IC field instead of a seed
+    from oneuniverse.simulation.linear.gaussian_field import generate_density_field
+    c = _cosmo()
+    field = generate_density_field(c, box_size=BOX, n_grid=N, z=0.0, seed=2)
+    res_seed = run_coupled(c, box=BOX, n_grid=N, target_lo=TLO,
+                           target_side=TSIDE, buffer=32.0, z_start=9.0,
+                           z_end=0.0, seed=2, n_steps=12)
+    res_field = run_coupled(c, box=BOX, n_grid=N, target_lo=TLO,
+                            target_side=TSIDE, buffer=32.0, z_start=9.0,
+                            z_end=0.0, ic_field=field, n_steps=12)
+    # the field-from-seed path reproduces the seed path
+    np.testing.assert_allclose(res_seed["inner"], res_field["inner"], atol=1e-6)
