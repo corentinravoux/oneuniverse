@@ -7,7 +7,9 @@ feasibility study (research/2026-06-02-resimulation-orchestration-feasibility).
 
 Standalone (Rule 1): no imports from oneuniverse.data / combine.
 """
+from oneuniverse.simulation.resim.farfield import far_field_box, far_field_potential
 from oneuniverse.simulation.resim.ic_extract import extract_region
 from oneuniverse.simulation.resim.verify import gate1_consistency
 
-__all__ = ["extract_region", "gate1_consistency"]
+__all__ = ["extract_region", "gate1_consistency",
+           "far_field_potential", "far_field_box"]
