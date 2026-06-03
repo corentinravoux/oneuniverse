@@ -78,21 +78,32 @@ class SimDatabase:
 
     # -- dispatch the dummy resimulation ----------------------------------
     def dispatch(self, request: SimulationRequest, *, z_start: float = 9.0,
-                 z_end: float = 0.0, n_steps: int = 15
+                 z_end: float = 0.0, n_steps: int = 15,
+                 ic_field: Optional[np.ndarray] = None
                  ) -> Tuple[np.ndarray, str]:
+        """Run the dummy resimulation for ``request``.
+
+        ``ic_field`` (a z=0 density field, e.g. a data-driven constrained
+        realization) makes this the **data-driven** path: the resim starts
+        from the data-informed IC rather than a fresh seed. The IC provenance
+        is recorded on the lineage edge.
+        """
         rec = self.catalog[request.parent_sim]
         lp = request.region.lagrangian_patch
         tlo, thi = lp[0], lp[1]
+        ic_source = ("constrained_from_posterior" if ic_field is not None
+                     else "fresh_seed")
         res = run_coupled(
             request.cosmology, box=rec["box_size"], n_grid=rec["n_grid"],
             target_lo=tlo, target_side=thi - tlo,
             buffer=request.provenance["buffer"], z_start=z_start, z_end=z_end,
             seed=int(rec["seed"]) if rec["seed"] is not None else 0,
-            n_steps=n_steps,
+            ic_field=ic_field, n_steps=n_steps,
         )
         child = f"{request.parent_sim}_zoom"
         self.lineage.append({"parent": request.parent_sim, "child": child,
-                             "region": request.region.region_id})
+                             "region": request.region.region_id,
+                             "ic_source": ic_source})
         self._set_status(request, "ingested")
         return res["inner"], child
 
