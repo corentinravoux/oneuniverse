@@ -98,6 +98,33 @@ def run_coupled(cosmo: CosmologySpec, *, box: float, n_grid: int,
             "n_particles": int(m.sum())}
 
 
+def run_zoom(cosmo: CosmologySpec, coarse_buffer_ic: np.ndarray, *,
+             box_buf: float, target_side: float, buffer: float, factor: int,
+             z_start: float, z_end: float, seed: int = 0,
+             n_steps: int = 20) -> Dict:
+    """True zoom: refine the coarse buffer-region IC to ``factor``× resolution
+    (parent large scales + new small-scale power), run the PM at the fine
+    resolution, and return the inner-target field at fine resolution.
+    """
+    from oneuniverse.simulation.resim.zoom import refine_ic
+
+    fine_ic = refine_ic(coarse_buffer_ic, box_sub=box_buf, cosmo=cosmo,
+                        factor=factor, seed=seed)
+    n_fine = fine_ic.shape[0]
+    pos, p0 = zeldovich_pm_ic_from_field(cosmo, fine_ic, box=box_buf,
+                                         n_grid=n_fine, z_start=z_start)
+    x, _ = run_pm(pos, p0, box=box_buf, n_grid=n_fine, cosmo=cosmo,
+                  a_start=1.0 / (1.0 + z_start), a_end=1.0 / (1.0 + z_end),
+                  n_steps=n_steps)
+    rho = deposit_cic(x, n_fine, box_buf)
+    delta = rho / rho.mean() - 1.0
+    cell_f = box_buf / n_fine
+    pad = int(round(buffer / cell_f))
+    ti = int(round(target_side / cell_f))
+    inner = delta[pad:pad + ti, pad:pad + ti, pad:pad + ti]
+    return {"inner": inner, "n_fine": n_fine, "box_buf": box_buf}
+
+
 def full_target_slice(delta_full: np.ndarray, *, box: float, n_grid: int,
                       target_lo: float, target_side: float) -> np.ndarray:
     """The full-box reference field restricted to the target cube."""
