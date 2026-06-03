@@ -27,7 +27,9 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.linear._cosmo import require_cosmo
 from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.simulation.linear.halos import find_peaks
+from oneuniverse.simulation.linear.amr import refine_field
 from oneuniverse.simulation.linear.gr_fields import potential_field
+from oneuniverse.simulation.linear.ic import white_noise_ic
 from oneuniverse.simulation.linear.lightcone import build_lightcone_catalog
 from oneuniverse.simulation.linear.phase_space import phase_space_sheet
 from oneuniverse.simulation.linear.tree import build_merger_tree
@@ -94,6 +96,22 @@ def generate_linear_sim(
         pq.write_table(pa.table({k: pa.array(v) for k, v in ps.items()}),
                        zdir / "phase_space.parquet")
         np.save(zdir / "gr_field.npy", potential_field(field, box_size=box_size))
+
+        amr = refine_field(field, threshold=halo_threshold)
+        amr_cols = {k: amr[k] for k in ("parent_ix", "parent_iy", "parent_iz",
+                                        "node_id")}
+        amr_cols["node_id"] = amr_cols["node_id"].astype(np.int64)
+        for j in range(8):
+            amr_cols[f"sub{j}"] = (amr["subcells"][:, j] if amr["n_refined"]
+                                   else np.empty(0))
+        pq.write_table(pa.table({k: pa.array(v) for k, v in amr_cols.items()}),
+                       zdir / "amr.parquet")
+
+    # Initial-conditions (input) product — the white-noise realisation.
+    ic_field, ic_desc = white_noise_ic(c, box_size=box_size, n_grid=n_grid,
+                                       seed=seed)
+    np.save(out / "ic_field.npy", ic_field)
+    (out / "ic_descriptor.json").write_text(json.dumps(ic_desc, indent=2))
 
     # Reproducible IC / checkpoint descriptor (the deterministic IC; no run).
     (out / "checkpoint.json").write_text(json.dumps({

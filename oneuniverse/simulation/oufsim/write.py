@@ -317,11 +317,45 @@ def write_oufsim_store(
             layout["gr_fields"][zt]["dir"] = f"gr_fields/{zt}"
             layout["gr_fields"][zt]["index"] = f"gr_fields/{zt}/{INDEX_FILE}"
 
+        amr_path = zdir / "amr.parquet"
+        if amr_path.is_file():
+            amr = _read_parquet_cols(amr_path)
+            adir = store / "fields_amr" / zt
+            adir.mkdir(parents=True, exist_ok=True)
+            pq.write_table(pa.table(amr), adir / "refined.parquet",
+                           compression=_COMPRESSION)
+            n_ref = int(len(amr["node_id"])) if amr else 0
+            nid = amr["node_id"]
+            _write_index(adir / INDEX_FILE, [{
+                "level": 1, "n_refined": n_ref,
+                "node_lo": int(nid.min()) if n_ref else 0,
+                "node_hi": int(nid.max()) if n_ref else 0,
+                "file": "refined.parquet"}])
+            layout.setdefault("fields_amr", {})[zt] = {
+                "partition": "octree_node", "n_refined": n_ref,
+                "dir": f"fields_amr/{zt}",
+                "index": f"fields_amr/{zt}/{INDEX_FILE}"}
+
     products = ["snapshots", "fields", "halos"]
     if "phase_space" in layout:
         products.append("phase_space")
     if "gr_fields" in layout:
         products.append("gr_fields")
+
+    ic_field = native_dir / "ic_field.npy"
+    ic_desc = native_dir / "ic_descriptor.json"
+    has_input = False
+    if ic_field.is_file() and ic_desc.is_file():
+        idir = store / "ic"
+        info = _write_field_tiles(idir, np.load(ic_field), box_size,
+                                  field_tile_cells)
+        write_json(idir / "descriptor.json", json.loads(ic_desc.read_text()))
+        info["dir"] = "ic"
+        info["index"] = f"ic/{INDEX_FILE}"
+        info["descriptor"] = "ic/descriptor.json"
+        layout["ic_posterior"] = info
+        products.append("ic_posterior")
+        has_input = True
 
     ckpt_path = native_dir / "checkpoint.json"
     if ckpt_path.is_file():
@@ -395,7 +429,7 @@ def write_oufsim_store(
         code_version=cfg.get("generator"),
         layout_schema="per_cosmology_phase_snapshot",
         backends=("linear",),
-        has_input=False,
+        has_input=has_input,
         has_output=True,
         products=tuple(products),
         n_snapshots=len(redshifts),
