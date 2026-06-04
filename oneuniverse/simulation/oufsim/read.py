@@ -59,7 +59,8 @@ class SimStore:
                  columns: Optional[Sequence[str]] = None,
                  n_threads: int = 1,
                  device: str = "cpu",
-                 pushdown: bool = False) -> Dict[str, np.ndarray]:
+                 pushdown: bool = False,
+                 mpi: bool = False) -> Dict[str, np.ndarray]:
         """Return columns inside ``cube`` for a point product at redshift z.
 
         ``columns`` projects the read (fewer bytes off disk); x/y/z are always
@@ -67,7 +68,10 @@ class SimStore:
         ``n_threads`` reads the overlapping chunks in parallel (deterministic).
         ``device="gpu"`` uses a cuDF GPU-direct read when available, else
         falls back to CPU (never errors); the resolved device is recorded in
-        ``last_read_stats["device"]``.
+        ``last_read_stats["device"]``. Real GPUDirect needs hardware — not
+        exercisable in CI. ``mpi=True`` rank-partitions the overlapping chunks
+        (each rank reads its own, no collective gather; needs ``mpi4py``, else
+        a no-op single-rank read).
         """
         zt = f"z{float(z):.3f}"
         info = self.layout[product][zt]
@@ -83,9 +87,21 @@ class SimStore:
                 use_gpu = True
             except ImportError:
                 use_gpu = False
+        rank, size = 0, 1
+        if mpi:
+            try:
+                from mpi4py import MPI
+                comm = MPI.COMM_WORLD
+                rank, size = comm.Get_rank(), comm.Get_size()
+            except ImportError:
+                rank, size = 0, 1
+            from oneuniverse.simulation.oufsim._partition import (
+                partition_by_rank)
+            hit = partition_by_rank(hit, rank=rank, size=size)
         self.last_read_stats = {"chunks_total": len(rows),
                                 "chunks_read": len(hit),
-                                "device": "gpu" if use_gpu else "cpu"}
+                                "device": "gpu" if use_gpu else "cpu",
+                                "rank": rank, "size": size}
         read_cols = None
         if columns is not None:
             read_cols = list(dict.fromkeys(list(columns) + ["x", "y", "z"]))
