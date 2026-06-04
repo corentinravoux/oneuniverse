@@ -1,5 +1,18 @@
 # Phase S16 — Proper sCOLA (the proof of concept)
 
+> **STATUS 2026-06-04 — T1 DONE; coupling (T3/T4) STILL NOT beating uncoupled.**
+> ✅ **T1:** `pm_force_isolated` — Hockney zero-padded open Poisson, **no
+> periodic images** (1/r², far-field 4× below periodic), verified.
+> ⚠️ **Isolated Poisson alone is NOT sufficient.** An isolated-solver 1LPT-COLA
+> tile still helped at buffer 16 (+0.05) yet **hurt at buffer 32 (−0.20)** —
+> inconsistent, like S11b. Still missing: **(T2) 2LPT** far field; **(T3) full
+> Dirichlet BC** (set the tile *potential* at the boundary to the far field,
+> not merely an open force) + a **consistent open deposit**. The **toy PM mesh
+> resolution** (N=64) may also cap any tile gain — a reportable outcome.
+> **Conclusion:** T1 lands (reusable open Poisson solver); the validating
+> coupling needs T2+T3 and is **deferred** rather than shipped worse-than-
+> uncoupled.
+
 > Implements correct sub-box sCOLA so selective resimulation **beats** the
 > uncoupled run at a small buffer — validating the digital-twin core. Built on
 > the focused research ([`research/2026-06-04-scola-focused-research.md`](../research/2026-06-04-scola-focused-research.md)).
