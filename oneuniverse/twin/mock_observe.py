@@ -1,17 +1,18 @@
 """Mock 'observation': sample biased tracers from a truth density field.
 
-A stand-in for the Pillar-1 data side. Expected count per cell
-λ = n̄_cell · max(0, 1 + b·δ); counts ~ Poisson(λ). Returns the counts and
-the observed tracer overdensity δ_g = counts/⟨counts⟩ − 1. Linear-bias +
-clip (simplest; lognormal/HOD are later complexifications).
+A stand-in for the Pillar-1 data side. Two intensity models:
 
-**Caveat (measured):** the clip biases the *effective* tracer bias low once
-the field is non-linear (σ_cell≳1): e.g. at σ_cell≈1.8 a requested b=1.5
-samples as b_eff≈0.6. Fine for correlation diagnostics r(k) (normalisation-
-independent), but absolute-power work (Wiener gain, constrained realization)
-must either operate in the linear regime (higher z / coarser cells) or fit
-b_eff + shot noise from the data. A lognormal/HOD mock that preserves bias
-is the proper fix (future).
+- ``"clip"`` (default): λ = n̄_cell · max(0, 1 + b·δ). Simplest; but the clip
+  biases the *effective* bias **low** once the field is non-linear (σ_cell≳1):
+  at σ_cell≈1.8 a requested b=1.5 samples with cross-bias ≈0.6.
+- ``"lognormal"``: λ = n̄_cell · exp(b·δ − b²σ²/2). Always positive (no clip),
+  realistic 1-point PDF, and **preserves the cross-bias** ⟨δ_g·δ⟩/⟨δ²⟩ ≈ b
+  (what the Wiener filter / constrained realization use) even in the non-linear
+  regime. Its *auto* power is enhanced by the non-linear transform (a genuine
+  lognormal feature, not a bug). Use this for absolute-power work.
+
+counts ~ Poisson(λ); δ_g = counts/⟨counts⟩ − 1. (HOD — populate halos — is the
+next, more physical mock; not implemented here.)
 """
 from __future__ import annotations
 
@@ -21,7 +22,8 @@ import numpy as np
 
 
 def mock_tracer_field(delta, *, box_size, nbar, bias=1.0, seed=0,
-                      mask: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
+                      mask: Optional[np.ndarray] = None,
+                      model: str = "clip") -> Dict[str, np.ndarray]:
     """Poisson-sample biased tracers from ``delta``; return counts + δ_g.
 
     Parameters
@@ -31,13 +33,20 @@ def mock_tracer_field(delta, *, box_size, nbar, bias=1.0, seed=0,
     nbar : mean tracer number density (Mpc/h)^-3.
     bias : linear tracer bias b.
     mask : optional (n,n,n) selection in [0,1].
+    model : ``"clip"`` (default) or ``"lognormal"`` (bias-preserving).
     """
     d = np.asarray(delta, dtype=np.float64)
     n = d.shape[0]
     v_cell = (box_size / n) ** 3
     nbar_cell = nbar * v_cell
     rng = np.random.default_rng(seed)
-    lam = nbar_cell * np.clip(1.0 + bias * d, 0.0, None)
+    if model == "lognormal":
+        # λ = n̄·exp(bδ − b²σ²/2): mean n̄, always positive, cross-bias ≈ b.
+        lam = nbar_cell * np.exp(bias * d - 0.5 * bias ** 2 * float(d.var()))
+    elif model == "clip":
+        lam = nbar_cell * np.clip(1.0 + bias * d, 0.0, None)
+    else:
+        raise ValueError(f"unknown model {model!r}; use 'clip' or 'lognormal'")
     if mask is not None:
         lam = lam * np.asarray(mask, dtype=np.float64)
     counts = rng.poisson(lam).astype(np.float64)
