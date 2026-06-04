@@ -69,3 +69,27 @@ class NumpyFieldAdapter(NativeReaderAdapter):
     def read_field_region(self, path, cell_slice):
         arr = np.load(path, mmap_mode="r")
         return np.array(arr[cell_slice])     # materialise only the sub-region
+
+
+@register_adapter
+class PackedNpyAdapter(NativeReaderAdapter):
+    """packed_npy adapter — chunk-sorted particle slab + field `.npy`.
+
+    ``path`` points at a concrete block file. Particle slabs are (N,6) in the
+    canonical column order; ``read_rows`` memmaps and slices a contiguous row
+    range (the chunk's range from the store index).
+    """
+
+    native_format = "packed_npy"
+    _PART_COLS = ("x", "y", "z", "vx", "vy", "vz")
+
+    def read_field_region(self, path, cell_slice):
+        arr = np.load(path, mmap_mode="r")
+        return np.array(arr[cell_slice])
+
+    def read_rows(self, path, row_slice, columns=None):
+        arr = np.load(path, mmap_mode="r")            # (N, 6), no full load
+        block = np.array(arr[row_slice])              # only the row range
+        cols = columns if columns is not None else self._PART_COLS
+        idx = {name: j for j, name in enumerate(self._PART_COLS)}
+        return {name: block[:, idx[name]] for name in cols}
