@@ -1,5 +1,11 @@
 # Phase S15 — OUF-Sim storage projections (wrap-in-place vs re-encode)
 
+> **STATUS 2026-06-04 — CORE DONE (fields).** `field_projection='reference'`
+> wraps the native `field.npy` (index-only, no copy; <20% of re-encode); reads
+> memmap-match the re-encode path via `NumpyFieldAdapter`. Both modes coexist
+> per product. ⏳ remaining: particle `reference` (row-id sidecar) + the
+> chunk-sorted-native wrap demo + full benchmark — secondary.
+
 > Develop **both** ways an OUF-Sim store can hold a simulation's bulk data, as
 > a per-product choice. linear+PM dummy stands in for real codes; structure
 > first. Closes audit gap "re-encode, not wrap" (notebook 04).
