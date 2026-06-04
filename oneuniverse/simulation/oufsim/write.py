@@ -166,6 +166,22 @@ def _write_field_tiles(
             "tile_cells": int(tile_cells), "n_tiles": int(len(rows))}
 
 
+def _write_field_reference(prod_dir: Path, native_field_path: Path,
+                           n_grid: int, box_size: float) -> dict:
+    """Wrap-in-place: index references the native field `.npy` (no tile copy)."""
+    prod_dir.mkdir(parents=True, exist_ok=True)
+    n = int(n_grid)
+    rows = [{
+        "tile_id": 0, "ix0": 0, "ix1": n, "iy0": 0, "iy1": n, "iz0": 0, "iz1": n,
+        "xlo": 0.0, "xhi": box_size, "ylo": 0.0, "yhi": box_size,
+        "zlo": 0.0, "zhi": box_size, "file": "",
+        "native_file": str(Path(native_field_path).resolve()),
+    }]
+    _write_index(prod_dir / INDEX_FILE, rows)
+    return {"partition": "grid_reference", "n_grid": n, "n_tiles": 1,
+            "projection": "reference"}
+
+
 # --------------------------------------------------------------------------
 # Lightcone product — HEALPix NEST super-pixel partitions (like OUF)
 # --------------------------------------------------------------------------
@@ -216,6 +232,7 @@ def write_oufsim_store(
     sim_kind: str = "pm",
     particle_chunk_nside: int = 4,
     field_tile_cells: int = 32,
+    field_projection: str = "reencode",
     lightcone_nside_part: int = 2,
     batch_rows: Optional[int] = None,
     n_threads: int = 1,
@@ -278,10 +295,16 @@ def write_oufsim_store(
         layout["snapshots"][zt]["index"] = f"snapshots/{zt}/{INDEX_FILE}"
         n_particles_total = max(n_particles_total, parts.shape[0])
 
-        field = np.load(zdir / "field.npy")
-        layout["fields"][zt] = _write_field_tiles(
-            store / "fields" / zt, field, box_size, field_tile_cells,
-        )
+        if field_projection == "reference":
+            # wrap-in-place: index points at the native field.npy, no copy
+            layout["fields"][zt] = _write_field_reference(
+                store / "fields" / zt, zdir / "field.npy", n_grid, box_size,
+            )
+        else:
+            layout["fields"][zt] = _write_field_tiles(
+                store / "fields" / zt, np.load(zdir / "field.npy"),
+                box_size, field_tile_cells,
+            )
         layout["fields"][zt]["dir"] = f"fields/{zt}"
         layout["fields"][zt]["index"] = f"fields/{zt}/{INDEX_FILE}"
 

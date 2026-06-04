@@ -181,7 +181,10 @@ class SimStore:
             az0, az1 = max(iz0, r["iz0"]), min(iz1, r["iz1"])
             if ax0 >= ax1 or ay0 >= ay1 or az0 >= az1:
                 continue
-            tile = np.load(prod_dir / r["file"], mmap_mode="r")
+            # `native_file` = wrap-in-place (reference projection): memmap the
+            # native array; otherwise the re-encoded local tile.
+            src = r.get("native_file")
+            tile = np.load(src if src else prod_dir / r["file"], mmap_mode="r")
             sub[ax0 - ix0:ax1 - ix0, ay0 - iy0:ay1 - iy0, az0 - iz0:az1 - iz0] = \
                 tile[ax0 - r["ix0"]:ax1 - r["ix0"],
                      ay0 - r["iy0"]:ay1 - r["iy0"],
