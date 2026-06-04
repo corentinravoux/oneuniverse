@@ -1,5 +1,16 @@
 # Phase S16 — Proper sCOLA (the proof of concept)
 
+> **✅ SOLVED 2026-06-04 by TreePM-split (not COLA-frame).**
+> `resim/treepm.py` `run_coupled_treepm` **beats the uncoupled buffered
+> baseline at every buffer** (8:+0.31, 16:+0.25, 32:+0.12) — same accuracy at
+> ~4× smaller buffer (TreePM@8 ≈ uncoupled@32). The fix that worked was **not**
+> the COLA-frame (which kept double-counting on a sub-box) but an explicit
+> **Fourier long/short force split** (TreePM): long-range from the full-box
+> *linear* field (low-pass, the tide, ~D(a)); short-range from the tile PM
+> (high-pass). Complementary in k → no double-count. `pm_force_isolated` (T1)
+> remains a useful building block; 2LPT/Dirichlet (T2/T3) turned out **not
+> needed** for the working solution. The proof of concept stands.
+
 > **STATUS 2026-06-04 — T1 DONE; coupling (T3/T4) STILL NOT beating uncoupled.**
 > ✅ **T1:** `pm_force_isolated` — Hockney zero-padded open Poisson, **no
 > periodic images** (1/r², far-field 4× below periodic), verified.
