@@ -22,6 +22,7 @@ from oneuniverse.simulation.resim.coupling import (
 from oneuniverse.simulation.resim.zoom import refine_ic
 from oneuniverse.simulation.resim.farfield import far_field_box, far_field_potential
 from oneuniverse.simulation.resim.merge import merge_fields
+from oneuniverse.simulation.resim.treepm import run_coupled_treepm
 from oneuniverse.simulation.resim.ic_extract import extract_region
 from oneuniverse.simulation.resim.verify import gate1_consistency, gate2_dynamical
 
@@ -29,4 +30,5 @@ __all__ = ["extract_region", "gate1_consistency",
            "far_field_potential", "far_field_box",
            "run_full_reference", "run_coupled", "run_zoom", "run_coupled_from_store",
            "full_target_slice", "refine_ic", "merge_fields", "gate2_dynamical",
-           "buffer_convergence", "reference_inner", "uncoupled_resim_fn"]
+           "buffer_convergence", "reference_inner", "uncoupled_resim_fn",
+           "run_coupled_treepm"]
