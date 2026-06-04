@@ -14,11 +14,15 @@ Mirrors OUF's storage stack (JSON manifest + pyarrow parquet partitions
 Standalone (Rule 1): no imports from oneuniverse.data / combine.
 """
 from oneuniverse.simulation.oufsim.database import SimDatabase
-from oneuniverse.simulation.oufsim.native import NativeReaderAdapter, NumpyFieldAdapter
+from oneuniverse.simulation.oufsim.native import (
+    ADAPTERS, NativeReaderAdapter, NumpyFieldAdapter, get_adapter,
+    register_adapter,
+)
 from oneuniverse.simulation.oufsim.read import SimStore
 from oneuniverse.simulation.oufsim.view import SimDatasetView
 from oneuniverse.simulation.oufsim.write import ingest_field, write_oufsim_store
 
 __all__ = ["write_oufsim_store", "ingest_field", "SimStore",
            "SimDatasetView", "SimDatabase",
-           "NativeReaderAdapter", "NumpyFieldAdapter"]
+           "NativeReaderAdapter", "NumpyFieldAdapter",
+           "ADAPTERS", "get_adapter", "register_adapter"]
