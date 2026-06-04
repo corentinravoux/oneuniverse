@@ -21,8 +21,10 @@ from oneuniverse.simulation.oufsim.native import (
 from oneuniverse.simulation.oufsim.read import SimStore
 from oneuniverse.simulation.oufsim.view import SimDatasetView
 from oneuniverse.simulation.oufsim.write import ingest_field, write_oufsim_store
+from oneuniverse.simulation.oufsim.build import NativeProduct, build_store
 
 __all__ = ["write_oufsim_store", "ingest_field", "SimStore",
            "SimDatasetView", "SimDatabase",
            "NativeReaderAdapter", "NumpyFieldAdapter",
-           "ADAPTERS", "get_adapter", "register_adapter"]
+           "ADAPTERS", "get_adapter", "register_adapter",
+           "NativeProduct", "build_store"]
