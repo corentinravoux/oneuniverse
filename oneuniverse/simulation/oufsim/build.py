@@ -25,7 +25,8 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
 from oneuniverse.simulation.oufsim.write import (
-    INDEX_FILE, OUFSIM_SUBDIR, _write_chunked_catalog, _write_field_reference,
+    INDEX_FILE, OUFSIM_SUBDIR, _write_chunked_catalog,
+    _write_chunked_catalog_reference, _write_field_reference,
     _write_field_tiles, _write_lightcone,
 )
 from oneuniverse.simulation.provenance import ProvenanceSpec
@@ -75,11 +76,16 @@ def build_store(
     for p in products:
         zt = _ztag(float(p.z)) if p.z is not None else None
         if p.kind == "catalog":
-            cols = p.load()
-            pos = np.stack([cols[k] for k in p.pos_keys], axis=1)
-            info = _write_chunked_catalog(
-                store / p.name / zt, cols, pos, box_size, p.n_side,
-                n_threads=n_threads)
+            if p.projection == "reference":
+                info = _write_chunked_catalog_reference(
+                    store / p.name / zt, p.chunk_index, p.native_path,
+                    p.columns)
+            else:
+                cols = p.load()
+                pos = np.stack([cols[k] for k in p.pos_keys], axis=1)
+                info = _write_chunked_catalog(
+                    store / p.name / zt, cols, pos, box_size, p.n_side,
+                    n_threads=n_threads)
             info["dir"] = f"{p.name}/{zt}"
             info["index"] = f"{p.name}/{zt}/{INDEX_FILE}"
             layout.setdefault(p.name, {})[zt] = info

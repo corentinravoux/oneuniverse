@@ -98,6 +98,20 @@ class SimStore:
                        ("z", ">=", cube.zlo), ("z", "<=", cube.zhi)]
 
         def _read_one(r):
+            nf = r.get("native_file")
+            if nf and r.get("row_stop") is not None:    # particle wrap-in-place
+                from oneuniverse.simulation.oufsim.native import get_adapter
+                ad = get_adapter(r.get("native_format", "packed_npy"))
+                want = read_cols if read_cols is not None else r.get("columns")
+                got = ad.read_rows(nf, slice(int(r["row_start"]),
+                                             int(r["row_stop"])), want)
+                for k in ("x", "y", "z"):               # always need pos for cut
+                    if k not in got:
+                        got.update(ad.read_rows(
+                            nf, slice(int(r["row_start"]), int(r["row_stop"])),
+                            ("x", "y", "z")))
+                        break
+                return got
             if use_gpu:
                 import cudf
                 gdf = cudf.read_parquet(prod_dir / r["file"], columns=read_cols)
