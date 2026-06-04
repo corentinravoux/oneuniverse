@@ -7,6 +7,11 @@ feasibility study (research/2026-06-02-resimulation-orchestration-feasibility).
 
 Standalone (Rule 1): no imports from oneuniverse.data / combine.
 """
+from oneuniverse.simulation.resim.bench import (
+    buffer_convergence,
+    reference_inner,
+    uncoupled_resim_fn,
+)
 from oneuniverse.simulation.resim.coupling import (
     full_target_slice,
     run_coupled,
@@ -23,4 +28,5 @@ from oneuniverse.simulation.resim.verify import gate1_consistency, gate2_dynamic
 __all__ = ["extract_region", "gate1_consistency",
            "far_field_potential", "far_field_box",
            "run_full_reference", "run_coupled", "run_zoom", "run_coupled_from_store",
-           "full_target_slice", "refine_ic", "merge_fields", "gate2_dynamical"]
+           "full_target_slice", "refine_ic", "merge_fields", "gate2_dynamical",
+           "buffer_convergence", "reference_inner", "uncoupled_resim_fn"]
