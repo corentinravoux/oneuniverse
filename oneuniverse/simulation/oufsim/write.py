@@ -182,6 +182,34 @@ def _write_field_reference(prod_dir: Path, native_field_path: Path,
             "projection": "reference"}
 
 
+def _write_chunked_catalog_reference(prod_dir: Path, chunk_index: list,
+                                     native_file: Union[str, Path],
+                                     columns) -> dict:
+    """Index-only particle wrap: rows point at a chunk-sorted native slab.
+
+    ``chunk_index`` = the packed header's per-chunk records (bbox + contiguous
+    ``[row_start, row_stop)``). No float data is copied — only the sidecar
+    index — so the store is index-sized over the native files.
+    """
+    prod_dir.mkdir(parents=True, exist_ok=True)
+    nf = str(Path(native_file).resolve())
+    rows = []
+    for c in chunk_index:
+        rows.append({
+            "chunk_id": int(c["chunk_id"]), "cx": c["cx"], "cy": c["cy"],
+            "cz": c["cz"], "xlo": c["xlo"], "xhi": c["xhi"], "ylo": c["ylo"],
+            "yhi": c["yhi"], "zlo": c["zlo"], "zhi": c["zhi"],
+            "n_rows": int(c["n_rows"]), "file": "", "native_file": nf,
+            "native_format": "packed_npy",
+            "row_start": int(c["row_start"]), "row_stop": int(c["row_stop"]),
+            "columns": list(columns),
+        })
+    _write_index(prod_dir / INDEX_FILE, rows)
+    return {"partition": "cartesian_chunk_reference", "n_chunks": len(rows),
+            "n_rows": int(sum(c["n_rows"] for c in chunk_index)),
+            "projection": "reference"}
+
+
 # --------------------------------------------------------------------------
 # Lightcone product — HEALPix NEST super-pixel partitions (like OUF)
 # --------------------------------------------------------------------------
