@@ -56,3 +56,17 @@ class ExecutionPlan:
                 f"ExecutionPlan.batch_rows must be > 0 or None, "
                 f"got {self.batch_rows!r}"
             )
+
+    def batch_for(self, bytes_per_row: int, *, safety: float = 0.5) -> int:
+        """Rows per streamed batch under the memory budget.
+
+        ``safety`` reserves headroom for transient copies (concat, masks).
+        An explicit ``batch_rows`` overrides the derivation.
+        """
+        if bytes_per_row <= 0:
+            raise ValueError(
+                f"bytes_per_row must be > 0, got {bytes_per_row!r}")
+        if self.batch_rows is not None:
+            return self.batch_rows
+        n = int(self.memory_budget_bytes * safety // bytes_per_row)
+        return max(1, n)

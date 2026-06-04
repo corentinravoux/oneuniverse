@@ -20,6 +20,8 @@ from oneuniverse.simulation.oufsim.index import cube_overlaps_bbox
 from oneuniverse.simulation.oufsim.read import SimStore
 from oneuniverse.simulation.selectors import Cube
 
+_BYTES_PER_ROW = 6 * 8     # 6 float64 particle columns (x,y,z,vx,vy,vz)
+
 
 class SimDatasetView:
     """Streaming partial-access view over an OUF-Sim store."""
@@ -31,8 +33,9 @@ class SimDatasetView:
                  batch_rows: int = 100_000,
                  plan: Optional[ExecutionPlan] = None) -> Iterator[dict]:
         """Yield dict-of-array batches of ``product`` rows inside ``cube``."""
-        if plan is not None and plan.batch_rows is not None:
-            batch_rows = plan.batch_rows
+        if plan is not None:
+            batch_rows = (plan.batch_rows if plan.batch_rows is not None
+                          else plan.batch_for(bytes_per_row=_BYTES_PER_ROW))
         zt = f"z{float(z):.3f}"
         info = self.store.layout[product][zt]
         rows = self.store._index_rows(info["index"])
