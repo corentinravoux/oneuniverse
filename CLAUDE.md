@@ -73,6 +73,29 @@ call site.
   (`scripts/build_demo_oufsim.py`). Optimisation hotspots +
   next-phase plan: `research/2026-06-02-oufsim-optimization-findings.md`,
   `plans/2026-06-02-phaseS5-oufsim-optimisation-and-coverage.md`.
+  **Multi-backend (Phase S17):** the store is format-agnostic.
+  `oufsim/native.py` holds a `NativeReaderAdapter` ABC
+  (`read_field_region` + optional `read_rows`) + a format registry
+  (`register_adapter` / `get_adapter`; `npy`, `packed_npy`).
+  `oufsim/build.py` `build_store(...)` ingests **`NativeProduct`**
+  descriptors (core kinds `catalog` / `field` / `lightcone`) by
+  reusing the per-product writers — the seam every backend reuses.
+  Particle **wrap-in-place** (`projection="reference"`) is index-only
+  over a chunk-sorted native slab (read via the adapter's `read_rows`).
+  `ExecutionPlan.batch_for(bytes_per_row)` derives the streamed batch
+  from the memory budget; `read_box(..., mpi=True)` rank-partitions
+  (`oufsim/_partition.py`). Scale sweep + wrap-vs-reencode figure:
+  `oufsim/scale_bench.py` + `scripts/build_s17_demo.py`
+  (`test/test_output/s17_scaling.png`). Plan:
+  `plans/2026-06-04-phaseS17-general-storage-io-optimisation.md`.
+- `oneuniverse/simulation/packed/` — **`PackedSimConverter`**, the 2nd
+  reference backend (`code="packed_npy"`). Proves storage generality:
+  a different on-disk format (chunk-sorted slab + `header.json`, built
+  by `linear/pack.py:write_packed_native`) ingested by a converter that
+  only implements the four ABC methods + `convert()` via `build_store`.
+  Its store reads identically to the linear store. A real code
+  (AbacusSummit ASDF, Gadget HDF5, BigFile) follows the same recipe:
+  a `NativeReaderAdapter` + a `SimConverter` + emit `NativeProduct`s.
 - `oneuniverse/twin/` — the **data↔simulation coupling layer** (the
   third layer per the substrate ADR; may import BOTH `simulation` and
   `data`, which neither pillar may host — `simulation/` stays Rule-1
