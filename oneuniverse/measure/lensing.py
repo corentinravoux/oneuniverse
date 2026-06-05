@@ -35,9 +35,13 @@ def build_cosmic_shear(view: DatasetView, *, tracer: str = "src",
                            nside_region=int(nside_region))
     prov = Provenance(dataset_ids=(view.survey_name,),
                       weight_recipe=(srecipe,), nz_method="photo_stack")
+    shape_cols = [c for c in ("e1", "e2", "e1_err", "e2_err", "R11", "R22",
+                              "R_S", "m_bias", "c1_bias", "c2_bias",
+                              "shear_weight") if c in cat.columns]
     ps = PointSet(catalog=cat, randoms=None, nz=nzs, window=win,
                   region_map=region, metadata=meta, provenance=prov,
-                  photoz=kernel, tomo_bin=cat[tomo_column].to_numpy())
+                  photoz=kernel, tomo_bin=cat[tomo_column].to_numpy(),
+                  attributes={"shapes": shape_cols})
     spec = MeasurementSpec(tracers=(tracer,), pairs=((tracer, tracer),),
                            statistic=statistic, estimator_family="lensing")
     return MeasurementSet(products={tracer: ps}, spec=spec, metadata=meta)

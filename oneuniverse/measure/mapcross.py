@@ -18,14 +18,20 @@ def build_map_cross(catalog_view: DatasetView, fieldmap: FieldMap, *,
                     z_range: Tuple[float, float] = (0.0, 2.0),
                     gal_weights_columns: Tuple[str, ...] = ("weight_comp",),
                     nz_edges: Optional[np.ndarray] = None,
-                    nside_region: int = 8) -> MeasurementSet:
-    """Galaxy PointSet × FieldMap → cross-correlation MeasurementSet."""
+                    nside_region: int = 8, randoms: str = "none",
+                    n_randoms: int = 0, seed: int = 0) -> MeasurementSet:
+    """Galaxy PointSet × FieldMap → cross-correlation MeasurementSet.
+
+    ``randoms="generate"`` attaches galaxy randoms (a real g×κ uses the galaxy
+    mask); ``"none"`` (default) keeps only the field's own mask.
+    """
     if nz_edges is None:
         nz_edges = np.linspace(0.0, 2.0, 21)
     gal_ms = build_galaxy_clustering(
         catalog_view, tracer=gal_tracer, z_range=z_range,
         weights=[ColumnWeight(c) for c in gal_weights_columns],
-        nz_edges=nz_edges, randoms="none", nside_region=nside_region)
+        nz_edges=nz_edges, randoms=randoms, n_randoms=n_randoms, seed=seed,
+        nside_region=nside_region)
     gal_ps = gal_ms.products[gal_tracer]
     spec = MeasurementSpec(tracers=(gal_tracer, map_tracer),
                            pairs=((gal_tracer, map_tracer),),

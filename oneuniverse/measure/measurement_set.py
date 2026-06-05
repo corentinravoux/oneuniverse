@@ -91,6 +91,14 @@ class MeasurementSet:
         from oneuniverse.measure.io import load_measurement_set
         return load_measurement_set(path)
 
+    #: catalog column names that imply a cosmology was applied (z->distance).
+    #: Their presence violates the cosmology-free contract.
+    _FORBIDDEN_COLUMNS = frozenset({
+        "comoving_distance", "r_comoving", "comoving_dist", "d_comoving",
+        "dist_mpc_h", "chi", "chi_mpc", "distance_mpc", "luminosity_distance",
+        "angular_diameter_distance",
+    })
+
     def check_invariants(self, *, _inject_cosmology: bool = False) -> None:
         if _inject_cosmology or hasattr(self.metadata, "cosmology"):
             raise ValueError(
@@ -100,6 +108,16 @@ class MeasurementSet:
         for name, p in self.products.items():
             n = len(p.region_map)
             catalog = getattr(p, "catalog", None)
+            if catalog is not None:
+                # the load-bearing rule, enforced on *contents*: no
+                # cosmology-derived column may have leaked into the catalog.
+                leaked = self._FORBIDDEN_COLUMNS & {c.lower()
+                                                    for c in catalog.columns}
+                if leaked:
+                    raise ValueError(
+                        f"product {name!r}: cosmology-derived column(s) "
+                        f"{sorted(leaked)} present — the MeasurementSet must be "
+                        f"cosmology-free (z->distance happens in Pillar 2)")
             if catalog is not None and len(catalog) != n:
                 raise ValueError(
                     f"product {name!r}: region_map length {n} != catalog "
