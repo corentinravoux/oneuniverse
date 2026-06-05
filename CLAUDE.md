@@ -51,6 +51,21 @@ call site.
   [`plans/2026-06-05-pillar2-definition.md`](plans/2026-06-05-pillar2-definition.md),
   [`research/2026-06-05-p1-to-p2-measurement-requirements.md`](research/2026-06-05-p1-to-p2-measurement-requirements.md),
   [`research/2026-06-05-survey-landscape-v2-agnostic.md`](research/2026-06-05-survey-landscape-v2-agnostic.md).
+  **Galaxy clustering connection built (2026-06-05).** Modules:
+  `dataproduct.py` (`DataProduct`/`PointSet`), `metadata.py`
+  (`ProductMetadata`/`Provenance`, no cosmology), `select.py`
+  (`select_clean`), `weighting.py` (`assemble_weight` over
+  `combine` primitives), `window.py` (`footprint_from_positions`),
+  `nz.py` (`nz_from_spec_z`), `randoms.py` (`randoms_from_view`
+  ingest + `generate_randoms`), `regions.py` (`assign_regions`),
+  `spec.py` (`MeasurementSpec`), `measurement_set.py`
+  (`MeasurementSet.check_invariants` — shared region NSIDE +
+  cosmology-free). Entry: `build_galaxy_clustering(view, *,
+  z_range, weights, nz_edges, randoms="generate"|view, ...)`.
+  TDD on synthetic OUF (`test/fixtures/measure_ouf.py`); demo
+  `scripts/build_measure_demo.py`. Plan:
+  [`plans/2026-06-05-measure-galaxy-clustering.md`](plans/2026-06-05-measure-galaxy-clustering.md).
+  Next probes: WL (shapes+photo-z), PV/SN, Lyα (Sightline), maps.
 - `oneuniverse/simulation/` — **Pillar 3 (OUF-Sim)**, standalone.
   Types for the simulation storage + orchestration substrate:
   `OUFSimManifest`, `ExecutionPlan`/`BackendCapabilities` (optimisation
