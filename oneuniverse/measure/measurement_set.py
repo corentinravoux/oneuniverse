@@ -27,24 +27,36 @@ class MeasurementSet:
                 "kind": p.kind,
                 "dataset_ids": list(p.provenance.dataset_ids),
                 "randoms_source": p.provenance.randoms_source,
+                "links": [lk.role for lk in (p.links or [])],
+                "has_covariance": p.covariance is not None,
             }
             if p.kind == "pointset":
                 cat = p.catalog
+                win = p.window
                 entry.update(
                     n=int(len(cat)) if cat is not None else 0,
                     columns=list(cat.columns) if cat is not None else [],
                     has_randoms=p.randoms is not None,
                     has_nz=p.nz is not None,
-                    has_window=p.window is not None,
+                    has_window=win is not None,
                     has_photoz=p.photoz is not None,
+                    has_named_weights=p.weights is not None,
+                    has_dndz_external=p.dndz_external is not None,
                     n_tomo=(len(p.nz) if isinstance(p.nz, dict) else None),
+                    window_systematics=(list(win.systematics)
+                                        if win is not None and win.systematics
+                                        else []),
                 )
             elif p.kind == "sightline":
                 entry.update(n_sightlines=int(p.n_sightlines),
                              has_continuum=p.continuum is not None)
             elif p.kind == "fieldmap":
                 entry.update(nside=int(p.nside), npix=int(p.npix),
-                             covered_pixels=int(p.mask.sum()))
+                             covered_pixels=int(p.mask.sum()),
+                             has_beam=p.beam is not None,
+                             has_interloper=p.interloper is not None,
+                             has_distance_extras=p.distance_extras is not None,
+                             is_cube=p.axes is not None)
             prods[name] = entry
         return {
             "n_products": len(self.products),
