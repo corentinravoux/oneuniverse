@@ -65,7 +65,25 @@ call site.
   TDD on synthetic OUF (`test/fixtures/measure_ouf.py`); demo
   `scripts/build_measure_demo.py`. Plan:
   [`plans/2026-06-05-measure-galaxy-clustering.md`](plans/2026-06-05-measure-galaxy-clustering.md).
-  Next probes: WL (shapes+photo-z), PV/SN, Lyα (Sightline), maps.
+  **All 5 probe connections built (2026-06-05), 3 DataProduct subtypes:**
+  - **PointSet** (`dataproduct.py`) — galaxy clustering, WL, PV/SN.
+    `build_galaxy_clustering`; `build_cosmic_shear`/`build_3x2pt`
+    (`lensing.py`: `shapes.attach_shear`+`ShearWeight`, `photoz.attach_photoz`
+    via `load_pdf`, `tomography.tomographic_nz`; `PointSet.photoz`/`tomo_bin`,
+    `MeasurementSpec.pair_statistics`); `build_peculiar_velocity`/
+    `build_sn_hubble` (`pvsn.py`: `distances.attach_distances`,
+    `covariance.CovarianceHandle` lazy row-cov, `lightcurve.LightcurveSet`).
+  - **Sightline** — Lyα: `sightline.sightline_from_view` + `lya.build_lya`
+    (P1D/P3D).
+  - **FieldMap** — map×catalog: `fieldmap.fieldmap_from_healpix` +
+    `mapcross.build_map_cross` (PointSet×FieldMap C_ℓ).
+  `MeasurementSet.check_invariants` exempts empty-region_map products (sky
+  maps). 28 measure tests; demos `scripts/build_measure_{wl,pvsn,lya,mapcross}_demo.py`.
+  Probe plans: [`…weak-lensing`](plans/2026-06-05-measure-weak-lensing.md),
+  [`…pv-sn`](plans/2026-06-05-measure-pv-sn.md),
+  [`…lya`](plans/2026-06-05-measure-lya.md),
+  [`…map-cross`](plans/2026-06-05-measure-map-cross.md). Real DESI/eBOSS
+  validation still pending.
 - `oneuniverse/simulation/` — **Pillar 3 (OUF-Sim)**, standalone.
   Types for the simulation storage + orchestration substrate:
   `OUFSimManifest`, `ExecutionPlan`/`BackendCapabilities` (optimisation
