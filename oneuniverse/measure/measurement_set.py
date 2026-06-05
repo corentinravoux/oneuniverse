@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Any, Dict
 
 from oneuniverse.measure.dataproduct import DataProduct
 from oneuniverse.measure.metadata import ProductMetadata
@@ -14,6 +14,54 @@ class MeasurementSet:
     products: Dict[str, DataProduct]
     spec: MeasurementSpec
     metadata: ProductMetadata
+
+    def summary(self) -> Dict[str, Any]:
+        """A structured, cosmology-free description of the set + its products.
+
+        For downstream inspection: which atoms each product carries, the
+        measurement spec, and the shared region scheme. Carries no cosmology.
+        """
+        prods: Dict[str, Any] = {}
+        for name, p in self.products.items():
+            entry: Dict[str, Any] = {
+                "kind": p.kind,
+                "dataset_ids": list(p.provenance.dataset_ids),
+                "randoms_source": p.provenance.randoms_source,
+            }
+            if p.kind == "pointset":
+                cat = p.catalog
+                entry.update(
+                    n=int(len(cat)) if cat is not None else 0,
+                    columns=list(cat.columns) if cat is not None else [],
+                    has_randoms=p.randoms is not None,
+                    has_nz=p.nz is not None,
+                    has_window=p.window is not None,
+                    has_photoz=p.photoz is not None,
+                    n_tomo=(len(p.nz) if isinstance(p.nz, dict) else None),
+                )
+            elif p.kind == "sightline":
+                entry.update(n_sightlines=int(p.n_sightlines),
+                             has_continuum=p.continuum is not None)
+            elif p.kind == "fieldmap":
+                entry.update(nside=int(p.nside), npix=int(p.npix),
+                             covered_pixels=int(p.mask.sum()))
+            prods[name] = entry
+        return {
+            "n_products": len(self.products),
+            "spec": {"statistic": self.spec.statistic,
+                     "estimator_family": self.spec.estimator_family,
+                     "pairs": [list(pair) for pair in self.spec.pairs],
+                     "pair_statistics": self.spec.pair_statistics},
+            "region_nside": self.metadata.nside_region,
+            "frame": self.metadata.frame,
+            "cosmology_free": True,
+            "products": prods,
+        }
+
+    def __repr__(self) -> str:
+        kinds = ", ".join(f"{n}:{p.kind}" for n, p in self.products.items())
+        return (f"MeasurementSet({self.spec.estimator_family}/"
+                f"{self.spec.statistic}; {kinds})")
 
     def check_invariants(self, *, _inject_cosmology: bool = False) -> None:
         if _inject_cosmology or hasattr(self.metadata, "cosmology"):
