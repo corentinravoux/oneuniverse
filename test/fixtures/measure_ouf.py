@@ -37,6 +37,36 @@ def synthetic_point_view(tmp: Path, *, n: int = 3000, seed: int = 0,
     return DatasetView.from_path(out.parent)
 
 
+def synthetic_lightcurve_view(tmp: Path, *, n_obj: int = 20, n_epoch: int = 8,
+                              seed: int = 0, name: str = "lc") -> DatasetView:
+    """Synthetic OUF LIGHTCURVE dataset (one row per source + per-epoch flux)."""
+    from oneuniverse.data._converter_lightcurve import (
+        write_ouf_lightcurve_dataset)
+    from oneuniverse.data.format_spec import ONEUNIVERSE_SUBDIR
+    rng = np.random.default_rng(seed)
+    objects = pd.DataFrame({
+        "object_id": np.arange(n_obj, dtype=np.int64),
+        "ra": rng.uniform(0.0, 360.0, n_obj),
+        "dec": rng.uniform(-60.0, 60.0, n_obj),
+        "z": rng.uniform(0.01, 0.5, n_obj),
+        "z_type": ["spec"] * n_obj,
+        "z_err": rng.uniform(1e-4, 1e-3, n_obj),
+    })
+    rows = []
+    for oid in objects["object_id"]:
+        for t in np.sort(rng.uniform(58000.0, 60000.0, n_epoch)):
+            rows.append({"object_id": int(oid), "mjd": float(t),
+                         "filter": rng.choice(["g", "r", "i"]),
+                         "flux": float(rng.normal(100.0, 5.0)),
+                         "flux_err": 1.0, "flag": 0})
+    survey_dir = tmp / name
+    write_ouf_lightcurve_dataset(
+        objects=objects, epochs=pd.DataFrame(rows), survey_path=survey_dir,
+        survey_name=name, survey_type="transient", loader_name="syn",
+        loader_version="0")
+    return DatasetView.from_ou_dir(survey_dir / ONEUNIVERSE_SUBDIR)
+
+
 def synthetic_pv_view(tmp: Path, *, n: int = 2000, seed: int = 0,
                       name: str = "pv") -> DatasetView:
     """Synthetic peculiar-velocity OUF POINT dataset (distance indicators)."""
