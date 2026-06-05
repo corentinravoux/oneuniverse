@@ -38,10 +38,19 @@ call site.
 - `oneuniverse/combine/` — `WeightedCatalog` + Weight ABC +
   primitives (FKP, IVar, HealpixMap, PDF, BOSS combiner). The
   deprecated `oneuniverse.weight` shim was deleted 2026-05-28.
-- `oneuniverse/measure/` — **moved to Pillar 2 (2026-05-29).** A
-  separate `onemeasure` package will own `MeasurementSet` + builders
-  + adapters. `oneuniverse` produces typed parquet artefacts on
-  disk; `onemeasure` reads them.
+- `oneuniverse/measure/` — **the P1→P2 connection (owner decision
+  2026-06-05).** Lives **inside `oneuniverse`** (reversing the
+  2026-05-29 "separate `onemeasure` package" plan). It builds the
+  **Universal DataProduct + MeasurementSet** (the general output
+  format other packages adapt to; external connectors later) from OUF
+  data: select / clean / weight / randoms (ingest **or** generate) /
+  window / n(z) / photo-z kernel / region / measurement-spec. Stays
+  **cosmology-free** (the no-cosmology-in-P1 rule holds — cosmology
+  enters at the P2 estimator call). Build probe-by-probe, galaxy
+  clustering first. Design:
+  [`plans/2026-06-05-pillar2-definition.md`](plans/2026-06-05-pillar2-definition.md),
+  [`research/2026-06-05-p1-to-p2-measurement-requirements.md`](research/2026-06-05-p1-to-p2-measurement-requirements.md),
+  [`research/2026-06-05-survey-landscape-v2-agnostic.md`](research/2026-06-05-survey-landscape-v2-agnostic.md).
 - `oneuniverse/simulation/` — **Pillar 3 (OUF-Sim)**, standalone.
   Types for the simulation storage + orchestration substrate:
   `OUFSimManifest`, `ExecutionPlan`/`BackendCapabilities` (optimisation
