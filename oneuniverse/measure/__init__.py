@@ -9,7 +9,9 @@ from oneuniverse.measure.clustering import build_galaxy_clustering
 from oneuniverse.measure.dataproduct import PointSet
 from oneuniverse.measure.lensing import build_3x2pt, build_cosmic_shear
 from oneuniverse.measure.measurement_set import MeasurementSet
+from oneuniverse.measure.pvsn import build_peculiar_velocity, build_sn_hubble
 from oneuniverse.measure.spec import MeasurementSpec
 
 __all__ = ["build_galaxy_clustering", "build_cosmic_shear", "build_3x2pt",
+           "build_peculiar_velocity", "build_sn_hubble",
            "MeasurementSet", "MeasurementSpec", "PointSet"]
