@@ -79,6 +79,18 @@ class MeasurementSet:
         return (f"MeasurementSet({self.spec.estimator_family}/"
                 f"{self.spec.statistic}; {kinds})")
 
+    # -- on-disk handoff form (the P1->P2 boundary across processes) -------
+    def to_dir(self, path):
+        """Persist to a self-describing directory (parquet + npy + JSON)."""
+        from oneuniverse.measure.io import save_measurement_set
+        return save_measurement_set(self, path)
+
+    @classmethod
+    def from_dir(cls, path) -> "MeasurementSet":
+        """Reconstruct a MeasurementSet written by :meth:`to_dir`."""
+        from oneuniverse.measure.io import load_measurement_set
+        return load_measurement_set(path)
+
     def check_invariants(self, *, _inject_cosmology: bool = False) -> None:
         if _inject_cosmology or hasattr(self.metadata, "cosmology"):
             raise ValueError(

@@ -17,6 +17,8 @@ from oneuniverse.measure.lensing import build_3x2pt, build_cosmic_shear
 from oneuniverse.measure.links import SubObjectLinks
 from oneuniverse.measure.lya import build_lya
 from oneuniverse.measure.mapcross import build_map_cross
+from oneuniverse.measure.io import (load_measurement_set,
+                                    save_measurement_set)
 from oneuniverse.measure.measurement_set import MeasurementSet
 from oneuniverse.measure.pvsn import build_peculiar_velocity, build_sn_hubble
 from oneuniverse.measure.spec import MeasurementSpec
@@ -28,4 +30,5 @@ __all__ = ["build_galaxy_clustering", "build_cosmic_shear", "build_3x2pt",
            "build_map_cross", "MeasurementSet", "MeasurementSpec",
            "PointSet", "Sightline", "FieldMap", "SubObjectLinks",
            "CovariancePlan", "CovarianceHandle", "NamedWeights",
-           "assemble_named_weights", "assemble_weight"]
+           "assemble_named_weights", "assemble_weight",
+           "save_measurement_set", "load_measurement_set"]
