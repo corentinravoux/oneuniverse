@@ -23,6 +23,24 @@ found and fixed.
 
 ---
 
+## Resolution status (post-review fixes, 2026-06-05)
+
+| Item | Status | What was done |
+|---|---|---|
+| F1 OUF version drift | ✅ fixed | LIGHTCURVE writer uses canonical `FORMAT_VERSION` + regression test |
+| F2 `summary()` not JSON-safe | ✅ fixed | tuple pair keys stringified + `json.dumps` test |
+| H1 loader over-advertising | ✅ fixed | `SurveyConfig.status` (ready/planned); `list_surveys(status=)`, `survey_status()` |
+| H2 no on-disk MeasurementSet | ✅ fixed | `to_dir`/`from_dir` (parquet+npy+JSON); round-trips all 3 subtypes |
+| M1 window inferred from data | ✅ fixed | `window_from_mask(completeness)`; `footprint_from_positions` = stop-gap |
+| M2 symbolic cosmology guard | ✅ fixed | `check_invariants` scans catalog columns for cosmology-derived names |
+| M4 stale root CLAUDE.md | ✅ fixed | OUF 2.5 / 781 tests / measure built |
+| L1 map_cross randoms | ✅ fixed | `build_map_cross(randoms="generate")` |
+| L2 unused `attributes` | ✅ fixed | `build_cosmic_shear` records shape columns |
+| **M3 real-data for other probes** | ⏳ open | only clustering validated on real data |
+| L3 3×2pt metadata redundancy · L4 plan residue | ⏳ open | cosmetic |
+
+---
+
 ## Fixed during this review
 
 - **✅ F1 — OUF format-version drift (bug).**
