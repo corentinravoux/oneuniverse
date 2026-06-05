@@ -30,3 +30,18 @@ class PointSet(DataProduct):
     tomo_bin: Optional[np.ndarray] = None
 
     kind: ClassVar[str] = "pointset"
+
+
+@dataclass(kw_only=True)
+class Sightline(DataProduct):
+    los: pd.DataFrame = None          # sightline_id, ra, dec, z_source, region_id
+    delta: object = None              # list of per-LOS δ_F(λ)
+    mask: object = None               # list of per-LOS weights
+    continuum: object = None
+    resolution: object = None
+
+    kind: ClassVar[str] = "sightline"
+
+    @property
+    def n_sightlines(self) -> int:
+        return len(self.los)
