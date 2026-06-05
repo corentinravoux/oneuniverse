@@ -11,6 +11,16 @@ from oneuniverse.data.format_spec import DataGeometry
 from oneuniverse.data.manifest import LoaderSpec
 
 
+def synthetic_healpix_map(*, nside: int = 64, seed: int = 0):
+    """Return (values, mask) for a synthetic HEALPix field (κ/y-like)."""
+    rng = np.random.default_rng(seed)
+    npix = hp.nside2npix(nside)
+    values = rng.standard_normal(npix)
+    theta, _ = hp.pix2ang(nside, np.arange(npix), nest=True)
+    mask = theta < (np.pi / 2)          # northern half-sky covered
+    return values, mask
+
+
 def synthetic_point_view(tmp: Path, *, n: int = 3000, seed: int = 0,
                          name: str = "synth") -> DatasetView:
     """Write a synthetic galaxy OUF POINT dataset; return its DatasetView."""

@@ -45,3 +45,18 @@ class Sightline(DataProduct):
     @property
     def n_sightlines(self) -> int:
         return len(self.los)
+
+
+@dataclass(kw_only=True)
+class FieldMap(DataProduct):
+    values: np.ndarray = None         # HEALPix vector (or flattened voxel grid)
+    mask: np.ndarray = None
+    nside: int = 0
+    nest: bool = True
+    axes: object = None               # WCS/axis metadata for cubes (optional)
+
+    kind: ClassVar[str] = "fieldmap"
+
+    @property
+    def npix(self) -> int:
+        return int(self.values.shape[0])
