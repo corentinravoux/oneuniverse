@@ -41,13 +41,17 @@ def build_galaxy_clustering(
                                    nside=nside_window)
     # 6 n(z) (weighted)
     nz = nz_from_spec_z(cat["z"].to_numpy(), edges=nz_edges, weights=w)
-    # 4 randoms (ingest | generate)
+    # 4 randoms (ingest | generate | none) — explicit, no silent fall-through
     if isinstance(randoms, DatasetView):
         rnd, source = randoms_from_view(randoms)
     elif randoms == "generate":
         rnd, source = generate_randoms(win, nz, n_randoms=n_randoms, seed=seed)
-    else:
+    elif randoms == "none":
         rnd, source = None, None
+    else:
+        raise ValueError(
+            f"build_galaxy_clustering: randoms must be a DatasetView (ingest), "
+            f"'generate', or 'none'; got {randoms!r}")
     # 8 region map (shared scheme; applied to data + randoms)
     region = assign_regions(cat["ra"].to_numpy(), cat["dec"].to_numpy(),
                             nside=nside_region)

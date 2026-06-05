@@ -56,6 +56,16 @@ def test_build_galaxy_clustering_ingests_randoms_view(tmp_path):
     ms.check_invariants()
 
 
+def test_unknown_randoms_arg_raises(tmp_path):
+    """A typo like randoms='generated' must error, not silently drop randoms."""
+    view = synthetic_point_view(tmp_path, n=500, seed=8)
+    with pytest.raises(ValueError, match="randoms must be"):
+        build_galaxy_clustering(view, tracer="gal", z_range=(0.1, 1.0),
+                                weights=[ColumnWeight("weight_comp")],
+                                nz_edges=np.linspace(0, 1.2, 13),
+                                randoms="generated")     # typo
+
+
 def test_invariants_reject_cosmology(tmp_path):
     view = synthetic_point_view(tmp_path, n=1000, seed=8)
     ms = build_galaxy_clustering(view, tracer="gal", z_range=(0.1, 1.0),
