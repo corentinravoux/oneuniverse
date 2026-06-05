@@ -28,7 +28,9 @@ class MeasurementSet:
                 raise ValueError(
                     f"product {name!r}: region_map length {n} != catalog "
                     f"length {len(catalog)}")
-            if p.metadata.nside_region != nside:
+            # Sky maps (FieldMap) are not per-object jackknifed: empty
+            # region_map exempts them from the shared-NSIDE invariant.
+            if n > 0 and p.metadata.nside_region != nside:
                 raise ValueError(
                     f"product {name!r}: region NSIDE {p.metadata.nside_region}"
                     f" != set NSIDE {nside} (shared region_map invariant)")
