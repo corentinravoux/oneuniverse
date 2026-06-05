@@ -1,5 +1,11 @@
 # Cosmology Survey Data Landscape — Technical Reference
 
+> **Companion:** [`2026-06-05-survey-landscape-v2-agnostic.md`](2026-06-05-survey-landscape-v2-agnostic.md)
+> is the survey-**agnostic** index over this doc (organised by observable/probe,
+> + mid-2026 currency refresh + new classes: LIM, radio continuum, strong-lens
+> time-delay, cosmic chronometers). This doc remains the detailed per-survey
+> column reference.
+
 **Date:** 2026-05-28
 **Purpose:** Catalogue every major class of cosmology survey dataset that
 `oneuniverse` should be able to ingest, with enough technical detail to
