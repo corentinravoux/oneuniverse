@@ -47,6 +47,7 @@ def get_loader(name: str):
 
 def list_surveys(
     survey_type: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> Dict[str, str]:
     """Return ``{name: description}`` for registered surveys.
 
@@ -55,14 +56,32 @@ def list_surveys(
     survey_type : str or None
         If given, filter to surveys of this type
         (e.g. ``"spectroscopic"``, ``"peculiar_velocity"``).
+    status : str or None
+        If given (``"ready"`` / ``"planned"``), filter to that implementation
+        status. ``"ready"`` loaders return data; ``"planned"`` loaders are
+        registered scaffolds whose ``load()`` raises ``NotImplementedError``.
+        Default ``None`` returns all, with ``" [planned …]"`` appended to the
+        description of non-ready loaders so discovery is never silent.
     """
     out = {}
     for name, cls in sorted(_REGISTRY.items()):
         cfg = cls.config
         if survey_type is not None and cfg.survey_type != survey_type:
             continue
-        out[name] = cfg.description
+        st = getattr(cfg, "status", "ready")
+        if status is not None and st != status:
+            continue
+        out[name] = cfg.description if st == "ready" \
+            else f"{cfg.description} [planned — not yet implemented]"
     return out
+
+
+def survey_status(name: str) -> str:
+    """Return the implementation status (``"ready"`` / ``"planned"``) of *name*."""
+    if name not in _REGISTRY:
+        available = ", ".join(sorted(_REGISTRY)) or "(none)"
+        raise KeyError(f"Unknown survey '{name}'. Available: {available}")
+    return getattr(_REGISTRY[name].config, "status", "ready")
 
 
 def list_survey_types() -> List[str]:

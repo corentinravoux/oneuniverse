@@ -28,6 +28,7 @@ class CosmicFlows4Loader(BaseSurveyLoader):
     config = SurveyConfig(
         name="cosmicflows4",
         survey_type="peculiar_velocity",
+        status="planned",
         description="CosmicFlows-4 — ~56K galaxies, z < 0.07, TF/FP/SBF/SNIa compilation",
         column_groups=("core", "peculiar_velocity"),
         characteristic_fields={

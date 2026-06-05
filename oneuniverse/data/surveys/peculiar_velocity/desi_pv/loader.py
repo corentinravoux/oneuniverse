@@ -28,6 +28,7 @@ class DESIPVLoader(BaseSurveyLoader):
     config = SurveyConfig(
         name="desi_pv",
         survey_type="peculiar_velocity",
+        status="planned",
         description="DESI Peculiar Velocity — ~150K FP+TF galaxies, z < 0.1",
         column_groups=("core", "spectroscopic", "peculiar_velocity"),
         characteristic_fields={

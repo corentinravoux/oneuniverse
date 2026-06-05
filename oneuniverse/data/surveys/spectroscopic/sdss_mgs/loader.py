@@ -29,6 +29,7 @@ class SDSSMGSLoader(BaseSurveyLoader):
     config = SurveyConfig(
         name="sdss_mgs",
         survey_type="spectroscopic",
+        status="planned",
         description="SDSS Main Galaxy Sample DR17 — r < 17.77, z ~ 0.01–0.25, ~700K gal",
         column_groups=("core", "spectroscopic"),
         characteristic_fields={
