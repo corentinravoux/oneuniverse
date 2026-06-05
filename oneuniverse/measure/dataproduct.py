@@ -1,0 +1,30 @@
+"""DataProduct ABC + PointSet (galaxy clustering carrier). Cosmology-free."""
+from __future__ import annotations
+
+import abc
+from dataclasses import dataclass
+from typing import ClassVar, Optional
+
+import numpy as np
+import pandas as pd
+
+from oneuniverse.measure.metadata import ProductMetadata, Provenance
+
+
+@dataclass
+class DataProduct(abc.ABC):
+    region_map: np.ndarray
+    metadata: ProductMetadata
+    provenance: Provenance
+
+    kind: ClassVar[str] = "abstract"
+
+
+@dataclass(kw_only=True)
+class PointSet(DataProduct):
+    catalog: pd.DataFrame = None
+    randoms: Optional[pd.DataFrame] = None
+    nz: object = None                 # Nz | None
+    window: object = None             # Window | None
+
+    kind: ClassVar[str] = "pointset"
