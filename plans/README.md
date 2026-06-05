@@ -15,12 +15,15 @@ The whole stack is organised around three pillars:
   moved to Pillar 2 on 2026-05-29).
   See [`2026-05-28-pillar1-data-combine-measure.md`](2026-05-28-pillar1-data-combine-measure.md).
 
-- **Pillar 2 — `MeasurementSet` + External Scientific Tool
-  Interfaces.** A new `onemeasure` package owns the `MeasurementSet`
-  contract + builders (window, random, jackknife, n(z),
-  multi-tracer) + adapters to `flip`, `pycorr`, `picca`, future
-  `onecorr`. Pillar 2 is where cosmology enters.
-  See [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
+- **Pillar 2 — Estimators, Likelihoods, the DataProduct boundary.**
+  The P1→P2 input contract is a **Universal DataProduct** (PointSet /
+  Sightline / FieldMap). A new `onemeasure` package owns the contract
+  + builders (window, random, jackknife, n(z)) + adapters; a new
+  `onecorr` owns cross / multi-tracer. flip is **one of five** built
+  estimator families (flip, p1desi, lyapower, lyavoid, lelantos).
+  Pillar 2 is where cosmology enters.
+  **Canonical:** [`2026-06-05-pillar2-definition.md`](2026-06-05-pillar2-definition.md)
+  (supersedes [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md)).
 
 - **Pillar 3 — Simulation / Digital Twin.** Constrained Bayesian
   forward modelling of the actual Universe; per-survey observation
@@ -98,8 +101,9 @@ Pillar 2 begins with Phase 0: standing up the new `onemeasure` package
 (MeasurementSet + builders + adapters) against the current OUF 2.4
 format. Per-phase detailed plans get written when work begins.
 
-- Pillar 2 phases A–F: see
-  [`2026-05-28-pillar2-external-interfaces.md`](2026-05-28-pillar2-external-interfaces.md).
+- Pillar 2 phases P0–PF (DataProduct boundary → flip adopt → pycorr →
+  Sightline/Lyα → FieldMap → onecorr → cobaya joint): see the canonical
+  [`2026-06-05-pillar2-definition.md`](2026-06-05-pillar2-definition.md).
 
 Pillar 3 (simulation storage + orchestration; digital-twin substrate)
 started 2026-06-01 with an architecture proposal. Standalone package;

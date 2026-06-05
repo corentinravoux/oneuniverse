@@ -1,5 +1,13 @@
 # Pillar 2 — `MeasurementSet` + External Scientific Tool Interfaces
 
+> **⚠️ SUPERSEDED (2026-06-05)** by
+> [`2026-06-05-pillar2-definition.md`](2026-06-05-pillar2-definition.md), the
+> canonical Pillar-2 definition. Two decisions changed since this doc: the P1→P2
+> contract is now a **Universal DataProduct** (point catalogs + Lyα sightlines +
+> maps), not the galaxy-catalog-only `MeasurementSet` below; and flip is treated
+> as **one estimator family of five** (flip + p1desi + lyapower + lyavoid +
+> lelantos), not "Pillar 2". Kept for history.
+
 **Date:** 2026-05-28 (revised 2026-05-29 — `MeasurementSet`
 construction reassigned from Pillar 1 to Pillar 2).
 **Scope:** `MeasurementSet` construction, window / random / jackknife /
