@@ -256,4 +256,9 @@ def test_multitracer_shared_region_and_pair_statistics():
                            pair_statistics={("a", "b"): "w_theta"})
     ms = MeasurementSet({"a": a, "b": b}, spec, meta)
     ms.check_invariants()
-    assert ms.summary()["spec"]["pair_statistics"][("a", "b")] == "w_theta"
+    # spec keeps tuple keys; summary() is JSON-safe (stringified pair keys)
+    assert ms.spec.pair_statistics[("a", "b")] == "w_theta"
+    import json
+    s = ms.summary()
+    assert s["spec"]["pair_statistics"]["a×b"] == "w_theta"
+    json.dumps(s)                                  # must not raise (F2)

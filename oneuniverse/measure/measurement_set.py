@@ -58,12 +58,16 @@ class MeasurementSet:
                              has_distance_extras=p.distance_extras is not None,
                              is_cube=p.axes is not None)
             prods[name] = entry
+        ps = self.spec.pair_statistics
         return {
             "n_products": len(self.products),
             "spec": {"statistic": self.spec.statistic,
                      "estimator_family": self.spec.estimator_family,
                      "pairs": [list(pair) for pair in self.spec.pairs],
-                     "pair_statistics": self.spec.pair_statistics},
+                     # JSON-safe: tuple pair keys -> "a×b" strings
+                     "pair_statistics": (
+                         {f"{a}×{b}": v for (a, b), v in ps.items()}
+                         if ps else None)},
             "region_nside": self.metadata.nside_region,
             "frame": self.metadata.frame,
             "cosmology_free": True,
