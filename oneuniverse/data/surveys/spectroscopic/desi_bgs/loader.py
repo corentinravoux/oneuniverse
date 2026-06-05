@@ -31,6 +31,7 @@ class DESIBGSLoader(BaseSurveyLoader):
     config = SurveyConfig(
         name="desi_bgs",
         survey_type="spectroscopic",
+        status="planned",
         description="DESI Bright Galaxy Survey DR1 — r < 19.5, z ~ 0.01–0.6, ~15M gal",
         column_groups=("core", "spectroscopic"),
         characteristic_fields={

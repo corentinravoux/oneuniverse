@@ -29,6 +29,7 @@ class PantheonPlusLoader(BaseSurveyLoader):
     config = SurveyConfig(
         name="pantheonplus",
         survey_type="snia",
+        status="planned",
         description="Pantheon+ — ~1700 SNe Ia, z = 0.01–2.3, standardizable candles",
         column_groups=("core", "peculiar_velocity"),
         characteristic_fields={

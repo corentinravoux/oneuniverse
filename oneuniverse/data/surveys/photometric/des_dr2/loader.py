@@ -28,6 +28,7 @@ class DESDR2Loader(BaseSurveyLoader):
     config = SurveyConfig(
         name="des_dr2",
         survey_type="photometric",
+        status="planned",
         description="DES DR2 — grizY photometry, photo-z, ~700M objects, 5000 deg²",
         column_groups=("core", "photometric"),
         characteristic_fields={

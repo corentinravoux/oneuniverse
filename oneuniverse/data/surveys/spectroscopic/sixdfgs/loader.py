@@ -28,6 +28,7 @@ class SixdFGSLoader(BaseSurveyLoader):
     config = SurveyConfig(
         name="sixdfgs",
         survey_type="spectroscopic",
+        status="planned",
         description="6dF Galaxy Survey — K < 12.65, z ~ 0–0.2, ~136K gal (southern sky)",
         column_groups=("core", "spectroscopic"),
         characteristic_fields={

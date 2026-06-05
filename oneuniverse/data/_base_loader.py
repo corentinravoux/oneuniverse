@@ -47,6 +47,12 @@ class SurveyConfig:
                             # "peculiar_velocity", "snia", "radio", "test"
     description: str        # one-line human-readable summary
 
+    # Implementation status: "ready" = load() works; "planned" = registered
+    # scaffold whose loader raises NotImplementedError until the real survey
+    # files + a round-trip are wired in. Discovery APIs surface this so a user
+    # is never surprised by a NotImplementedError from an advertised survey.
+    status: str = "ready"
+
     # Schema
     column_groups: Tuple[str, ...] = ("core",)
 

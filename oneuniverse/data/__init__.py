@@ -33,6 +33,7 @@ from oneuniverse.data._registry import (  # noqa: F401
     get_survey_config,
     list_surveys,
     list_survey_types,
+    survey_status,
 )
 from oneuniverse.data.converter import (  # noqa: F401
     convert_survey,
@@ -118,6 +119,7 @@ __all__ = [
     # Main API
     "load_catalog",
     "list_surveys",
+    "survey_status",
     "list_survey_types",
     "get_survey_config",
     # Selections
