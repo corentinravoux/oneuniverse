@@ -37,6 +37,57 @@ def synthetic_point_view(tmp: Path, *, n: int = 3000, seed: int = 0,
     return DatasetView.from_path(out.parent)
 
 
+def synthetic_pv_view(tmp: Path, *, n: int = 2000, seed: int = 0,
+                      name: str = "pv") -> DatasetView:
+    """Synthetic peculiar-velocity OUF POINT dataset (distance indicators)."""
+    rng = np.random.default_rng(seed)
+    ra = rng.uniform(0.0, 360.0, n)
+    dec = rng.uniform(-60.0, 60.0, n)
+    z = np.clip(rng.uniform(0.0, 0.08, n), 1e-3, 0.1)
+    df = pd.DataFrame({
+        "ra": ra, "dec": dec, "z": z.astype(np.float32),
+        "z_type": np.full(n, "pv"), "z_err": np.full(n, 1e-4, dtype=np.float32),
+        "galaxy_id": np.arange(n, dtype=np.int64),
+        "survey_id": np.zeros(n, dtype=np.int64),
+        "mu": (35.0 + 5.0 * np.log10(z / 0.02)).astype(np.float32),
+        "mu_err": rng.uniform(0.1, 0.3, n).astype(np.float32),
+        "eta": rng.normal(0.0, 0.05, n).astype(np.float32),
+        "v_pec": rng.normal(0.0, 300.0, n).astype(np.float32),
+        "sigma_v": np.full(n, 250.0, dtype=np.float32),
+        "_original_row_index": np.arange(n, dtype="i8"),
+        "_healpix32": hp.ang2pix(32, ra, dec, nest=True, lonlat=True).astype("i4"),
+    })
+    out = tmp / name / "oneuniverse"
+    write_ouf_dataset(df=df, out_dir=out, survey_name=name,
+                      survey_type="peculiar_velocity", geometry=DataGeometry.POINT,
+                      loader=LoaderSpec(name=name, version="0"))
+    return DatasetView.from_path(out.parent)
+
+
+def synthetic_sn_view(tmp: Path, *, n: int = 200, seed: int = 0,
+                      name: str = "sn"):
+    """Synthetic SN Ia OUF POINT dataset (z + mu + mu_err). Returns (view, n)."""
+    rng = np.random.default_rng(seed)
+    ra = rng.uniform(0.0, 360.0, n)
+    dec = rng.uniform(-60.0, 60.0, n)
+    z = np.clip(rng.uniform(0.01, 1.0, n), 0.01, 1.2)
+    df = pd.DataFrame({
+        "ra": ra, "dec": dec, "z": z.astype(np.float32),
+        "z_type": np.full(n, "spec"), "z_err": np.full(n, 1e-3, dtype=np.float32),
+        "galaxy_id": np.arange(n, dtype=np.int64),
+        "survey_id": np.zeros(n, dtype=np.int64),
+        "mu": (5.0 * np.log10(z) + 43.0).astype(np.float32),
+        "mu_err": rng.uniform(0.1, 0.2, n).astype(np.float32),
+        "_original_row_index": np.arange(n, dtype="i8"),
+        "_healpix32": hp.ang2pix(32, ra, dec, nest=True, lonlat=True).astype("i4"),
+    })
+    out = tmp / name / "oneuniverse"
+    write_ouf_dataset(df=df, out_dir=out, survey_name=name,
+                      survey_type="supernova", geometry=DataGeometry.POINT,
+                      loader=LoaderSpec(name=name, version="0"))
+    return DatasetView.from_path(out.parent), n
+
+
 def synthetic_shear_view(tmp: Path, *, n: int = 3000, seed: int = 0,
                          kind: str = "metacal", with_pdf: bool = False,
                          n_tomo: int = 2, name: str = "src") -> DatasetView:
