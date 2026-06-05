@@ -27,7 +27,9 @@ from oneuniverse.data._hashing import hash_bytes
 from oneuniverse.data.format_spec import (
     COMPRESSION,
     DEFAULT_PARTITION_ROWS,
+    FORMAT_VERSION,
     ONEUNIVERSE_SUBDIR,
+    SCHEMA_VERSION,
     DataGeometry,
     validate_columns,
 )
@@ -179,8 +181,8 @@ def write_ouf_lightcurve_dataset(
         )
 
     manifest = Manifest(
-        oneuniverse_format_version="2.1.0",
-        oneuniverse_schema_version="2.1.0",
+        oneuniverse_format_version=FORMAT_VERSION,
+        oneuniverse_schema_version=SCHEMA_VERSION,
         geometry=DataGeometry.LIGHTCURVE,
         survey_name=survey_name,
         survey_type=survey_type,
