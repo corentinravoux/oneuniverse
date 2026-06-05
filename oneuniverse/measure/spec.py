@@ -14,3 +14,4 @@ class MeasurementSpec:
     binning: Optional[dict] = None
     coords: str = "on_sky"            # comoving conversion happens in P2
     covariance: str = "jackknife"
+    pair_statistics: Optional[dict] = None   # per-pair statistic (3x2pt etc.)

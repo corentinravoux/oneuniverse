@@ -7,8 +7,9 @@ Cosmology enters only at the Pillar-2 estimator call site.
 """
 from oneuniverse.measure.clustering import build_galaxy_clustering
 from oneuniverse.measure.dataproduct import PointSet
+from oneuniverse.measure.lensing import build_3x2pt, build_cosmic_shear
 from oneuniverse.measure.measurement_set import MeasurementSet
 from oneuniverse.measure.spec import MeasurementSpec
 
-__all__ = ["build_galaxy_clustering", "MeasurementSet", "MeasurementSpec",
-           "PointSet"]
+__all__ = ["build_galaxy_clustering", "build_cosmic_shear", "build_3x2pt",
+           "MeasurementSet", "MeasurementSpec", "PointSet"]
