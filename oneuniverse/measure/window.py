@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import healpy as hp
 import numpy as np
@@ -17,12 +18,19 @@ def _ang2pix(ra, dec, nside):
 class Window:
     nside: int
     mask: np.ndarray                 # float completeness per NEST pixel [0,1]
+    systematics: Optional[dict] = None   # name -> HEALPix map (depth/seeing/PSF)
+    polygon_path: Optional[str] = None   # mangle/MOC escape hatch (exact masks)
 
     def contains(self, ra, dec) -> np.ndarray:
         return self.mask[_ang2pix(ra, dec, self.nside)] > 0.0
 
     def covered_fraction(self) -> float:
         return float((self.mask > 0).sum()) / self.mask.size
+
+    def with_systematics(self, **maps) -> "Window":
+        """Return a copy carrying named depth/systematics HEALPix maps."""
+        return Window(nside=self.nside, mask=self.mask, systematics=dict(maps),
+                      polygon_path=self.polygon_path)
 
 
 def footprint_from_positions(ra, dec, *, nside: int = 256) -> Window:
