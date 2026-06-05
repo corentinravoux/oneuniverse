@@ -27,3 +27,26 @@ class CovarianceHandle:
                     f"{mat.shape} != ({self.n},{self.n})")
             self._cache = mat
         return self._cache
+
+
+@dataclass
+class CovariancePlan:
+    """How a MeasurementSet's covariance will be built (no cosmology stored).
+
+    ``jackknife`` uses the shared region map; ``mocks`` references a mock suite;
+    ``analytic`` carries the ingredients (n̄, shot noise, window multipoles) the
+    Pillar-2 estimator needs. ``handle`` attaches an external row-correlated
+    matrix (e.g. Pantheon+).
+    """
+    kind: str                                  # jackknife | mocks | analytic | external
+    region_nside: Optional[int] = None
+    mocks_handle: Optional[str] = None
+    handle: Optional["CovarianceHandle"] = None
+    ingredients: Optional[dict] = None
+
+    def __post_init__(self) -> None:
+        known = {"jackknife", "mocks", "analytic", "external"}
+        if self.kind not in known:
+            raise ValueError(
+                f"CovariancePlan.kind must be one of {sorted(known)}, "
+                f"got {self.kind!r}")
