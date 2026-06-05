@@ -37,6 +37,32 @@ def synthetic_point_view(tmp: Path, *, n: int = 3000, seed: int = 0,
     return DatasetView.from_path(out.parent)
 
 
+def synthetic_sightline_view(tmp: Path, *, n_los: int = 12, n_pix: int = 20,
+                             seed: int = 0, name: str = "lya") -> DatasetView:
+    """Synthetic OUF SIGHTLINE dataset (Lyα δ_F(λ) per line of sight)."""
+    from oneuniverse.data.converter import convert_sightlines
+    rng = np.random.default_rng(seed)
+    objects = pd.DataFrame({
+        "sightline_id": np.arange(n_los, dtype=np.int64),
+        "ra": rng.uniform(0.0, 360.0, n_los),
+        "dec": np.degrees(np.arcsin(rng.uniform(-1, 1, n_los))),
+        "z_source": rng.uniform(2.1, 3.5, n_los).astype(np.float32),
+        "survey_id": "synth_lya",
+        "n_pixels": np.full(n_los, n_pix, dtype=np.int32),
+    })
+    data = pd.DataFrame({
+        "sightline_id": np.repeat(np.arange(n_los, dtype=np.int64), n_pix),
+        "loglam": np.tile(np.linspace(3.55, 3.75, n_pix).astype(np.float32),
+                          n_los),
+        "delta": rng.normal(0.0, 0.2, n_los * n_pix).astype(np.float32),
+        "weight": rng.uniform(0.5, 5.0, n_los * n_pix).astype(np.float32),
+        "cont": rng.uniform(0.8, 1.2, n_los * n_pix).astype(np.float32),
+    })
+    survey_path = tmp / name
+    convert_sightlines(objects, data, survey_path, name, overwrite=True)
+    return DatasetView.from_path(survey_path)
+
+
 def synthetic_lightcurve_view(tmp: Path, *, n_obj: int = 20, n_epoch: int = 8,
                               seed: int = 0, name: str = "lc") -> DatasetView:
     """Synthetic OUF LIGHTCURVE dataset (one row per source + per-epoch flux)."""
