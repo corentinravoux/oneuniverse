@@ -24,7 +24,9 @@ class DataProduct(abc.ABC):
 class PointSet(DataProduct):
     catalog: pd.DataFrame = None
     randoms: Optional[pd.DataFrame] = None
-    nz: object = None                 # Nz | None
+    nz: object = None                 # Nz | dict[int, Nz] | None
     window: object = None             # Window | None
+    photoz: object = None             # ProbabilisticRedshift | None (WL)
+    tomo_bin: Optional[np.ndarray] = None
 
     kind: ClassVar[str] = "pointset"
