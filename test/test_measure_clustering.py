@@ -40,6 +40,22 @@ def test_build_galaxy_clustering_measurement_set(tmp_path):
     assert "region_id" in ps.catalog.columns and "region_id" in ps.randoms.columns
 
 
+def test_build_galaxy_clustering_ingests_randoms_view(tmp_path):
+    """The randoms=<DatasetView> branch ingests official randoms (provenance)."""
+    data = synthetic_point_view(tmp_path, n=3000, seed=8, name="data")
+    rand = synthetic_point_view(tmp_path, n=9000, seed=42, name="randoms")
+    ms = build_galaxy_clustering(
+        data, tracer="gal", z_range=(0.1, 1.0),
+        weights=[ColumnWeight("weight_comp")],
+        nz_edges=np.linspace(0.0, 1.2, 25),
+        randoms=rand, nside_region=4)            # ingest, not generate
+    ps = ms.products["gal"]
+    assert ps.provenance.randoms_source == "ingested"
+    assert ps.randoms is not None and len(ps.randoms) == 9000
+    assert "region_id" in ps.randoms.columns     # shared region applied
+    ms.check_invariants()
+
+
 def test_invariants_reject_cosmology(tmp_path):
     view = synthetic_point_view(tmp_path, n=1000, seed=8)
     ms = build_galaxy_clustering(view, tracer="gal", z_range=(0.1, 1.0),
