@@ -15,25 +15,25 @@ import numpy as np
 
 
 def _cross_r(a, b, box_size, n_bins=12):
-    """Binned cross-correlation r(k) of two equal-shape real fields."""
+    """Binned cross-correlation r(k) of two equal-shape real fields.
+
+    S9: delegates to the canonical mode-binning core
+    (:func:`oneuniverse.simulation.validation.binned_mode_powers`); keeps the
+    gate convention (linear edges over the populated |k| range; empty or
+    zero-power bins skipped). Numerics identical to the previous inline code.
+    """
+    from oneuniverse.simulation.validation import binned_mode_powers
     a = np.asarray(a, float); b = np.asarray(b, float)
     n = a.shape[0]
-    ak = np.fft.rfftn(a); bk = np.fft.rfftn(b)
     kx = np.fft.fftfreq(n, d=box_size / n) * 2 * np.pi
     kz = np.fft.rfftfreq(n, d=box_size / n) * 2 * np.pi
     kxg, kyg, kzg = np.meshgrid(kx, kx, kz, indexing="ij")
     kmag = np.sqrt(kxg ** 2 + kyg ** 2 + kzg ** 2).ravel()
     edges = np.linspace(kmag[kmag > 0].min(), kmag.max(), n_bins + 1)
-    idx = np.digitize(kmag, edges)
-    cross = np.real(ak * np.conj(bk)).ravel()
-    pa = (np.abs(ak) ** 2).ravel(); pb = (np.abs(bk) ** 2).ravel()
-    centres, r = [], []
-    for i in range(1, len(edges)):
-        m = idx == i
-        if m.sum() and pa[m].sum() > 0 and pb[m].sum() > 0:
-            centres.append(0.5 * (edges[i - 1] + edges[i]))
-            r.append(cross[m].sum() / np.sqrt(pa[m].sum() * pb[m].sum()))
-    return np.array(centres), np.array(r)
+    centres, S_aa, S_bb, S_ab, n_modes = binned_mode_powers(
+        a, b, box=box_size, edges=edges)
+    keep = (n_modes > 0) & (S_aa > 0) & (S_bb > 0)
+    return centres[keep], S_ab[keep] / np.sqrt(S_aa[keep] * S_bb[keep])
 
 
 def gate1_consistency(mini_ic: np.ndarray, parent_sub: np.ndarray, *,

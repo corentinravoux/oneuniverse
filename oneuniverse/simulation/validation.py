@@ -42,8 +42,23 @@ class FieldValidation:
     var_b: float
 
 
-def _binned_powers(a: np.ndarray, b: np.ndarray, box: float, n_bins: int):
-    """Return (k, P_aa, P_bb, P_ab) binned in |k|."""
+def binned_mode_powers(a: np.ndarray, b: np.ndarray, *, box: float,
+                       edges: np.ndarray):
+    """**The canonical mode-binning core (S9).** Per-|k|-bin *summed* mode
+    powers of two real fields on the same grid:
+
+        (centres, S_aa, S_bb, S_ab, n_modes)
+
+    Full-length arrays aligned with ``centres = 0.5*(edges[:-1]+edges[1:])``;
+    empty bins carry zero sums and ``n_modes == 0`` (callers decide NaN vs
+    skip). Every field-validation estimator in the package — `validate_field`
+    here, `twin.verify.cross_correlation/power_ratio`,
+    `twin.validation.recover_metrics`, `resim.verify` gates — delegates to
+    this single binning, so one k-convention bug cannot fork four ways.
+    All the usual ratios (r, T, P_a/P_b) are sums-ratios, identical to
+    means-ratios since the mode counts cancel.
+    """
+    a = np.asarray(a, float); b = np.asarray(b, float)
     n = a.shape[0]
     ak = np.fft.rfftn(a); bk = np.fft.rfftn(b)
     kx = np.fft.fftfreq(n, d=box / n) * 2.0 * np.pi
@@ -53,18 +68,37 @@ def _binned_powers(a: np.ndarray, b: np.ndarray, box: float, n_bins: int):
     paa = (np.abs(ak) ** 2).ravel()
     pbb = (np.abs(bk) ** 2).ravel()
     pab = np.real(ak * np.conj(bk)).ravel()
-    pos = kmag > 0
-    edges = np.linspace(kmag[pos].min(), kmag.max(), n_bins + 1)
+    edges = np.asarray(edges, float)
     idx = np.digitize(kmag, edges)
-    k, Paa, Pbb, Pab = [], [], [], []
+    nb = len(edges) - 1
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    S_aa = np.zeros(nb); S_bb = np.zeros(nb); S_ab = np.zeros(nb)
+    n_modes = np.zeros(nb, dtype=int)
     for i in range(1, len(edges)):
         m = idx == i
-        if not m.any():
-            continue
-        k.append(0.5 * (edges[i - 1] + edges[i]))
-        Paa.append(paa[m].mean()); Pbb.append(pbb[m].mean())
-        Pab.append(pab[m].mean())
-    return (np.array(k), np.array(Paa), np.array(Pbb), np.array(Pab))
+        c = int(m.sum())
+        if c:
+            n_modes[i - 1] = c
+            S_aa[i - 1] = paa[m].sum()
+            S_bb[i - 1] = pbb[m].sum()
+            S_ab[i - 1] = pab[m].sum()
+    return centres, S_aa, S_bb, S_ab, n_modes
+
+
+def _binned_powers(a: np.ndarray, b: np.ndarray, box: float, n_bins: int):
+    """Return (k, P_aa, P_bb, P_ab) binned in |k| (means; empty bins skipped)."""
+    n = a.shape[0]
+    kx = np.fft.fftfreq(n, d=box / n) * 2.0 * np.pi
+    kz = np.fft.rfftfreq(n, d=box / n) * 2.0 * np.pi
+    kxg, kyg, kzg = np.meshgrid(kx, kx, kz, indexing="ij")
+    kmag = np.sqrt(kxg ** 2 + kyg ** 2 + kzg ** 2).ravel()
+    pos = kmag > 0
+    edges = np.linspace(kmag[pos].min(), kmag.max(), n_bins + 1)
+    centres, S_aa, S_bb, S_ab, n_modes = binned_mode_powers(
+        a, b, box=box, edges=edges)
+    keep = n_modes > 0
+    nm = n_modes[keep]
+    return (centres[keep], S_aa[keep] / nm, S_bb[keep] / nm, S_ab[keep] / nm)
 
 
 def _k_half(k: np.ndarray, r: np.ndarray) -> float:

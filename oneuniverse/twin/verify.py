@@ -1,7 +1,17 @@
-"""Fourier-space verification: cross-correlation r(k) and power ratio."""
+"""Fourier-space verification: cross-correlation r(k) and power ratio.
+
+S9 consolidation: the mode binning delegates to the canonical core
+:func:`oneuniverse.simulation.validation.binned_mode_powers`; this module
+keeps only the twin k-convention (fundamental-mode-spaced edges
+``kf/2 + i·kf``) and the NaN-for-empty-bins presentation. Numerics are
+identical to the pre-consolidation implementation (same edges, same digitize
+semantics, sums-ratios == means-ratios).
+"""
 from __future__ import annotations
 
 import numpy as np
+
+from oneuniverse.simulation.validation import binned_mode_powers
 
 
 def _bin_kgrid(n, box):
@@ -20,37 +30,32 @@ def _bins(kmag, box, n):
     return idx, edges, centres
 
 
+def _kf_edges(n, box):
+    kf = 2.0 * np.pi / box
+    kny = np.pi * n / box
+    return np.arange(kf / 2, kny, kf)
+
+
 def cross_correlation(a, b, *, box_size):
     """Binned cross-correlation coefficient r(k) of two real fields."""
     a = np.asarray(a, float); b = np.asarray(b, float)
-    n = a.shape[0]
-    ak = np.fft.rfftn(a); bk = np.fft.rfftn(b)
-    kmag = _bin_kgrid(n, box_size)
-    idx, edges, centres = _bins(kmag, box_size, n)
-    cross = np.real(ak * np.conj(bk)).ravel()
-    pa = (np.abs(ak) ** 2).ravel(); pb = (np.abs(bk) ** 2).ravel()
+    edges = _kf_edges(a.shape[0], box_size)
+    centres, S_aa, S_bb, S_ab, _ = binned_mode_powers(
+        a, b, box=box_size, edges=edges)
     r = np.full(len(centres), np.nan)
-    for i in range(1, len(edges)):
-        m = idx == i
-        if m.sum() == 0:
-            continue
-        denom = np.sqrt(pa[m].sum() * pb[m].sum())
-        if denom > 0:
-            r[i - 1] = cross[m].sum() / denom
+    denom = np.sqrt(S_aa * S_bb)
+    good = denom > 0
+    r[good] = S_ab[good] / denom[good]
     return centres, r
 
 
 def power_ratio(a, b, *, box_size):
     """Binned P_a(k)/P_b(k)."""
     a = np.asarray(a, float); b = np.asarray(b, float)
-    n = a.shape[0]
-    ak = np.fft.rfftn(a); bk = np.fft.rfftn(b)
-    kmag = _bin_kgrid(n, box_size)
-    idx, edges, centres = _bins(kmag, box_size, n)
-    pa = (np.abs(ak) ** 2).ravel(); pb = (np.abs(bk) ** 2).ravel()
+    edges = _kf_edges(a.shape[0], box_size)
+    centres, S_aa, S_bb, _, _ = binned_mode_powers(
+        a, b, box=box_size, edges=edges)
     ratio = np.full(len(centres), np.nan)
-    for i in range(1, len(edges)):
-        m = idx == i
-        if m.sum() and pb[m].sum() > 0:
-            ratio[i - 1] = pa[m].sum() / pb[m].sum()
+    good = S_bb > 0
+    ratio[good] = S_aa[good] / S_bb[good]
     return centres, ratio
