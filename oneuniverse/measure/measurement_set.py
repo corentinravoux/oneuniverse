@@ -91,6 +91,46 @@ class MeasurementSet:
         from oneuniverse.measure.io import load_measurement_set
         return load_measurement_set(path)
 
+    def to_sql(self, path):
+        """Export to a SQLite file (the SQL face of the P1→P2 handoff).
+
+        Tables: ``measurement_sets`` (spec + JSON summary), and per PointSet
+        product ``catalog_<name>`` / ``randoms_<name>`` with all scalar
+        columns (weights included). Sightline/FieldMap products contribute
+        their summary row only — bulk arrays stay in :meth:`to_dir` form.
+        """
+        import json
+        import sqlite3
+        from pathlib import Path as _P
+        path = _P(path)
+        con = sqlite3.connect(path)
+        try:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS measurement_sets ("
+                " estimator_family TEXT, statistic TEXT,"
+                " region_nside INTEGER, summary_json TEXT)")
+            con.execute(
+                "INSERT INTO measurement_sets VALUES (?,?,?,?)",
+                (self.spec.estimator_family, self.spec.statistic,
+                 self.metadata.nside_region, json.dumps(self.summary())))
+            for name, p in self.products.items():
+                cat = getattr(p, "catalog", None)
+                if cat is not None:
+                    scalars = [c for c in cat.columns
+                               if cat[c].dtype.kind in "ifbuO"
+                               and not isinstance(cat[c].iloc[0],
+                                                  (list, tuple))]
+                    cat[scalars].to_sql(f"catalog_{name}", con,
+                                        if_exists="replace", index=False)
+                rnd = getattr(p, "randoms", None)
+                if rnd is not None:
+                    rnd.to_sql(f"randoms_{name}", con, if_exists="replace",
+                               index=False)
+            con.commit()
+        finally:
+            con.close()
+        return path
+
     #: catalog column names that imply a cosmology was applied (z->distance).
     #: Their presence violates the cosmology-free contract.
     _FORBIDDEN_COLUMNS = frozenset({
