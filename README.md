@@ -39,8 +39,32 @@ pytest -q            # ~5 min; tests needing real survey files auto-skip
 | Store a simulation so you can query sub-volumes | `write_oufsim_store(...)` / `SimStore` | partial-access sim store |
 | Run a quick particle-mesh sim / resimulate a region | `oneuniverse.simulation` | density / particle fields |
 | Constrain a simulation to look like your data | `oneuniverse.twin` | reconstructed field |
+| **Get it all as a SQL database** | `data.sql.export_sql` / `oufsim.sql.export_sim_sql` / `ms.to_sql()` | a portable SQLite file |
 
 The rest of this README walks through each, from a user's point of view.
+
+### SQL export
+
+Both on-disk formats export to standard SQL — SQLite (stdlib, single portable
+file) or zero-copy DuckDB views over the existing parquet:
+
+```python
+from oneuniverse.data.sql import export_sql, attach_sql_ddl
+export_sql([survey_path, ...], "catalog.sqlite")     # datasets, partitions,
+                                                      # objects, PDFs (BLOBs),
+                                                      # ONEUID, sub-object links
+print(attach_sql_ddl([survey_path]))                  # DuckDB views, no copy
+
+from oneuniverse.simulation.oufsim.sql import export_sim_sql
+export_sim_sql(store, "sim.sqlite")                   # sims, chunk index,
+                                                      # halos/lightcone/tree
+ms.to_sql("measurement.sqlite")                       # a MeasurementSet
+```
+
+Bulk simulation products stay index-only in SQL (the `sim_chunks` table answers
+*which file holds box X* — the same pruning `SimStore` does, in pure SQL);
+catalog-sized products materialise fully. Design + DDL:
+`research/2026-06-10-structural-review-and-sql-design.md` §5.
 
 ---
 
