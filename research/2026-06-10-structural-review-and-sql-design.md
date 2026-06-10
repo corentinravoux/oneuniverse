@@ -478,8 +478,8 @@ DuckDB optional).
 
 | # | Item | Type | Effort |
 |---|---|---|---|
-| 1 | Fix confirmed bugs B1–B5 | bug | S |
-| 2 | SQL export P1–P4 (SQLite materialize, both formats) | feature (owner ask) | M |
+| 1 | Fix confirmed bugs B1–B5 | bug | S — **✅ done (incl. B11)** |
+| 2 | SQL export P1–P4 (SQLite materialize, both formats) | feature (owner ask) | M — **✅ done (P1–P6: `data/sql.py`, `oufsim/sql.py`, `ms.to_sql`, attach DDL)** |
 | 3 | S9 consolidate 4 validation modules → `simulation.validation` | debt | S |
 | 4 | B4 ingest-randoms filter + weight | bug | S |
 | 5 | §4.3 move partition stats out of OUF manifest (format 2.6) + unify index contract | structure | M |
