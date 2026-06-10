@@ -196,6 +196,14 @@ Severity: **C**ritical (wrong results / crash on valid input) · **M**edium ·
   (`json.dump(..., open(...))`). Safe on CPython by refcounting; a real leak
   on PyPy and a Windows file-lock hazard. *Fix:* `Path.write_text/read_text`.
 
+- **B11 (C) — `NamedWeights` silently dropped on load** *(found while fixing
+  B2)*: `_load_product` built the `weights` object from `weights.npz` but
+  **never passed it to the `PointSet` constructor** — every loaded
+  MeasurementSet came back with `weights=None`, untested because the H2
+  round-trip tests never covered named weights. A textbook case for why every
+  optional atom slot needs round-trip coverage. *Fix:* pass `weights=weights`;
+  the B2 regression test now covers the full named-weights round-trip.
+
 ### Code-confirmed (read, not executed)
 
 - **B6 (M) — Linkback unsupported for parquet/HDF5 originals**
@@ -494,5 +502,7 @@ review caught with three real bugs before any user did. The single biggest
 the two databases — §5 specifies it in full, and its design falls naturally
 out of the package's own materialize-vs-wrap philosophy.
 
-*Post-review note: B1, B2, B3, B4, B5 were fixed (with regression tests) in
-the commits following this review; see git history.*
+*Post-review note: B1, B2, B3, B4, B5 and B11 were fixed (with regression
+tests, `test/test_measure_review_bugs.py`) in the commits following this
+review; fixing B2 exposed B11. B6–B10 and all structural items (S1–S11) plus
+the SQL design (§5) remain open, prioritised in §6.*
