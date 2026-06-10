@@ -27,7 +27,14 @@ def generate_randoms(window: Window, nz: Nz, *, n_randoms: int,
                      seed: int = 0) -> Tuple[pd.DataFrame, str]:
     """Uniform-in-window angular positions × n(z)-sampled redshifts."""
     rng = np.random.default_rng(seed)
+    total = float(np.sum(nz.counts))
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError(
+            "generate_randoms: n(z) has zero/invalid total weight — cannot "
+            "sample redshifts (B3: silent NaN-cdf garbage otherwise)")
     covered = np.nonzero(window.mask > 0)[0]
+    if covered.size == 0:
+        raise ValueError("generate_randoms: window has no covered pixels")
     probs = window.mask[covered] / window.mask[covered].sum()
     pix = rng.choice(covered, size=n_randoms, p=probs)
     ra, dec = _uniform_in_pixels(pix, window.nside, rng)

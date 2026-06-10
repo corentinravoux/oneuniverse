@@ -44,6 +44,14 @@ def build_galaxy_clustering(
     # 4 randoms (ingest | generate | none) — explicit, no silent fall-through
     if isinstance(randoms, DatasetView):
         rnd, source = randoms_from_view(randoms)
+        # B4: the data catalog is z-cut above; ingested randoms must match the
+        # same radial window, and carry a weight column like generated ones.
+        if "z" in rnd.columns:
+            rnd = rnd[(rnd["z"] >= z_range[0])
+                      & (rnd["z"] <= z_range[1])].reset_index(drop=True)
+        if "weight" not in rnd.columns:
+            rnd = rnd.copy()
+            rnd["weight"] = 1.0
     elif randoms == "generate":
         rnd, source = generate_randoms(win, nz, n_randoms=n_randoms, seed=seed)
     elif randoms == "none":

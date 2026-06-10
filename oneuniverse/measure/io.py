@@ -154,17 +154,17 @@ def _save_product(p, pdir: Path) -> dict:
             p.randoms.to_parquet(pdir / "randoms.parquet")
             info["has_randoms"] = True
         if isinstance(p.nz, dict):
-            json.dump({str(b): _nz_to_dict(v) for b, v in p.nz.items()},
-                      open(pdir / "nz_tomo.json", "w"))
+            (pdir / "nz_tomo.json").write_text(json.dumps(
+                {str(b): _nz_to_dict(v) for b, v in p.nz.items()}))
             info["nz"] = "tomo"
         elif p.nz is not None:
-            json.dump(_nz_to_dict(p.nz), open(pdir / "nz.json", "w"))
+            (pdir / "nz.json").write_text(json.dumps(_nz_to_dict(p.nz)))
             info["nz"] = "single"
         if p.window is not None:
             np.save(pdir / "window.npy", p.window.mask)
             wj = {"nside": p.window.nside, "polygon_path": p.window.polygon_path,
                   "systematics": list((p.window.systematics or {}).keys())}
-            json.dump(wj, open(pdir / "window.json", "w"))
+            (pdir / "window.json").write_text(json.dumps(wj))
             if p.window.systematics:
                 np.savez(pdir / "window_sys.npz", **p.window.systematics)
             info["has_window"] = True
@@ -172,11 +172,13 @@ def _save_product(p, pdir: Path) -> dict:
             np.save(pdir / "tomo_bin.npy", np.asarray(p.tomo_bin))
             info["has_tomo_bin"] = True
         if p.weights is not None:
+            # components namespaced (`comp_<name>`) so a component named
+            # "total" cannot collide with the total= kwarg (B2).
             np.savez(pdir / "weights.npz", total=p.weights.total,
-                     **p.weights.components)
-            json.dump({"recipe": list(p.weights.recipe),
-                       "components": list(p.weights.components)},
-                      open(pdir / "weights.json", "w"))
+                     **{f"comp_{k}": v for k, v in p.weights.components.items()})
+            (pdir / "weights.json").write_text(json.dumps(
+                {"recipe": list(p.weights.recipe),
+                 "components": list(p.weights.components)}))
             info["has_weights"] = True
         if p.photoz is not None and hasattr(p.photoz, "grid"):
             np.savez(pdir / "photoz.npz", grid=np.asarray(p.photoz.grid),
@@ -203,10 +205,10 @@ def _save_product(p, pdir: Path) -> dict:
         np.save(pdir / "field_mask.npy", p.mask)
         fj = {"nside": p.nside, "nest": p.nest,
               "has_axes": p.axes is not None, "has_beam": p.beam is not None,
-              "axes": p.axes if _jsonable(p.axes) else None,
-              "beam": p.beam if _jsonable(p.beam) else None,
-              "interloper": p.interloper if _jsonable(p.interloper) else None}
-        json.dump(fj, open(pdir / "field.json", "w"))
+              "axes": _to_jsonable(p.axes, "FieldMap.axes"),
+              "beam": _to_jsonable(p.beam, "FieldMap.beam"),
+              "interloper": _to_jsonable(p.interloper, "FieldMap.interloper")}
+        (pdir / "field.json").write_text(json.dumps(fj))
         if p.distance_extras is not None:
             np.savez(pdir / "field_dist.npz",
                      **{k: np.asarray(v) for k, v in p.distance_extras.items()})
@@ -214,11 +216,30 @@ def _save_product(p, pdir: Path) -> dict:
     return info
 
 
-def _jsonable(x) -> bool:
+def _to_jsonable(x, what: str):
+    """Convert to a JSON-serialisable structure, or raise — never drop (B1).
+
+    numpy arrays/scalars become lists/python scalars (so they round-trip as
+    lists). Anything else unserialisable raises rather than silently saving
+    ``None`` for an atom the user attached.
+    """
+    if x is None:
+        return None
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, dict):
+        return {k: _to_jsonable(v, f"{what}[{k!r}]") for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_to_jsonable(v, what) for v in x]
     try:
-        json.dumps(x); return True
+        json.dumps(x)
+        return x
     except (TypeError, ValueError):
-        return False
+        raise TypeError(
+            f"save_measurement_set: {what} contains a non-serialisable "
+            f"{type(x).__name__}; convert it to arrays/scalars/strings")
 
 
 def _load_links(pdir: Path, info: dict):
@@ -254,13 +275,13 @@ def _load_product(pdir: Path, info: dict):
                if info.get("has_randoms") else None)
         nz = None
         if info.get("nz") == "tomo":
-            raw = json.load(open(pdir / "nz_tomo.json"))
+            raw = json.loads((pdir / "nz_tomo.json").read_text())
             nz = {int(b): _nz_from_dict(v) for b, v in raw.items()}
         elif info.get("nz") == "single":
-            nz = _nz_from_dict(json.load(open(pdir / "nz.json")))
+            nz = _nz_from_dict(json.loads((pdir / "nz.json").read_text()))
         window = None
         if info.get("has_window"):
-            wj = json.load(open(pdir / "window.json"))
+            wj = json.loads((pdir / "window.json").read_text())
             sysmaps = None
             if (pdir / "window_sys.npz").exists():
                 z = np.load(pdir / "window_sys.npz")
@@ -269,10 +290,12 @@ def _load_product(pdir: Path, info: dict):
                             systematics=sysmaps, polygon_path=wj["polygon_path"])
         weights = None
         if info.get("has_weights"):
-            z = np.load(pdir / "weights.npz"); wj = json.load(open(pdir / "weights.json"))
-            weights = NamedWeights(total=z["total"],
-                                   components={k: z[k] for k in wj["components"]},
-                                   recipe=tuple(wj["recipe"]))
+            z = np.load(pdir / "weights.npz")
+            wj = json.loads((pdir / "weights.json").read_text())
+            weights = NamedWeights(
+                total=z["total"],
+                components={k: z[f"comp_{k}"] for k in wj["components"]},
+                recipe=tuple(wj["recipe"]))
         photoz = None
         if info.get("has_photoz"):
             z = np.load(pdir / "photoz.npz")
@@ -280,7 +303,7 @@ def _load_product(pdir: Path, info: dict):
         tomo = (np.load(pdir / "tomo_bin.npy") if info.get("has_tomo_bin")
                 else None)
         return PointSet(catalog=cat, randoms=rnd, nz=nz, window=window,
-                        photoz=photoz, tomo_bin=tomo,
+                        photoz=photoz, tomo_bin=tomo, weights=weights,
                         attributes=info.get("attributes"), **common)
     if kind == "sightline":
         los = pd.read_parquet(pdir / "los.parquet")
@@ -295,7 +318,7 @@ def _load_product(pdir: Path, info: dict):
         return Sightline(los=los, delta=delta, mask=mask, continuum=cont,
                          **common)
     if kind == "fieldmap":
-        fj = json.load(open(pdir / "field.json"))
+        fj = json.loads((pdir / "field.json").read_text())
         dist = None
         if info.get("has_distance_extras"):
             z = np.load(pdir / "field_dist.npz")
@@ -320,14 +343,14 @@ def save_measurement_set(ms: MeasurementSet, path: Union[str, Path]) -> Path:
                 "spec": _spec_to_dict(ms.spec),
                 "metadata": _meta_to_dict(ms.metadata),
                 "products": products}
-    json.dump(manifest, open(path / "manifest.json", "w"), indent=2)
+    (path / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return path
 
 
 def load_measurement_set(path: Union[str, Path]) -> MeasurementSet:
     """Reconstruct a MeasurementSet written by :func:`save_measurement_set`."""
     path = Path(path)
-    manifest = json.load(open(path / "manifest.json"))
+    manifest = json.loads((path / "manifest.json").read_text())
     products = {name: _load_product(path / name, info)
                 for name, info in manifest["products"].items()}
     return MeasurementSet(products=products,
