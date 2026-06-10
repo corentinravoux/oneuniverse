@@ -16,9 +16,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from oneuniverse.simulation.validation import binned_mode_powers
 from oneuniverse.twin.verify import (
-    _bin_kgrid,
-    _bins,
+    _kf_edges,
     cross_correlation,
     power_ratio,
 )
@@ -34,17 +34,14 @@ class RecoveryMetrics:
 
 
 def _transfer(rec, truth, box_size):
-    n = rec.shape[0]
-    rk = np.fft.rfftn(rec); tk = np.fft.rfftn(truth)
-    kmag = _bin_kgrid(n, box_size)
-    idx, edges, centres = _bins(kmag, box_size, n)
-    cross = np.real(rk * np.conj(tk)).ravel()
-    pt = (np.abs(tk) ** 2).ravel()
-    out = np.full(len(centres), np.nan)
-    for i in range(1, len(edges)):
-        m = idx == i
-        if m.sum() and pt[m].sum() > 0:
-            out[i - 1] = cross[m].sum() / pt[m].sum()
+    # S9: delegates to the canonical mode-binning core; same kf edges,
+    # T(k) = S_ab/S_bb is identical to the pre-consolidation sums.
+    edges = _kf_edges(rec.shape[0], box_size)
+    _, _, S_bb, S_ab, _ = binned_mode_powers(rec, truth, box=box_size,
+                                             edges=edges)
+    out = np.full(len(edges) - 1, np.nan)
+    good = S_bb > 0
+    out[good] = S_ab[good] / S_bb[good]
     return out
 
 
