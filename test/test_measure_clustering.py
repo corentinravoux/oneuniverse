@@ -51,7 +51,10 @@ def test_build_galaxy_clustering_ingests_randoms_view(tmp_path):
         randoms=rand, nside_region=4)            # ingest, not generate
     ps = ms.products["gal"]
     assert ps.provenance.randoms_source == "ingested"
-    assert ps.randoms is not None and len(ps.randoms) == 9000
+    # B4 fix: ingested randoms are z-filtered to the data z_range + weighted
+    assert ps.randoms is not None and 0 < len(ps.randoms) <= 9000
+    assert ps.randoms["z"].between(0.1, 1.0).all()
+    assert (ps.randoms["weight"] == 1.0).all()
     assert "region_id" in ps.randoms.columns     # shared region applied
     ms.check_invariants()
 
