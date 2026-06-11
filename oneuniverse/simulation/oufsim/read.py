@@ -98,9 +98,15 @@ class SimStore:
             from oneuniverse.simulation.oufsim._partition import (
                 partition_by_rank)
             hit = partition_by_rank(hit, rank=rank, size=size)
+        # B9: the wrap-in-place branch is CPU-memmap; be honest when a GPU
+        # read was requested but reference chunks will serve it.
+        any_ref = any(r.get("native_file") and r.get("row_stop") is not None
+                      for r in hit)
+        device = ("cpu(reference)" if (use_gpu and any_ref)
+                  else ("gpu" if use_gpu else "cpu"))
         self.last_read_stats = {"chunks_total": len(rows),
                                 "chunks_read": len(hit),
-                                "device": "gpu" if use_gpu else "cpu",
+                                "device": device,
                                 "rank": rank, "size": size}
         read_cols = None
         if columns is not None:

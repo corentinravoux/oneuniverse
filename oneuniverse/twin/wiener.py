@@ -29,9 +29,7 @@ def wiener_reconstruct(delta_g, cosmo: CosmologySpec, *, box_size, nbar,
     nz = kmag > 0
     Pm[nz] = linear_power(kmag[nz], cosmo, z=z)
     N = 1.0 / nbar
-    denom = bias * bias * Pm + N
-    gain = np.zeros_like(Pm)
-    good = denom > 0
-    gain[good] = (bias * Pm[good]) / denom[good]
+    # denom = b^2 P + 1/nbar is strictly positive (shot noise N > 0)
+    gain = (bias * Pm) / (bias * bias * Pm + N)
     dk = np.fft.rfftn(d)
     return np.fft.irfftn(gain * dk, s=(n, n, n))

@@ -38,13 +38,6 @@ def generate_randoms(window: Window, nz: Nz, *, n_randoms: int,
     probs = window.mask[covered] / window.mask[covered].sum()
     pix = rng.choice(covered, size=n_randoms, p=probs)
     ra, dec = _uniform_in_pixels(pix, window.nside, rng)
-    # jitter can cross a footprint-edge pixel; snap escapers back to the
-    # (covered) source-pixel centre so randoms stay strictly in-window.
-    outside = ~window.contains(ra, dec)
-    if outside.any():
-        th, ph = hp.pix2ang(window.nside, pix[outside], nest=True)
-        ra[outside] = np.degrees(ph)
-        dec[outside] = 90.0 - np.degrees(th)
     # inverse-CDF sample z from the n(z) histogram
     cdf = np.cumsum(nz.counts); cdf = cdf / cdf[-1]
     u = rng.uniform(size=n_randoms)
@@ -55,13 +48,22 @@ def generate_randoms(window: Window, nz: Nz, *, n_randoms: int,
     return rnd, "generated"
 
 
+#: sub-pixel refinement factor: each window pixel is sampled via a random
+#: NEST child at nside*2**_SUBPIX_ORDER (review B7).
+_SUBPIX_ORDER = 5
+
+
 def _uniform_in_pixels(pix, nside, rng):
-    """Jittered sky point inside each NEST pixel (stays at the window NSIDE)."""
-    theta, phi = hp.pix2ang(nside, pix, nest=True)
-    res = hp.nside2resol(nside)                 # rad
-    theta = np.clip(theta + (rng.uniform(size=len(pix)) - 0.5) * res, 1e-6,
-                    np.pi - 1e-6)
-    phi = (phi + (rng.uniform(size=len(pix)) - 0.5) * res) % (2 * np.pi)
-    ra = np.degrees(phi)
-    dec = 90.0 - np.degrees(theta)
-    return ra, dec
+    """Area-uniform sky point inside each NEST pixel (review B7).
+
+    HEALPix children are equal-area and strictly nested, so drawing a random
+    child at a finer NSIDE and taking its centre is (a) uniform on the sphere
+    within the parent — the previous θ/φ jitter compressed φ near the poles —
+    and (b) guaranteed to stay inside the parent, removing the old
+    snap-escapers-back hack.
+    """
+    f = 4 ** _SUBPIX_ORDER                       # children per parent
+    child = np.asarray(pix, dtype=np.int64) * f + rng.integers(
+        0, f, size=len(pix))
+    theta, phi = hp.pix2ang(nside * 2 ** _SUBPIX_ORDER, child, nest=True)
+    return np.degrees(phi), 90.0 - np.degrees(theta)
