@@ -109,12 +109,12 @@ class DataGeometry(str, Enum):
 
 
 # Current format version.  Bump when the manifest schema changes.
-FORMAT_VERSION: str = "2.5.0"
+FORMAT_VERSION: str = "2.6.0"   # 2.6: partition stats -> _index.parquet sidecar
 
 # Logical data-schema version — tracks additions/removals to the CORE
 # columns required in each geometry.  Bumped independently of the
 # on-disk file-format version.
-SCHEMA_VERSION: str = "2.5.0"
+SCHEMA_VERSION: str = "2.6.0"
 
 
 # ── Per-geometry column requirements ─────────────────────────────────────

@@ -30,7 +30,7 @@ def test_export_sql_objects_and_partitions_parity(tmp_path):
     name, geom, fmt, nrows = con.execute(
         "SELECT survey_name, geometry, format_version, n_rows "
         "FROM datasets").fetchone()
-    assert name == "synth" and geom == "point" and fmt == "2.5.0"
+    assert name == "synth" and geom == "point" and fmt == "2.6.0"
     assert nrows == view.n_rows
     # objects parity: total count + z-range count match the parquet reader
     assert con.execute("SELECT COUNT(*) FROM objects").fetchone()[0] == 4000

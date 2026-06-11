@@ -44,7 +44,7 @@ def _minimal_manifest(**overrides) -> Manifest:
 
 
 def test_version_constants_bumped():
-    assert FORMAT_VERSION == "2.5.0"
+    assert FORMAT_VERSION == "2.6.0"
 
 
 def test_manifest_carries_tomographic_nz(tmp_path):
