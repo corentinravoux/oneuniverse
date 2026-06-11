@@ -480,13 +480,13 @@ DuckDB optional).
 |---|---|---|---|
 | 1 | Fix confirmed bugs B1–B5 | bug | S — **✅ done (incl. B11)** |
 | 2 | SQL export P1–P4 (SQLite materialize, both formats) | feature (owner ask) | M — **✅ done (P1–P6: `data/sql.py`, `oufsim/sql.py`, `ms.to_sql`, attach DDL)** |
-| 3 | S9 consolidate 4 validation modules → `simulation.validation` | debt | S |
-| 4 | B4 ingest-randoms filter + weight | bug | S |
-| 5 | §4.3 move partition stats out of OUF manifest (format 2.6) + unify index contract | structure | M |
-| 6 | S5 measure `_pipeline.py` + S7 import guard | debt | S |
-| 7 | S1 converter split + S2 registry unification + entry-point loaders | structure | M |
-| 8 | SQL P5–P6 (DuckDB attach, MeasurementSet.to_sql) | feature | S |
-| 9 | S10 twin consolidation; B6–B9 small fixes | debt | S |
+| 3 | S9 consolidate 4 validation modules → `simulation.validation` | debt | S — **✅ done** (`binned_mode_powers` canonical core; 3 thin wrappers, numerics identical) |
+| 4 | B4 ingest-randoms filter + weight | bug | S — **✅ done** (first fix wave) |
+| 5 | §4.3 move partition stats out of OUF manifest (format 2.6) + unify index contract | structure | M — **✅ done** (OUF 2.6: identity-only manifest + `_index.parquet` sidecar; pre-2.6 back-compat; version constants single-sourced) |
+| 6 | S5 measure `_pipeline.py` + S7 import guard | debt | S — **✅ done** (`prepare_pointset` backs all PointSet builders; boundary guard test) |
+| 7 | S1 converter split + S2 registry unification + entry-point loaders | structure | M — **⏳ open** (deliberately deferred: wide mechanical refactor, low functional gain vs regression risk; designs in §2.1) |
+| 8 | SQL P5–P6 (DuckDB attach, MeasurementSet.to_sql) | feature | S — **✅ done** |
+| 9 | S10 twin consolidation; B6–B9 small fixes | debt | S — **B6–B10 ✅ done** (parquet linkback; area-uniform NEST sub-pixel randoms; relative covariance paths; honest `cpu(reference)` device stat; wiener dead guard). **S10 ⏳ open** (module merge breaks public imports; defer to a deprecation cycle) |
 
 ## 7 · Verdict
 
