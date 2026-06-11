@@ -80,61 +80,78 @@ def _prov_from_dict(d: dict) -> Provenance:
                       nz_method=d.get("nz_method"), extra=d.get("extra", {}))
 
 
-def _cov_to_dict(c):
+def _cov_to_dict(c, base: Path = None):
     if c is None:
         return None
     if isinstance(c, CovariancePlan):
         h = c.handle
+        hpath = None
+        if h is not None:
+            # B8: store the covariance path relative to the set directory
+            # when possible, so a moved/copied MeasurementSet still resolves.
+            hpath = h.path
+            if base is not None:
+                try:
+                    hpath = str(Path(h.path).resolve().relative_to(
+                        base.resolve()))
+                except ValueError:
+                    pass                       # outside the set dir: keep as-is
         return {"kind": c.kind, "region_nside": c.region_nside,
                 "mocks_handle": c.mocks_handle, "ingredients": c.ingredients,
                 "handle": (None if h is None else
-                           {"cov_id": h.cov_id, "path": h.path, "n": h.n})}
+                           {"cov_id": h.cov_id, "path": hpath, "n": h.n})}
     return {"kind": "string", "value": str(c)}
 
 
-def _cov_from_dict(d):
+def _cov_from_dict(d, base: Path = None):
     if d is None:
         return None
     if d.get("kind") == "string":
         return d["value"]
     h = d.get("handle")
+    if h is None:
+        handle = None
+    else:
+        p = Path(h["path"])
+        if not p.is_absolute() and base is not None:
+            p = base / p                       # B8: resolve relative to set dir
+        handle = CovarianceHandle(h["cov_id"], str(p), h["n"])
     return CovariancePlan(
         kind=d["kind"], region_nside=d.get("region_nside"),
         mocks_handle=d.get("mocks_handle"), ingredients=d.get("ingredients"),
-        handle=(None if h is None else
-                CovarianceHandle(h["cov_id"], h["path"], h["n"])))
+        handle=handle)
 
 
-def _spec_to_dict(s: MeasurementSpec) -> dict:
+def _spec_to_dict(s: MeasurementSpec, base: Path = None) -> dict:
     ps = s.pair_statistics
     return {"tracers": list(s.tracers),
             "pairs": [list(p) for p in s.pairs],
             "statistic": s.statistic, "estimator_family": s.estimator_family,
             "binning": s.binning, "coords": s.coords,
-            "covariance": _cov_to_dict(s.covariance),
+            "covariance": _cov_to_dict(s.covariance, base),
             "pair_statistics": (None if not ps else
                                 [[a, b, v] for (a, b), v in ps.items()])}
 
 
-def _spec_from_dict(d: dict) -> MeasurementSpec:
+def _spec_from_dict(d: dict, base: Path = None) -> MeasurementSpec:
     ps = d.get("pair_statistics")
     return MeasurementSpec(
         tracers=tuple(d["tracers"]),
         pairs=tuple(tuple(p) for p in d["pairs"]),
         statistic=d["statistic"], estimator_family=d["estimator_family"],
         binning=d.get("binning"), coords=d.get("coords", "on_sky"),
-        covariance=_cov_from_dict(d.get("covariance")),
+        covariance=_cov_from_dict(d.get("covariance"), base),
         pair_statistics=(None if not ps else
                          {(a, b): v for a, b, v in ps}))
 
 
 # ── per-product save/load ──────────────────────────────────────────────────
-def _save_product(p, pdir: Path) -> dict:
+def _save_product(p, pdir: Path, base: Path = None) -> dict:
     pdir.mkdir(parents=True, exist_ok=True)
     np.save(pdir / "region_map.npy", np.asarray(p.region_map))
     info = {"kind": p.kind, "metadata": _meta_to_dict(p.metadata),
             "provenance": _prov_to_dict(p.provenance),
-            "covariance": _cov_to_dict(p.covariance),
+            "covariance": _cov_to_dict(p.covariance, base),
             "links": []}
     for lk in (p.links or []):
         np.savez(pdir / f"links_{lk.role}.npz", parent_ids=lk.parent_ids,
@@ -260,11 +277,11 @@ def _load_links(pdir: Path, info: dict):
     return out or None
 
 
-def _load_product(pdir: Path, info: dict):
+def _load_product(pdir: Path, info: dict, base: Path = None):
     region = np.load(pdir / "region_map.npy")
     meta = _meta_from_dict(info["metadata"])
     prov = _prov_from_dict(info["provenance"])
-    cov = _cov_from_dict(info.get("covariance"))
+    cov = _cov_from_dict(info.get("covariance"), base)
     links = _load_links(pdir, info)
     common = dict(region_map=region, metadata=meta, provenance=prov,
                   covariance=cov, links=links)
@@ -338,9 +355,9 @@ def save_measurement_set(ms: MeasurementSet, path: Union[str, Path]) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     products = {}
     for name, p in ms.products.items():
-        products[name] = _save_product(p, path / name)
+        products[name] = _save_product(p, path / name, base=path)
     manifest = {"format": _FMT, "cosmology_free": True,
-                "spec": _spec_to_dict(ms.spec),
+                "spec": _spec_to_dict(ms.spec, base=path),
                 "metadata": _meta_to_dict(ms.metadata),
                 "products": products}
     (path / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -351,8 +368,8 @@ def load_measurement_set(path: Union[str, Path]) -> MeasurementSet:
     """Reconstruct a MeasurementSet written by :func:`save_measurement_set`."""
     path = Path(path)
     manifest = json.loads((path / "manifest.json").read_text())
-    products = {name: _load_product(path / name, info)
+    products = {name: _load_product(path / name, info, base=path)
                 for name, info in manifest["products"].items()}
     return MeasurementSet(products=products,
-                          spec=_spec_from_dict(manifest["spec"]),
+                          spec=_spec_from_dict(manifest["spec"], base=path),
                           metadata=_meta_from_dict(manifest["metadata"]))

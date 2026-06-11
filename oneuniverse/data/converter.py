@@ -543,9 +543,29 @@ def fetch_original_columns(
         return _fetch_from_fits(original_file, original_columns, row_indices)
     if spec.format == "csv":
         return _fetch_from_csv(original_file, original_columns, row_indices)
+    if spec.format == "parquet":
+        return _fetch_from_parquet(original_file, original_columns,
+                                   row_indices)
     raise NotImplementedError(
         f"Linkback not implemented for format '{spec.format}'"
     )
+
+
+def _fetch_from_parquet(
+    filepath: Path,
+    columns: List[str],
+    row_indices: Optional[np.ndarray],
+) -> pd.DataFrame:
+    """Read specific columns and rows from a parquet original (review B6).
+
+    Column projection happens at read time; the row take runs on the
+    projected table only.
+    """
+    import pyarrow.parquet as pq
+    table = pq.read_table(filepath, columns=list(columns))
+    if row_indices is not None:
+        table = table.take(np.asarray(row_indices, dtype=np.int64))
+    return table.to_pandas()
 
 
 # ── Introspection ────────────────────────────────────────────────────────
