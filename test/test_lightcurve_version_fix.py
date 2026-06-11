@@ -28,5 +28,5 @@ def test_lightcurve_writer_uses_canonical_version(tmp_path):
                                  survey_type="transient", loader_name="x",
                                  loader_version="0")
     m = read_manifest(survey / ONEUNIVERSE_SUBDIR / "manifest.json")
-    assert m.oneuniverse_format_version == FORMAT_VERSION == "2.5.0"
-    assert m.oneuniverse_schema_version == SCHEMA_VERSION == "2.5.0"
+    assert m.oneuniverse_format_version == FORMAT_VERSION == "2.6.0"
+    assert m.oneuniverse_schema_version == SCHEMA_VERSION == "2.6.0"

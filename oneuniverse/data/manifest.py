@@ -36,8 +36,17 @@ from oneuniverse.data.temporal import TemporalSpec
 from oneuniverse.data.tomographic_nz import TomographicNzSpec
 from oneuniverse.data.validity import DatasetValidity
 
-FORMAT_VERSION: str = "2.5.0"
-SCHEMA_VERSION: str = "2.5.0"
+# Single source of truth for the format version lives in format_spec (the
+# 2026-06-10 review found these two modules each pinning their own copy —
+# the same drift that produced the LIGHTCURVE 2.1.0 mislabel, bug F1).
+from oneuniverse.data.format_spec import (  # noqa: F401  (re-export)
+    FORMAT_VERSION,
+    SCHEMA_VERSION,
+)
+
+#: OUF 2.6: per-partition stats live in this parquet sidecar next to
+#: manifest.json; the manifest itself stays identity-only and stable.
+PARTITION_INDEX_FILENAME = "_index.parquet"
 
 
 class ManifestValidationError(ValueError):
@@ -151,11 +160,88 @@ class Manifest:
 
 
 def write_manifest(path: Union[str, Path], manifest: Manifest) -> None:
-    """Atomically write a manifest to *path* (…/manifest.json)."""
+    """Atomically write a manifest to *path* (…/manifest.json).
+
+    OUF 2.6: per-partition stats are written to the ``_index.parquet``
+    sidecar next to the manifest; the JSON stays identity-only (stable,
+    diffable, O(1) regardless of partition count). The sidecar is written
+    first, so a crash in between leaves the previous manifest intact.
+    ``read_manifest`` reconstructs ``Manifest.partitions`` transparently —
+    no downstream consumer changes.
+    """
     path = Path(path)
     payload = _to_dict(manifest)
+    _write_partition_index(path.parent / PARTITION_INDEX_FILENAME,
+                           manifest.partitions)
+    payload.pop("partitions", None)
+    payload["partition_index"] = PARTITION_INDEX_FILENAME
+    payload["n_partitions"] = len(manifest.partitions)
+    payload["n_rows_total"] = sum(p.n_rows for p in manifest.partitions)
     text = json.dumps(payload, indent=2, sort_keys=False, default=str)
     atomic_write_text(path, text)
+
+
+_INDEX_SCHEMA_COLS = ("name", "n_rows", "sha256", "size_bytes",
+                      "healpix_cell", "ra_min", "ra_max", "dec_min",
+                      "dec_max", "z_min", "z_max", "t_min", "t_max",
+                      "extra_ranges_json")
+
+
+def _write_partition_index(path: Path, partitions: List[PartitionSpec]) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    schema = pa.schema([
+        ("name", pa.string()), ("n_rows", pa.int64()),
+        ("sha256", pa.string()), ("size_bytes", pa.int64()),
+        ("healpix_cell", pa.int64()),
+        ("ra_min", pa.float64()), ("ra_max", pa.float64()),
+        ("dec_min", pa.float64()), ("dec_max", pa.float64()),
+        ("z_min", pa.float64()), ("z_max", pa.float64()),
+        ("t_min", pa.float64()), ("t_max", pa.float64()),
+        ("extra_ranges_json", pa.string()),
+    ])
+    cols: Dict[str, list] = {c: [] for c in _INDEX_SCHEMA_COLS}
+    for p in partitions:
+        s = p.stats
+        cols["name"].append(p.name)
+        cols["n_rows"].append(int(p.n_rows))
+        cols["sha256"].append(p.sha256)
+        cols["size_bytes"].append(int(p.size_bytes))
+        cols["healpix_cell"].append(
+            None if p.healpix_cell is None else int(p.healpix_cell))
+        for f in ("ra_min", "ra_max", "dec_min", "dec_max",
+                  "z_min", "z_max", "t_min", "t_max"):
+            cols[f].append(getattr(s, f))
+        cols["extra_ranges_json"].append(
+            json.dumps(s.extra_ranges) if s.extra_ranges else None)
+    pq.write_table(pa.table(cols, schema=schema), path)
+
+
+def _read_partition_index(path: Path,
+                          manifest_path: Path) -> List[PartitionSpec]:
+    import pyarrow.parquet as pq
+    if not path.is_file():
+        raise ManifestValidationError(
+            f"{manifest_path}: declares partition_index "
+            f"'{path.name}' but the sidecar file is missing")
+    out = []
+    for r in pq.read_table(path).to_pylist():
+        er = (json.loads(r["extra_ranges_json"])
+              if r.get("extra_ranges_json") else {})
+        out.append(PartitionSpec(
+            name=r["name"], n_rows=int(r["n_rows"]), sha256=r["sha256"],
+            size_bytes=int(r["size_bytes"]),
+            healpix_cell=(None if r["healpix_cell"] is None
+                          else int(r["healpix_cell"])),
+            stats=PartitionStats(
+                ra_min=r["ra_min"], ra_max=r["ra_max"],
+                dec_min=r["dec_min"], dec_max=r["dec_max"],
+                z_min=r["z_min"], z_max=r["z_max"],
+                t_min=r["t_min"], t_max=r["t_max"],
+                extra_ranges={k: (float(v[0]), float(v[1]))
+                              for k, v in er.items()}),
+        ))
+    return out
 
 
 def read_manifest(path: Union[str, Path]) -> Manifest:
@@ -212,7 +298,8 @@ _REQUIRED_TOP_KEYS = (
     "survey_type",
     "created_utc",
     "original_files",
-    "partitions",
+    # "partitions" is required as EITHER an embedded array (<=2.5) OR a
+    # "partition_index" sidecar reference (2.6+) — checked in _from_dict.
     "schema",
     "conversion_kwargs",
     "loader",
@@ -251,21 +338,12 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         _require(raw, key, path)
 
     fmt = raw["oneuniverse_format_version"]
-    if not (
-        isinstance(fmt, str)
-        and (
-            fmt.startswith("2.0")
-            or fmt.startswith("2.1")
-            or fmt.startswith("2.2")
-            or fmt.startswith("2.3")
-            or fmt.startswith("2.4")
-            or fmt.startswith("2.5")
-        )
-    ):
+    parts_v = fmt.split(".") if isinstance(fmt, str) else []
+    if not (len(parts_v) >= 2 and parts_v[0] == "2"
+            and parts_v[1].isdigit() and int(parts_v[1]) <= 6):
         raise ManifestValidationError(
             f"{path}: oneuniverse_format_version={fmt!r} is not compatible "
-            f"with this library (expected 2.0.x / 2.1.x / 2.2.x / 2.3.x "
-            f"/ 2.4.x / 2.5.x)."
+            f"with this library (expected 2.0.x – 2.6.x)."
         )
 
     geo = raw["geometry"]
@@ -277,21 +355,29 @@ def _from_dict(raw: Dict[str, Any], path: Path) -> Manifest:
         ) from e
 
     original_files = [OriginalFileSpec(**spec) for spec in raw["original_files"]]
-    partitions = [
-        PartitionSpec(
-            name=p["name"],
-            n_rows=int(p["n_rows"]),
-            sha256=p["sha256"],
-            size_bytes=int(p["size_bytes"]),
-            stats=_load_partition_stats(p.get("stats", {})),
-            healpix_cell=(
-                int(p["healpix_cell"])
-                if p.get("healpix_cell") is not None
-                else None
-            ),
-        )
-        for p in raw["partitions"]
-    ]
+    if "partition_index" in raw:               # OUF 2.6+: parquet sidecar
+        partitions = _read_partition_index(
+            path.parent / raw["partition_index"], path)
+    elif "partitions" in raw:                  # OUF <=2.5: embedded array
+        partitions = [
+            PartitionSpec(
+                name=p["name"],
+                n_rows=int(p["n_rows"]),
+                sha256=p["sha256"],
+                size_bytes=int(p["size_bytes"]),
+                stats=_load_partition_stats(p.get("stats", {})),
+                healpix_cell=(
+                    int(p["healpix_cell"])
+                    if p.get("healpix_cell") is not None
+                    else None
+                ),
+            )
+            for p in raw["partitions"]
+        ]
+    else:
+        raise ManifestValidationError(
+            f"{path}: missing required manifest key 'partitions' "
+            f"(or 'partition_index' for format >= 2.6)")
     partitioning_raw = raw.get("partitioning")
     partitioning = (
         PartitioningSpec(
