@@ -126,7 +126,7 @@ def test_small_catalog_uses_coarser_nside(tmp_path):
     )
     chosen = int(manifest.partitioning.extra["nside"])
     assert chosen <= 4, f"got nside={chosen}, expected coarsening"
-    parquet_files = list(ou_dir.rglob("*.parquet"))
+    parquet_files = list((ou_dir / "data").rglob("*.parquet"))
     assert len(parquet_files) <= 32, (
         f"got {len(parquet_files)} files; coarsening should keep this small"
     )
