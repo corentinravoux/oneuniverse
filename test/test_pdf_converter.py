@@ -42,7 +42,9 @@ def test_converter_writes_fixed_size_list_for_pdf(tmp_path):
 
     assert manifest.pdf_spec == spec
 
-    parquet_files = list(out_dir.rglob("*.parquet"))
+    # OUF 2.6: the _index.parquet sidecar also lives under ou_dir — data
+    # partitions are under data/.
+    parquet_files = list((out_dir / "data").rglob("*.parquet"))
     assert parquet_files
     pa_schema = pq.read_schema(parquet_files[0])
     field = pa_schema.field("z_pdf_values")
