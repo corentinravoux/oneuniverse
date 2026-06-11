@@ -5,26 +5,20 @@ from typing import Optional, Sequence, Tuple
 
 from oneuniverse.data.dataset_view import DatasetView
 from oneuniverse.measure.covariance import CovarianceHandle
+from oneuniverse.measure._pipeline import prepare_pointset
 from oneuniverse.measure.dataproduct import PointSet
 from oneuniverse.measure.distances import attach_distances
 from oneuniverse.measure.measurement_set import MeasurementSet
 from oneuniverse.measure.metadata import ProductMetadata, Provenance
-from oneuniverse.measure.regions import assign_regions
-from oneuniverse.measure.select import select_clean
 from oneuniverse.measure.spec import MeasurementSpec
-from oneuniverse.measure.window import footprint_from_positions
 
 
 def _base(view, z_range, distance_columns, nside_window, nside_region):
-    cat = select_clean(view, z_range=z_range)
+    # S5: the shared spine; PV/SN adds only the distance-atom validation.
+    cat, win, region, meta, _ = prepare_pointset(
+        view, z_range=z_range, weights=None, nside_window=nside_window,
+        nside_region=nside_region)
     cat, dcols = attach_distances(cat, columns=distance_columns)
-    win = footprint_from_positions(cat["ra"].to_numpy(),
-                                   cat["dec"].to_numpy(), nside=nside_window)
-    region = assign_regions(cat["ra"].to_numpy(), cat["dec"].to_numpy(),
-                            nside=nside_region)
-    cat = cat.copy(); cat["region_id"] = region
-    meta = ProductMetadata(frame="icrs", epoch=2000.0, length_unit="deg",
-                           nside_region=int(nside_region))
     return cat, win, region, meta, dcols
 
 
