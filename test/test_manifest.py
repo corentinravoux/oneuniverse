@@ -118,7 +118,9 @@ def test_manifest_write_is_atomic(tmp_path: Path):
     target = tmp_path / "manifest.json"
     write_manifest(target, m)
     names = sorted(p.name for p in tmp_path.iterdir())
-    assert names == ["manifest.json"]
+    # OUF 2.6: the partition-index sidecar is part of the contract; the
+    # atomicity claim is that NO temp files are left behind.
+    assert names == ["_index.parquet", "manifest.json"]
 
 
 def test_manifest_n_rows_and_n_partitions(tmp_path: Path):
