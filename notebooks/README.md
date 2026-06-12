@@ -1,9 +1,11 @@
-# oneuniverse — capability notebooks
+# oneuniverse — the visual tour
 
-Each notebook states a **claim** and validates it against either linear theory
-or a controlled mock with known ground truth. All are executed (figures + output
-embedded). Real eBOSS DR16Q / DESI DR1 data are used where present; otherwise a
-synthetic stand-in is generated so the notebooks always run.
+Six executed notebooks presenting **everything the package offers**, with the
+real eBOSS DR16Q / DESI DR1 quasar catalogs wherever they are on disk (and a
+synthetic stand-in otherwise, so the notebooks always run). Each notebook is
+visual-first — sky maps, schema diagrams, pipeline drawings, byte-range maps —
+and every scientific statement is validated against linear theory or a
+controlled mock with known ground truth.
 
 Rebuild + re-execute:
 
@@ -12,21 +14,18 @@ cd notebooks && python3 _build_notebooks.py
 jupyter nbconvert --to notebook --execute --inplace 0*.ipynb
 ```
 
-| # | Notebook | Claim validated |
+| # | Notebook | What you see |
 |---|---|---|
-| 01 | **Data ingestion** | Two real surveys → one schema; OUF partial-access prunes a cone to a small fraction of partitions; the same quasar is re-identified across eBOSS↔DESI at sub-arcsecond separation. |
-| 02 | **Selection: weights, n(z), randoms** | FKP weights down-weight the cosmic-variance regime; generated randoms reproduce the data n(z) (KS test) and lie inside the angular footprint. |
-| 03 | **Measurement recovery** | A field drawn with the Eisenstein–Hu P(k) is recovered to ~1% (cosmic-variance-limited); lognormal tracers recover their input bias via the matter cross-spectrum; the `MeasurementSet` round-trips to disk, cosmology-free. |
-| 04 | **Probe gallery** | One container (PointSet / Sightline / FieldMap) produces analysis-ready measurements for clustering, weak lensing, peculiar velocities, supernovae, Lyα, and galaxy×map — and expresses builder-less probes via optional slots. |
-| 05 | **Simulation storage** | Sub-volume reads touch ~1 chunk; wrap-in-place is ≈10–15% of a re-encode; the stored field's P(k) is lossless to round-off. |
-| 06 | **PM gravity & resimulation** | The particle-mesh solver reproduces linear growth on large scales (r→1, T→1); the TreePM force split lets a resimulated sub-volume match the truth at a much smaller buffer than the naive coupling. |
-| 07 | **Twin reconstruction** | A Wiener filter reconstructs the large-scale field from shot-noise-limited tracers; the reconstruction scale k(r=0.5) tightens monotonically with tracer density n̄ — the depth–fidelity trade-off of constrained simulation. |
+| 01 | **One universe of data** | Real eBOSS+DESI on a Mollweide sky; the same quasars re-identified across surveys (sub-arcsecond peak); the anatomy of **OUF 2.6** (identity-only manifest + partition-index sidecar, painted on the sky); selector-driven partial reads benchmarked. |
+| 02 | **The SQL face** | The exported schema drawn; real eBOSS → `catalog.sqlite` queried in pure SQL (GROUP-BY n(z), HEALPix cone as `WHERE IN`); ONEUID as a JOIN; the simulation chunk index as a relational bbox query (chunk map with the hit set highlighted); zero-copy DuckDB DDL. |
+| 03 | **Measurements for every probe** | The nine-step pipeline drawn; real-eBOSS clustering `MeasurementSet` with KS-verified randoms; the weak-lensing **photo-z kernel waterfall** → tomographic n(z); a four-probe gallery (PV, SN, Lyα, map×catalog); the generality slots (lens-system time-delay links, named weights, covariance plans); save→reload→SQL round-trip. |
+| 04 | **Simulation storage** | The chunk index and a box read drawn together (hit chunks highlighted); **wrap-in-place as a byte-range map** (~13% of a copy); bit-lossless P(k); bounded-memory scaling. |
+| 05 | **Gravity & resimulation** | Structure *growing* across four PM snapshots, with σ(δ) landing on the exact linear D(a) curve; r(k)/T(k)/stochasticity panels; the **TreePM force split drawn in k-space**; buffer-convergence + per-buffer coupling gains. |
+| 06 | **The constrained twin** | The Wiener gain G(k) family vs survey depth; truth → tracers → Wiener mean → **constrained realization** (Hoffman–Ribak) side by side; the depth → reconstructable-scale law k½(n̄). |
 
-**Scope honesty.** Notebooks 05–07 demonstrate the storage, gravity, and
+**Scope honesty.** Notebooks 04–06 demonstrate the storage, gravity and
 reconstruction *machinery* on a linear-theory + fast-PM + Wiener stand-in; the
-physics is a controlled toy, not a production N-body / Bayesian-inference
-pipeline. The data layer (01–04) uses the real surveys.
-
-Estimators (P(k), ξ, C_ℓ, f σ₈) are external tools that consume the
-`MeasurementSet`; the small power-spectrum estimators used here for *validation*
-are written inline and are not part of the package's public API.
+physics is a controlled toy, not a production N-body / Bayesian pipeline. The
+data and SQL layers (01–03) use the real surveys. Estimators (P(k), ξ, C_ℓ)
+are external tools that consume the `MeasurementSet`; the inline P(k) code here
+exists only to *validate* the package against theory.
