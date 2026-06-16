@@ -29,3 +29,6 @@ physics is a controlled toy, not a production N-body / Bayesian pipeline. The
 data and SQL layers (01–03) use the real surveys. Estimators (P(k), ξ, C_ℓ)
 are external tools that consume the `MeasurementSet`; the inline P(k) code here
 exists only to *validate* the package against theory.
+
+The SQL export shown in notebook 02 is also available headless via
+`scripts/export_to_sql.py` (OUF and OUF-Sim → SQLite, or DuckDB attach DDL).

@@ -16,6 +16,7 @@ from oneuniverse.data import (
     convert_survey,
     fetch_original_columns,
 )
+from oneuniverse.data.sql import export_sql
 
 __all__ = [
     "data",
@@ -28,4 +29,5 @@ __all__ = [
     "SkyPatch",
     "convert_survey",
     "fetch_original_columns",
+    "export_sql",
 ]

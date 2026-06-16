@@ -252,6 +252,32 @@ A frank external review of every known limitation lives in
 **[plans/README.md](plans/README.md)**; runnable demonstrations of everything
 above are in **[notebooks/](notebooks/)** (executed, with figures).
 
+## SQL export
+
+Both on-disk formats export to standard SQL — SQLite (a single portable file,
+stdlib only) or zero-copy DuckDB views over the existing parquet. Materialise
+≡ re-encode; attach ≡ wrap-in-place.
+
+```python
+from oneuniverse import export_sql
+from oneuniverse.data.dataset_view import DatasetView
+
+view = DatasetView.from_path("/path/to/survey")
+export_sql([view], "catalog.sqlite")          # materialise to SQLite
+```
+
+```bash
+# headless, from the command line:
+python scripts/export_to_sql.py /path/to/survey -o catalog.sqlite
+python scripts/export_to_sql.py /path/to/simstore -o sim.sqlite --sim
+python scripts/export_to_sql.py /path/to/survey --attach     # DuckDB DDL, zero-copy
+```
+
+A `MeasurementSet` also exports directly: `ms.to_sql("ms.sqlite")`. See
+**[notebooks/02_sql_database.ipynb](notebooks/02_sql_database.ipynb)** for the
+full tour — real eBOSS queried in pure SQL, ONEUID as a JOIN, the simulation
+chunk index as a relational bbox query.
+
 ## Where things live
 
 ```
