@@ -327,8 +327,13 @@ class OneuniverseDatabase:
 
     # ── Scanning ─────────────────────────────────────────────────────────
 
-    def scan(self) -> None:
-        """Walk :attr:`root` and (re)build the in-memory registry."""
+    def scan(self, *, strict: bool = False) -> None:
+        """Walk :attr:`root` and (re)build the in-memory registry.
+
+        By default a dataset that fails to parse is logged and skipped so one
+        corrupt directory never bricks the database. Pass ``strict=True`` (e.g.
+        in CI) to re-raise the first such failure instead of warning.
+        """
         self._entries.clear()
         self._all_entries.clear()
 
@@ -338,12 +343,16 @@ class OneuniverseDatabase:
             try:
                 name, survey_type = self._name_from_path(relpath)
             except Exception as exc:
+                if strict:
+                    raise
                 logger.warning("name_from_path failed for %s: %s", relpath, exc)
                 continue
 
             try:
                 manifest = get_manifest(survey_dir)
             except Exception as exc:
+                if strict:
+                    raise
                 logger.warning("Skipping %s: cannot read manifest (%s)", relpath, exc)
                 continue
 

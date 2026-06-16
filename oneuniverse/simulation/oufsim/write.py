@@ -30,6 +30,7 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.execution import ExecutionMode, ExecutionPlan
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
+from oneuniverse.simulation.oufsim._layout import write_store_layout
 from oneuniverse.simulation.oufsim._morton import morton_key
 from oneuniverse.simulation.oufsim._parallel import map_partitions
 from oneuniverse.simulation.oufsim.index import (
@@ -502,9 +503,9 @@ def write_oufsim_store(
         ),
     )
     payload = manifest.to_dict()
-    payload["store_layout"] = layout
     payload["n_grid"] = n_grid
     write_json(store / "manifest.json", payload)
+    write_store_layout(store, layout)  # S11: layout lives in its own sidecar
     return store
 
 
@@ -545,7 +546,7 @@ def ingest_field(out_root: Union[str, Path], sim_name: str, *,
                 _dt.timezone.utc).isoformat(), converter="ingest_field"),
     )
     payload = manifest.to_dict()
-    payload["store_layout"] = {"fields": {zt: info}}
     payload["n_grid"] = int(np.asarray(field).shape[0])
     write_json(store / "manifest.json", payload)
+    write_store_layout(store, {"fields": {zt: info}})  # S11: sidecar
     return store

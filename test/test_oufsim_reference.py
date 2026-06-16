@@ -30,9 +30,10 @@ def test_reference_is_index_only_and_matches_reencode(tmp_path):
     rf_fields = rf / "fields" / "z0.000"
     assert not list(rf_fields.glob("tile_*.npy"))
     assert (rf_fields / "_index.parquet").is_file()
-    # manifest records the projection
-    man = json.load(open(rf / "manifest.json"))
-    assert man["store_layout"]["fields"]["z0.000"]["projection"] == "reference"
+    # the layout sidecar records the projection (S11: moved out of manifest)
+    from oneuniverse.simulation.oufsim._layout import read_store_layout
+    layout = read_store_layout(rf)
+    assert layout["fields"]["z0.000"]["projection"] == "reference"
     # reads are identical (reference memmaps the native field)
     cube = Cube(0, 80, 0, 80, 0, 80)
     a, _ = SimStore(re).read_field_box(0.0, cube)

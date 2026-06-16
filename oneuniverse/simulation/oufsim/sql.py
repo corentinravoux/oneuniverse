@@ -76,7 +76,8 @@ def export_sim_sql(store: Union[str, Path], out: Union[str, Path],
     store = Path(store)
     out = Path(out)
     payload = json.loads((store / "manifest.json").read_text())
-    layout = payload.get("store_layout", {})
+    from oneuniverse.simulation.oufsim._layout import read_store_layout
+    layout = read_store_layout(store)  # S11: sidecar, manifest fallback
 
     con = sqlite3.connect(out)
     try:

@@ -13,12 +13,20 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import ClassVar, List, Optional
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 
 from oneuniverse.measure.metadata import ProductMetadata, Provenance
+
+if TYPE_CHECKING:  # annotations only — no runtime import (avoids cycles)
+    from oneuniverse.data.pdf import ProbabilisticRedshift
+    from oneuniverse.measure.covariance import CovariancePlan
+    from oneuniverse.measure.links import SubObjectLinks
+    from oneuniverse.measure.nz import Nz
+    from oneuniverse.measure.weighting import NamedWeights
+    from oneuniverse.measure.window import Window
 
 
 @dataclass(kw_only=True)
@@ -26,8 +34,8 @@ class DataProduct(abc.ABC):
     region_map: np.ndarray
     metadata: ProductMetadata
     provenance: Provenance
-    links: Optional[List[object]] = None      # SubObjectLinks (hierarchies)
-    covariance: object = None                 # CovariancePlan | None
+    links: Optional[List["SubObjectLinks"]] = None      # hierarchies
+    covariance: Optional["CovariancePlan"] = None
 
     kind: ClassVar[str] = "abstract"
 
@@ -36,12 +44,12 @@ class DataProduct(abc.ABC):
 class PointSet(DataProduct):
     catalog: pd.DataFrame = None
     randoms: Optional[pd.DataFrame] = None
-    nz: object = None                 # Nz | dict[int, Nz] | None
-    window: object = None             # Window | None
-    photoz: object = None             # ProbabilisticRedshift | None (WL/photo-z)
+    nz: Optional[Union["Nz", Dict[int, "Nz"]]] = None
+    window: Optional["Window"] = None
+    photoz: Optional["ProbabilisticRedshift"] = None  # WL/photo-z kernel
     tomo_bin: Optional[np.ndarray] = None
-    weights: object = None            # NamedWeights | None (kept components)
-    dndz_external: object = None      # Nz | None (z-absent tracers: radio cont.)
+    weights: Optional["NamedWeights"] = None          # kept components
+    dndz_external: Optional["Nz"] = None              # z-absent tracers (radio cont.)
     attributes: Optional[dict] = None  # role -> column list (shapes/distances/...)
 
     kind: ClassVar[str] = "pointset"
@@ -54,7 +62,7 @@ class Sightline(DataProduct):
     mask: object = None               # list of per-LOS weights
     continuum: object = None
     resolution: object = None
-    weights: object = None            # NamedWeights | None
+    weights: Optional["NamedWeights"] = None
 
     kind: ClassVar[str] = "sightline"
 

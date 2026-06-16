@@ -17,6 +17,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from oneuniverse.simulation.oufsim._io import read_json
+from oneuniverse.simulation.oufsim._layout import read_store_layout
 from oneuniverse.simulation.oufsim._parallel import map_partitions
 from oneuniverse.simulation.oufsim.index import (
     cone_partition_pixels,
@@ -31,7 +32,7 @@ class SimStore:
     def __init__(self, root: Union[str, Path]):
         self.root = Path(root)
         self.manifest = read_json(self.root / "manifest.json")
-        self.layout = self.manifest.get("store_layout", {})
+        self.layout = read_store_layout(self.root)  # S11: sidecar, manifest fallback
         self.last_read_stats: Dict[str, int] = {}
         self._index_cache: Dict[str, list] = {}
 
