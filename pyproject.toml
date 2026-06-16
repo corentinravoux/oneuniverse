@@ -46,6 +46,15 @@ docs = [
     "sphinx-rtd-theme>=2.0",
 ]
 
+# Third-party survey loaders register here so they can ship as separate
+# installable packages and be discovered at import time. Built-in loaders of the
+# same name always win (see oneuniverse._registry.Registry.load_entry_points):
+#
+#   [project.entry-points."oneuniverse.survey_loaders"]
+#   my_survey = "my_pkg.loader:MySurveyLoader"
+[project.entry-points."oneuniverse.survey_loaders"]
+# (group reserved for community loaders; built-ins are imported directly)
+
 [tool.setuptools.packages.find]
 include = ["oneuniverse*"]
 
