@@ -14,7 +14,8 @@ def _cosmo():
 
 
 def _rowcount(store, product, zt):
-    info = json.load(open(store / "manifest.json"))["store_layout"]
+    from oneuniverse.simulation.oufsim._layout import read_store_layout
+    info = read_store_layout(store)  # S11: layout moved to its own sidecar
     return info[product][zt]["n_rows"]
 
 

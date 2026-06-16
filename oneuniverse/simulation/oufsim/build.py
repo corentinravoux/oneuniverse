@@ -24,6 +24,7 @@ from oneuniverse.simulation._version import OUFSIM_FORMAT_VERSION
 from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.manifest import OUFSimManifest
 from oneuniverse.simulation.oufsim._io import write_json
+from oneuniverse.simulation.oufsim._layout import write_store_layout
 from oneuniverse.simulation.oufsim.write import (
     INDEX_FILE, OUFSIM_SUBDIR, _write_chunked_catalog,
     _write_chunked_catalog_reference, _write_field_reference,
@@ -127,9 +128,9 @@ def build_store(
             converter="build_store"),
     )
     payload = manifest.to_dict()
-    payload["store_layout"] = layout
     payload["n_grid"] = int(n_grid)
     if native_format is not None:
         payload["native_format"] = native_format
     write_json(store / "manifest.json", payload)
+    write_store_layout(store, layout)  # S11: layout lives in its own sidecar
     return store
