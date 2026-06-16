@@ -27,6 +27,11 @@ from oneuniverse.data.selection import Cone, Shell, SkyPatch, Selection  # noqa:
 # ── Import all survey sub-packages (triggers @register for each loader) ──
 import oneuniverse.data.surveys  # noqa: F401
 
+# Community loaders shipped as separate packages register here. Built-ins of the
+# same name always win (see Registry.load_entry_points).
+from oneuniverse.data._registry import _REG as _loader_registry  # noqa: E402
+_loader_registry.load_entry_points("oneuniverse.survey_loaders")
+
 # ── Private machinery ────────────────────────────────────────────────────
 from oneuniverse.data._registry import (  # noqa: F401
     get_loader,
