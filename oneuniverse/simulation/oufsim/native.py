@@ -40,7 +40,11 @@ class NativeReaderAdapter(abc.ABC):
             f"{type(self).__name__} has no row product (read_rows)")
 
 
-ADAPTERS: Dict[str, NativeReaderAdapter] = {}
+from oneuniverse._registry import Registry
+
+_REG: "Registry[NativeReaderAdapter]" = Registry("native adapter")
+#: Live internal dict of native_format -> adapter instance (back-compat).
+ADAPTERS: Dict[str, NativeReaderAdapter] = _REG.items_dict
 
 
 def register_adapter(cls):
@@ -48,16 +52,12 @@ def register_adapter(cls):
     fmt = getattr(cls, "native_format", None)
     if not fmt or fmt == "abstract":
         raise ValueError(f"{cls.__name__} must set a concrete native_format")
-    ADAPTERS[fmt] = cls()
+    _REG.register(cls(), name=fmt)
     return cls
 
 
 def get_adapter(native_format: str) -> NativeReaderAdapter:
-    if native_format not in ADAPTERS:
-        raise KeyError(
-            f"no native adapter for format {native_format!r}; "
-            f"known: {sorted(ADAPTERS)}")
-    return ADAPTERS[native_format]
+    return _REG.get(native_format)
 
 
 @register_adapter

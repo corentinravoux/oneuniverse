@@ -56,7 +56,11 @@ class SimConverter(abc.ABC):
         )
 
 
-_REGISTRY: Dict[str, Type[SimConverter]] = {}
+from oneuniverse._registry import Registry
+
+_REG: "Registry[Type[SimConverter]]" = Registry("sim converter")
+#: Live internal dict (back-compat: detect_converter iterates it directly).
+_REGISTRY: Dict[str, Type[SimConverter]] = _REG.items_dict
 
 
 def register(cls: Type[SimConverter]) -> Type[SimConverter]:
@@ -67,22 +71,12 @@ def register(cls: Type[SimConverter]) -> Type[SimConverter]:
             f"register: {cls.__name__} must set a non-empty class "
             f"attribute `code`"
         )
-    if code in _REGISTRY:
-        raise ValueError(
-            f"register: code {code!r} is already registered "
-            f"(by {_REGISTRY[code].__name__})"
-        )
-    _REGISTRY[code] = cls
+    _REG.register(cls, name=code)
     return cls
 
 
 def get_converter(code: str) -> Type[SimConverter]:
-    if code not in _REGISTRY:
-        raise KeyError(
-            f"no converter registered for code {code!r}; "
-            f"known: {sorted(_REGISTRY)}"
-        )
-    return _REGISTRY[code]
+    return _REG.get(code)
 
 
 def detect_converter(path: Path) -> Optional[Type[SimConverter]]:

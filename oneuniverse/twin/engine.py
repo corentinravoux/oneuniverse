@@ -64,7 +64,11 @@ class ForwardEngine(abc.ABC):
 
 
 # --- registry (the plug-in mechanism) ------------------------------------
-_ENGINES: Dict[str, Type] = {}
+from oneuniverse._registry import Registry
+
+_REG: "Registry[Type]" = Registry("twin engine")
+#: Live internal dict (back-compat).
+_ENGINES: Dict[str, Type] = _REG.items_dict
 
 
 def register_engine(cls: Type) -> Type:
@@ -72,18 +76,13 @@ def register_engine(cls: Type) -> Type:
     name = getattr(cls, "name", None)
     if not name:
         raise ValueError(f"register_engine: {cls.__name__} needs a `name`")
-    if name in _ENGINES:
-        raise ValueError(f"register_engine: {name!r} already registered "
-                         f"(by {_ENGINES[name].__name__})")
-    _ENGINES[name] = cls
+    _REG.register(cls, name=name)
     return cls
 
 
 def get_engine(name: str) -> Type:
-    if name not in _ENGINES:
-        raise KeyError(f"no engine {name!r}; known: {sorted(_ENGINES)}")
-    return _ENGINES[name]
+    return _REG.get(name)
 
 
 def registered_engines() -> Tuple[str, ...]:
-    return tuple(sorted(_ENGINES))
+    return tuple(_REG.names())
