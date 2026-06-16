@@ -484,9 +484,9 @@ DuckDB optional).
 | 4 | B4 ingest-randoms filter + weight | bug | S — **✅ done** (first fix wave) |
 | 5 | §4.3 move partition stats out of OUF manifest (format 2.6) + unify index contract | structure | M — **✅ done** (OUF 2.6: identity-only manifest + `_index.parquet` sidecar; pre-2.6 back-compat; version constants single-sourced) |
 | 6 | S5 measure `_pipeline.py` + S7 import guard | debt | S — **✅ done** (`prepare_pointset` backs all PointSet builders; boundary guard test) |
-| 7 | S1 converter split + S2 registry unification + entry-point loaders | structure | M — **⏳ open** (deliberately deferred: wide mechanical refactor, low functional gain vs regression risk; designs in §2.1) |
+| 7 | S1 converter split + S2 registry unification + entry-point loaders | structure | M — **✅ done 2026-06-16** (shared `oneuniverse._registry.Registry` backs all 4 registries; `converter.py` split into `_converter_core/_point/_sightline/_linkback` behind a re-export façade; entry-point group `oneuniverse.survey_loaders`. Plan: `research/2026-06-15-refactor-and-sql-surfacing-plan.md`) |
 | 8 | SQL P5–P6 (DuckDB attach, MeasurementSet.to_sql) | feature | S — **✅ done** |
-| 9 | S10 twin consolidation; B6–B9 small fixes | debt | S — **B6–B10 ✅ done** (parquet linkback; area-uniform NEST sub-pixel randoms; relative covariance paths; honest `cpu(reference)` device stat; wiener dead guard). **S10 ⏳ open** (module merge breaks public imports; defer to a deprecation cycle) |
+| 9 | S10 twin consolidation; B6–B9 small fixes | debt | S — **B6–B10 ✅ done** (parquet linkback; area-uniform NEST sub-pixel randoms; relative covariance paths; honest `cpu(reference)` device stat; wiener dead guard). **S10 ✅ done 2026-06-16** (verify+validation merged into `twin.metrics`; old modules are silent compat re-exports). Plus SQL surfaced via README + top-level `export_sql` + `scripts/export_to_sql.py`. |
 
 ## 7 · Verdict
 
