@@ -11,7 +11,7 @@ from typing import Dict
 from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.linear.gaussian_field import generate_density_field
 from oneuniverse.twin.mock_observe import mock_tracer_field
-from oneuniverse.twin.verify import cross_correlation, power_ratio
+from oneuniverse.twin.metrics import cross_correlation, power_ratio
 from oneuniverse.twin.wiener import wiener_reconstruct
 
 
