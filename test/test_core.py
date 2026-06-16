@@ -52,7 +52,7 @@ class TestRegistry:
         assert cfg.n_objects_approx == 5_000
 
     def test_get_loader_unknown_raises(self):
-        with pytest.raises(KeyError, match="Unknown survey"):
+        with pytest.raises(KeyError, match="unknown"):
             get_loader("nonexistent_survey")
 
     def test_eboss_qso_registered(self):
