@@ -487,6 +487,11 @@ DuckDB optional).
 | 7 | S1 converter split + S2 registry unification + entry-point loaders | structure | M — **✅ done 2026-06-16** (shared `oneuniverse._registry.Registry` backs all 4 registries; `converter.py` split into `_converter_core/_point/_sightline/_linkback` behind a re-export façade; entry-point group `oneuniverse.survey_loaders`. Plan: `research/2026-06-15-refactor-and-sql-surfacing-plan.md`) |
 | 8 | SQL P5–P6 (DuckDB attach, MeasurementSet.to_sql) | feature | S — **✅ done** |
 | 9 | S10 twin consolidation; B6–B9 small fixes | debt | S — **B6–B10 ✅ done** (parquet linkback; area-uniform NEST sub-pixel randoms; relative covariance paths; honest `cpu(reference)` device stat; wiener dead guard). **S10 ✅ done 2026-06-16** (verify+validation merged into `twin.metrics`; old modules are silent compat re-exports). Plus SQL surfaced via README + top-level `export_sql` + `scripts/export_to_sql.py`. |
+| 10 | S4/S6/S8/S11 polish | debt | S — **✅ done 2026-06-16** (S4 `Database.scan(strict=)`; S6 typed measure atom slots via `TYPE_CHECKING`; S8 `MeasurementSpec.covariance: Union[str, CovariancePlan]`; S11 OUF-Sim `store_layout` → `_store_layout.json` sidecar with manifest fallback) |
+
+**Remaining open:** only **M3** — real-data validation of the WL/PV/SN/Lyα
+loaders (needs the real catalogs on disk); deferred by owner. Every
+structural (S1–S11) and bug (B1–B11) item is closed.
 
 ## 7 · Verdict
 
