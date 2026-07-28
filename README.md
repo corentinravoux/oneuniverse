@@ -24,6 +24,8 @@ pip install -e ".[dev]"
 pytest -q            # ~5 min; tests needing real survey files auto-skip
 ```
 
+📖 **Full documentation (guide + per-subpackage API reference):** **<https://corentinravoux.github.io/oneuniverse/>**
+
 ---
 
 ## What can I do with it?
@@ -288,6 +290,22 @@ oneuniverse/
   simulation/   OUF-Sim store, fast-PM, resimulation
   twin/         data ↔ simulation coupling
 notebooks/  scripts/  test/  plans/  research/  docs/
+```
+
+## Documentation
+
+📖 **Online: <https://corentinravoux.github.io/oneuniverse/>**
+
+The site is built from the in-code (NumPy-style) docstrings with
+[MkDocs Material](https://squidfunk.github.io/mkdocs-material/) +
+[mkdocstrings](https://mkdocstrings.github.io/) and deployed to GitHub Pages on
+every push to `main`. Its sources live in [`docs_site/`](docs_site) (kept
+separate from the older Sphinx scaffold in [`docs/`](docs)). Build it locally
+with:
+
+```bash
+pip install -r requirements-docs.txt
+mkdocs serve
 ```
 
 Author: Corentin Ravoux. Companion to the `flip` estimator (arXiv:2501.16852).
