@@ -1,0 +1,71 @@
+site_name: oneuniverse
+site_description: Unified galaxy survey catalog package for low-redshift cosmology
+site_url: https://corentinravoux.github.io/oneuniverse/
+repo_url: https://github.com/corentinravoux/oneuniverse
+repo_name: corentinravoux/oneuniverse
+
+# The Sphinx sources live in ./docs; the MkDocs Material site (this one, matching
+# the sibling packages) uses ./docs_site so the two coexist.
+docs_dir: docs_site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+  - tables
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: numpy
+            show_root_heading: true
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
+            filters: ["!^_"]
+            members_order: source
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Architecture: architecture.md
+  - API reference:
+      - Overview: api/index.md
+      - oneuniverse (core): api/core.md
+      - data (Pillar 1): api/data.md
+      - combine (Pillar 1): api/combine.md
+      - measure (P1→P2): api/measure.md
+      - simulation (Pillar 3): api/simulation.md
+      - twin (Pillar 3): api/twin.md
