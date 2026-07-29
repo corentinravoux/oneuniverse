@@ -1,5 +1,7 @@
 # oneuniverse
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21653036.svg)](https://doi.org/10.5281/zenodo.21653036)
+
 **A toolkit for turning messy, heterogeneous cosmology survey catalogs into one
 clean, queryable, analysis-ready dataset — and for storing and resimulating the
 cosmic web that produced them.**
