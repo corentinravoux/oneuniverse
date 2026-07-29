@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: oneuniverse
+abstract: >-
+  Unified galaxy survey catalog package for low-redshift cosmology: ingest,
+  standardise, cross-match, weight and package heterogeneous survey data into a
+  cosmology-free MeasurementSet, plus a simulation storage substrate and a
+  digital-twin data-to-simulation coupling layer.
+type: software
+authors:
+  - given-names: Corentin
+    family-names: Ravoux
+    email: corentin.ravoux.research@gmail.com
+version: "0.2.0"
+date-released: 2026-07-29
+license: MIT
+repository-code: "https://github.com/corentinravoux/oneuniverse"
+url: "https://corentinravoux.github.io/oneuniverse/"
+doi: 10.5281/zenodo.21653036
+keywords:
+  - cosmology
+  - galaxy surveys
+  - catalogs
+  - large-scale structure
+  - simulations
