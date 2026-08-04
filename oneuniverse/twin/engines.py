@@ -87,3 +87,6 @@ class PMForwardEngine(ForwardEngine):
             meta={"engine": self.name, "box_size": box_size, "n_grid": n_grid,
                   "z": z, "seed": seed, "z_start": z_start},
         )
+
+# Register the 3rd engine (P1.2) — importing it triggers @register_engine.
+from oneuniverse.twin import engines_extra  # noqa: E402,F401
