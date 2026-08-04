@@ -37,6 +37,7 @@ from oneuniverse.twin.metrics import (
     RecoveryMetrics, recover_metrics, cross_correlation, power_ratio,
 )
 from oneuniverse.twin.wiener import wiener_reconstruct
+from oneuniverse.twin.observe_from_view import observe_from_view
 
 __all__ = [
     "mock_tracer_field", "wiener_reconstruct",
@@ -48,4 +49,5 @@ __all__ = [
     "register_engine", "get_engine", "registered_engines",
     "WienerReconstruction", "LinearForwardEngine", "PMForwardEngine",
     "run_engine_to_store",
+    "observe_from_view",
 ]
