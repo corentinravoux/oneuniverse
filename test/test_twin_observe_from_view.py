@@ -50,3 +50,21 @@ def test_endgame_chain_recovers_truth_on_dummy(tmp_path):
     lo = m.k < 0.1
     assert np.nanmedian(m.r[lo]) > 0.6
     assert np.isfinite(m.k_half)  # a finite reconstruction scale exists
+
+
+def test_observe_accepts_measurement_set_pointset(tmp_path):
+    """The twin socket accepts a MeasurementSet PointSet's catalog (the P1->P2
+    handoff object), not only a bare DatasetView."""
+    from fixtures.tracer_sim import synthetic_tracer_view
+    box, n = 200.0, 32
+    view, truth = synthetic_tracer_view(tmp_path, box_size=box, n_grid=n,
+                                        nbar=6e-3, bias=1.4, seed=7)
+    # a PointSet-like object exposing `.catalog` (duck-typed, no cosmology)
+    class _PS:
+        catalog = view.read(columns=["x", "y", "z_box"])
+    obs = observe_from_view(_PS(), box_size=box, n_grid=n, bias=1.4,
+                            position_cols=("x", "y", "z_box"))
+    assert obs.delta_g.shape == (n, n, n)
+    from oneuniverse.twin.metrics import cross_correlation
+    k, r = cross_correlation(obs.delta_g, truth, box_size=box)
+    assert np.nanmedian(r[k < 0.15]) > 0.5
