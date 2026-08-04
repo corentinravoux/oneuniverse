@@ -44,3 +44,38 @@ def test_packed_store_reads_match_linear(tmp_path):
     fa, _ = SimStore(lin_store).read_field_box(0.0, cube)
     fb, _ = SimStore(pk_store).read_field_box(0.0, cube)
     assert np.allclose(fa, fb)
+
+
+def test_packed_store_read_parity_reference_vs_reencode(tmp_path):
+    """A packed reference (wrap-in-place) store returns the same sub-box
+    particles as a reencode store built from the same native sim."""
+    from oneuniverse.simulation.linear.pack import write_packed_native
+    lin = generate_linear_sim(tmp_path / "lin", _cosmo(), box_size=200.0,
+                              n_grid=32, redshifts=(0.0,), seed=2,
+                              with_lightcone=False)
+    pk = write_packed_native(lin, tmp_path / "pk", particle_chunk_nside=4)
+    enc = PackedSimConverter().convert(pk, tmp_path / "enc", sim_name="e",
+                                       projection="reencode")
+    ref = PackedSimConverter().convert(pk, tmp_path / "rf", sim_name="r",
+                                       projection="reference")
+    cube = Cube(0, 100, 0, 100, 0, 100)
+    a = SimStore(enc).read_box("snapshots", 0.0, cube, columns=("x", "y", "z"))
+    b = SimStore(ref).read_box("snapshots", 0.0, cube, columns=("x", "y", "z"))
+    assert len(a["x"]) == len(b["x"]) > 0
+    np.testing.assert_allclose(np.sort(a["x"]), np.sort(b["x"]))
+
+
+def test_packed_reference_is_index_only(tmp_path):
+    """The packed reference projection copies no bulk data — only the sidecar
+    index over the native slab (storage generality: wrap-in-place)."""
+    from pathlib import Path
+    from oneuniverse.simulation.linear.pack import write_packed_native
+    lin = generate_linear_sim(tmp_path / "lin2", _cosmo(), box_size=200.0,
+                              n_grid=32, redshifts=(0.0,), seed=4,
+                              with_lightcone=False)
+    pk = write_packed_native(lin, tmp_path / "pk2", particle_chunk_nside=4)
+    ref = PackedSimConverter().convert(pk, tmp_path / "rf2", sim_name="r",
+                                       projection="reference")
+    snap = Path(ref) / "snapshots" / "z0.000"
+    assert (snap / "_index.parquet").is_file()      # index present
+    assert not list(snap.glob("*.npy"))             # no copied bulk data
