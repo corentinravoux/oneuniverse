@@ -3,6 +3,9 @@ import numpy as np
 
 from oneuniverse.measure.nz import Nz, nz_from_spec_z
 
+# np.trapz was removed in NumPy 2.5; np.trapezoid exists from NumPy 2.0.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 def test_nz_normalises_and_records_method():
     z = np.concatenate([np.full(100, 0.3), np.full(300, 0.5)])
@@ -12,7 +15,7 @@ def test_nz_normalises_and_records_method():
     i3 = np.digitize(0.3, nz.edges) - 1
     i5 = np.digitize(0.5, nz.edges) - 1
     assert nz.counts[i5] > 2.5 * nz.counts[i3]
-    assert np.isclose(np.trapz(nz.pdf(), nz.centers()), 1.0, atol=0.2)
+    assert np.isclose(_trapezoid(nz.pdf(), nz.centers()), 1.0, atol=0.2)
 
 
 def test_nz_weighted():

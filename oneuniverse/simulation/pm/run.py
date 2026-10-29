@@ -17,6 +17,9 @@ from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.pm.deposit import deposit_cic, interpolate_cic
 from oneuniverse.simulation.pm.poisson import pm_force
 
+# np.trapz was removed in NumPy 2.5; np.trapezoid exists from NumPy 2.0.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 def _E(a, om):
     return np.sqrt(om * a ** -3 + (1.0 - om))
@@ -24,7 +27,7 @@ def _E(a, om):
 
 def _factor(a1, a2, om, power):
     a = np.linspace(a1, a2, 64)
-    return float(np.trapz(1.0 / (a ** power * _E(a, om)), a))
+    return float(_trapezoid(1.0 / (a ** power * _E(a, om)), a))
 
 
 def _accel(pos, box, n_grid, om):
