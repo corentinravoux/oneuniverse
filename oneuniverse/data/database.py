@@ -32,7 +32,7 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 
@@ -52,6 +52,9 @@ from oneuniverse.data.format_spec import (
 from oneuniverse.data.dataset_view import DatasetView
 from oneuniverse.data.manifest import Manifest
 from oneuniverse.data.validity import DatasetValidity
+
+if TYPE_CHECKING:
+    from oneuniverse.data.oneuid import OneuidQuery
 
 logger = logging.getLogger(__name__)
 

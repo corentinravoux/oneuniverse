@@ -1,6 +1,8 @@
 # oneuniverse
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21653036.svg)](https://doi.org/10.5281/zenodo.21653036)
+[![tests](https://github.com/corentinravoux/oneuniverse/actions/workflows/tests.yml/badge.svg)](https://github.com/corentinravoux/oneuniverse/actions/workflows/tests.yml)
+[![docs](https://github.com/corentinravoux/oneuniverse/actions/workflows/docs.yml/badge.svg)](https://corentinravoux.github.io/oneuniverse/)
 
 **A toolkit for turning messy, heterogeneous cosmology survey catalogs into one
 clean, queryable, analysis-ready dataset — and for storing and resimulating the
@@ -291,7 +293,7 @@ oneuniverse/
   measure/      DataProduct + MeasurementSet + one builder per probe
   simulation/   OUF-Sim store, fast-PM, resimulation
   twin/         data ↔ simulation coupling
-notebooks/  scripts/  test/  plans/  research/  docs/
+notebooks/  scripts/  test/  plans/  research/  docs_site/
 ```
 
 ## Documentation
@@ -301,9 +303,8 @@ notebooks/  scripts/  test/  plans/  research/  docs/
 The site is built from the in-code (NumPy-style) docstrings with
 [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) +
 [mkdocstrings](https://mkdocstrings.github.io/) and deployed to GitHub Pages on
-every push to `main`. Its sources live in [`docs_site/`](docs_site) (kept
-separate from the older Sphinx scaffold in [`docs/`](docs)). Build it locally
-with:
+every push to `main`. Its sources live in [`docs_site/`](docs_site). Build it
+locally with:
 
 ```bash
 pip install -r requirements-docs.txt

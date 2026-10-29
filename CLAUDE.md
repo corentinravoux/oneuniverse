@@ -153,7 +153,8 @@ call site.
   `@register class FooLoader(BaseSurveyLoader)`.
 - `plans/` — phase-by-phase + pillar-level roadmaps. Stabilisation
   (Phases 1–15) done; generalisation (Phases 16–23) planned.
-- `docs/` — Sphinx scaffold (`make html` from `docs/`).
+- `docs_site/` — MkDocs sources (`mkdocs serve`); deployed to GitHub Pages by
+  `.github/workflows/docs.yml`.
 - `research/` — topical references + design analyses.
   - [`research/survey_landscape_review.md`](research/survey_landscape_review.md)
     — full cosmology survey landscape (Pillar 1 driver).
