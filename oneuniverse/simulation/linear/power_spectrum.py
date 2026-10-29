@@ -11,6 +11,9 @@ import numpy as np
 from oneuniverse.simulation.cosmology import CosmologySpec
 from oneuniverse.simulation.linear._cosmo import require_cosmo
 
+# np.trapz was removed in NumPy 2.5; np.trapezoid exists from NumPy 2.0.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 def transfer_eh_nowiggle(k, cosmo: CosmologySpec) -> np.ndarray:
     """No-wiggle EH98 transfer function T(k). ``k`` in h/Mpc."""
@@ -67,7 +70,7 @@ def sigma_R(R: float, cosmo: CosmologySpec, *, pk_func=None) -> float:
     pk = unnormalised_power(k, c) if pk_func is None else np.asarray(pk_func(k))
     w = _top_hat(k * R)
     integrand = k ** 2 * pk * w ** 2
-    sigma2 = np.trapz(integrand, k) / (2.0 * np.pi ** 2)
+    sigma2 = _trapezoid(integrand, k) / (2.0 * np.pi ** 2)
     return float(np.sqrt(sigma2))
 
 

@@ -20,6 +20,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+# np.trapz was removed in NumPy 2.5; np.trapezoid exists from NumPy 2.0.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 class PdfParameterisation(str, Enum):
     INTERP = "interp"
@@ -267,7 +270,7 @@ class ProbabilisticRedshift:
             dz = self.grid[1] - self.grid[0]
             return (self.values * self.grid[None, :]).sum(axis=1) * dz
         if self.spec.parameterisation == "quant":
-            return np.trapz(self.values, self.grid, axis=1)
+            return _trapezoid(self.values, self.grid, axis=1)
         if self.spec.parameterisation == "sample":
             return np.array(
                 [float(np.mean(v)) for v in self.values], dtype=np.float64,
@@ -290,7 +293,7 @@ class ProbabilisticRedshift:
             return np.sqrt(np.maximum(var, 0.0))
         if self.spec.parameterisation == "quant":
             m = self.mean()
-            var = np.trapz((self.values - m[:, None]) ** 2, self.grid, axis=1)
+            var = _trapezoid((self.values - m[:, None]) ** 2, self.grid, axis=1)
             return np.sqrt(np.maximum(var, 0.0))
         mu, sigma, w = self._mixmod
         m = self.mean()

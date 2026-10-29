@@ -21,6 +21,8 @@ dependencies = [
     "pyarrow>=12.0",
     "healpy>=1.16",
     "pyyaml>=6.0",
+    # cross-match graph (sparse), KD-tree neighbour search
+    "scipy>=1.9",
 ]
 
 [project.optional-dependencies]

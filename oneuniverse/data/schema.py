@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 # ── Column descriptor ─────────────────────────────────────────────────────
 
@@ -257,9 +258,15 @@ def validate_dataframe(df, groups: List[str]) -> List[str]:
             expected = np.dtype(all_cols[name].dtype)
             actual = df[name].dtype
             # pandas stores strings as object dtype — skip for string columns
-            if expected.kind == "U" and actual == np.dtype("O"):
+            if expected.kind == "U" and (
+                actual == np.dtype("O") or isinstance(actual, pd.StringDtype)
+            ):
                 continue
-            if not np.can_cast(actual, expected, casting="same_kind"):
+            try:
+                castable = np.can_cast(actual, expected, casting="same_kind")
+            except TypeError:  # pandas extension dtype numpy cannot reason about
+                continue
+            if not castable:
                 warnings.append(
                     f"Column '{name}': expected dtype compatible with "
                     f"{expected}, got {actual}"
