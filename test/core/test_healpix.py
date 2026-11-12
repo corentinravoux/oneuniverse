@@ -95,3 +95,63 @@ def test_patch_pixels_near_pole_and_thin_patches_do_not_raise(nside, patch):
     cells = patch_pixels(nside, *patch)
     assert cells.dtype == np.int32 and len(cells) > 0
     assert np.all(np.isin(radec_to_pix(nside, ra, dec), cells))
+
+
+def test_radec_to_pix_validates_inputs():
+    from oneuniverse._core.errors import ValidationError
+    for ra, dec in [(np.nan, 0.0), (0.0, np.inf), (0.0, 91.0), (0.0, -90.5)]:
+        with pytest.raises(ValidationError):
+            radec_to_pix(8, np.array([ra]), np.array([dec]))
+    assert radec_to_pix(8, [0.0], [90.0]).shape == (1,)
+
+
+@pytest.mark.parametrize("nside", [0, 3, 16384, -8, 8.5])
+def test_nside_validated_everywhere(nside):
+    from oneuniverse._core.errors import ValidationError
+    with pytest.raises(ValidationError):
+        radec_to_pix(nside, [1.0], [1.0])
+    with pytest.raises(ValidationError):
+        cone_pixels(nside, 1.0, 1.0, 1.0)
+    with pytest.raises(ValidationError):
+        patch_pixels(nside, 1.0, 2.0, 0.0, 1.0)
+    with pytest.raises(ValidationError):
+        coarsen([1], nside, 1)
+
+
+def test_max_nside_accepted():
+    assert radec_to_pix(8192, [10.0], [10.0]).dtype == np.int32
+
+
+@pytest.mark.parametrize("radius", [0.0, -1.0, np.nan, np.inf])
+def test_cone_pixels_rejects_bad_radius(radius):
+    from oneuniverse._core.errors import ValidationError
+    with pytest.raises(ValidationError):
+        cone_pixels(8, 10.0, 10.0, radius)
+
+
+@pytest.mark.parametrize("args", [
+    (-1.0, 10.0, 0.0, 5.0), (0.0, 361.0, 0.0, 5.0),
+    (0.0, 10.0, 5.0, 5.0), (0.0, 10.0, -91.0, 5.0), (np.nan, 10.0, 0.0, 5.0),
+])
+def test_patch_pixels_validates_arguments(args):
+    from oneuniverse._core.errors import ValidationError
+    with pytest.raises(ValidationError):
+        patch_pixels(8, *args)
+
+
+def test_wrapped_patch_with_degenerate_piece_is_not_a_full_strip():
+    a = patch_pixels(8, 350.0, 0.0, -5.0, 5.0)
+    b = patch_pixels(8, 350.0, 360.0, -5.0, 5.0)
+    full = patch_pixels(8, 0.0, 360.0, -5.0, 5.0)
+    assert len(a) < len(full) / 2 and abs(len(a) - len(b)) <= 2
+    ra, dec = _sky(40000)
+    p = SkyPatch(350.0, 0.0, -5.0, 5.0); inside = p.contains(ra, dec)
+    assert inside.any() and np.all(np.isin(radec_to_pix(8, ra[inside], dec[inside]), a))
+
+
+def test_thin_patch_is_widened_not_full_strip():
+    cells = patch_pixels(8, 10.0, 10.0 + 1e-10, 10.0, 20.0)
+    full = patch_pixels(8, 0.0, 360.0, 10.0, 20.0)
+    assert 0 < len(cells) < len(full) / 4
+    pts = radec_to_pix(8, np.full(50, 10.0), np.linspace(10.0, 20.0, 50))
+    assert np.all(np.isin(pts, cells))

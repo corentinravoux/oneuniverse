@@ -13,9 +13,9 @@ class SchemaError(OneuniverseError):
     """Data does not conform to the declared schema."""
 
 
-class NotFoundError(OneuniverseError):
+class NotFoundError(OneuniverseError, KeyError):
     """A requested dataset, column or entry does not exist."""
 
 
-class ValidationError(OneuniverseError):
+class ValidationError(OneuniverseError, ValueError):
     """Input values fail validation."""

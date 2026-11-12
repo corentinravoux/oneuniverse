@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from importlib.metadata import entry_points
 from types import MappingProxyType
+from oneuniverse._core.errors import NotFoundError, ValidationError
 from typing import Callable, Dict, Generic, List, Mapping, Optional, TypeVar
 
 T = TypeVar("T")
@@ -34,13 +35,13 @@ class Registry(Generic[T]):
     def register(self, item: T, *, name: Optional[str] = None) -> T:
         if name is None:
             if self._key is None:
-                raise ValueError(
+                raise ValidationError(
                     f"{self._label}: cannot derive a name; pass name= or "
                     f"construct Registry with key="
                 )
             name = self._key(item)
         if name in self._items:
-            raise ValueError(
+            raise ValidationError(
                 f"{self._label}: '{name}' already registered "
                 f"(by {self._items[name]!r})"
             )
@@ -49,7 +50,7 @@ class Registry(Generic[T]):
 
     def get(self, name: str) -> T:
         if name not in self._items:
-            raise KeyError(
+            raise NotFoundError(
                 f"{self._label}: unknown '{name}'; known: {sorted(self._items)}"
             )
         return self._items[name]
