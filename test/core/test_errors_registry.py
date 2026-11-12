@@ -67,3 +67,47 @@ def test_registry_error_paths():
         r.get("zzz")
     with pytest.raises(KeyError):
         r.get("zzz")
+
+
+def _ep_registry(monkeypatch, eps):
+    import oneuniverse._core.registry as rmod
+    monkeypatch.setattr(rmod, "entry_points", lambda group=None: eps)
+    return rmod.Registry("thing")
+
+
+class _BadEP:
+    def __init__(self, name, exc):
+        self.name, self._exc = name, exc
+
+    def load(self):
+        raise self._exc
+
+
+def test_load_entry_points_on_error_raise(monkeypatch):
+    r = _ep_registry(monkeypatch, [_BadEP("x", ValueError("boom"))])
+    with pytest.raises(ValueError):
+        r.load_entry_points("g")
+
+
+def test_load_entry_points_warn_records(monkeypatch):
+    from oneuniverse._core.errors import ValidationError
+
+    def validate(obj):
+        if obj == "bad":
+            raise ValidationError("nope")
+
+    r = _ep_registry(monkeypatch, [_BadEP("x", ValueError("boom")), _FakeEP("y", "bad"),
+                                   _FakeEP("z", "good")])
+    with pytest.warns(RuntimeWarning, match="skipping plugin 'x'"):
+        added = r.load_entry_points("g", on_error="warn", validate=validate)
+    assert added == ["z"]
+    assert r.plugin_errors == {"x": "ValueError: boom", "y": "ValidationError: nope"}
+
+
+def test_load_entry_points_validate_raises_by_default(monkeypatch):
+    r = _ep_registry(monkeypatch, [_FakeEP("y", "bad")])
+
+    def validate(obj):
+        raise ValueError("no")
+    with pytest.raises(ValueError):
+        r.load_entry_points("g", validate=validate)

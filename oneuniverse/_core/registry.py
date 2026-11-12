@@ -7,10 +7,11 @@ existing public functions, so this is an internal consolidation only.
 """
 from __future__ import annotations
 
+import warnings
 from importlib.metadata import entry_points
 from types import MappingProxyType
 from oneuniverse._core.errors import NotFoundError, ValidationError
-from typing import Callable, Dict, Generic, List, Mapping, Optional, TypeVar
+from typing import Callable, Literal, Dict, Generic, List, Mapping, Optional, TypeVar
 
 T = TypeVar("T")
 
@@ -31,6 +32,7 @@ class Registry(Generic[T]):
         self._label = label
         self._key = key
         self._items: Dict[str, T] = {}
+        self.plugin_errors: Dict[str, str] = {}
 
     def register(self, item: T, *, name: Optional[str] = None) -> T:
         if name is None:
@@ -71,12 +73,34 @@ class Registry(Generic[T]):
         """Read-only view of the registry."""
         return MappingProxyType(self._items)
 
-    def load_entry_points(self, group: str) -> List[str]:
-        """Register every plugin advertised under *group*. Returns names added."""
+    def load_entry_points(
+        self, group: str, *, on_error: Literal["raise", "warn"] = "raise",
+        validate: Optional[Callable[[object], None]] = None,
+    ) -> List[str]:
+        """Register every plugin advertised under *group*. Returns names added.
+
+        ``validate`` (raises ``ValidationError`` on a bad object) runs after loading.
+        With ``on_error="warn"`` a plugin whose load or validation fails is skipped,
+        recorded in ``plugin_errors`` and reported as a ``RuntimeWarning``.
+        """
         added: List[str] = []
         for ep in entry_points(group=group):
             if ep.name in self._items:
                 continue  # built-in of same name wins; never override silently
-            self.register(ep.load(), name=ep.name)
+            # Single documented exception to the no-`except Exception` rule:
+            # plugin isolation, a third-party import must not break ours.
+            try:
+                obj = ep.load()
+                if validate is not None:
+                    validate(obj)
+            except Exception as e:
+                if on_error == "raise":
+                    raise
+                msg = f"{type(e).__name__}: {e}"
+                self.plugin_errors[ep.name] = msg
+                warnings.warn(f"skipping plugin {ep.name!r} in {group!r}: {msg}",
+                              RuntimeWarning, stacklevel=2)
+                continue
+            self.register(obj, name=ep.name)
             added.append(ep.name)
         return added
