@@ -74,3 +74,24 @@ def test_patch_pixels_ring_ordering():
     cells = patch_pixels(8, 20.0, 60.0, 30.0, 50.0, nest=False)
     pt = radec_to_pix(8, np.array([40.0]), np.array([40.0]), nest=False)
     assert pt[0] in cells
+
+
+@pytest.mark.parametrize("nside,patch", [
+    (1, (10.0, 55.0, 89.6, 89.9)),
+    (1, (10.0, 55.0, -89.9, -89.6)),
+    (2, (10.0, 100.0, 89.95, 89.99)),
+    (8, (10.0, 100.0, 89.999, 89.9995)),
+    (32, (10.0, 100.0, 89.9999, 89.99995)),
+    (8, (10.0, 100.0, 40.0, 40.0001)),     # thin Dec
+    (8, (10.0, 10.0 + 1e-10, 10.0, 20.0)),  # thin RA
+    (8, (10.0, 10.5, 10.0, 20.0)),
+])
+def test_patch_pixels_near_pole_and_thin_patches_do_not_raise(nside, patch):
+    p = SkyPatch(*patch)
+    rng = np.random.default_rng(1)
+    ra = rng.uniform(patch[0], patch[1], 500)
+    dec = rng.uniform(patch[2], patch[3], 500)
+    assert p.contains(ra, dec).all()
+    cells = patch_pixels(nside, *patch)
+    assert cells.dtype == np.int32 and len(cells) > 0
+    assert np.all(np.isin(radec_to_pix(nside, ra, dec), cells))

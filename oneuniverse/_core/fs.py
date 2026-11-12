@@ -47,15 +47,26 @@ def atomic_dir(path: str | Path) -> Iterator[Path]:
     old = path.with_name(path.name + ".old")
     if tmp.exists():
         raise FormatError(f"stale temporary directory exists: {tmp}")
+    if old.exists():
+        raise FormatError(f"stale previous-version directory exists: {old}")
     tmp.mkdir(parents=True)
     try:
         yield tmp
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    if path.exists():
-        os.rename(path, old)
-    os.rename(tmp, path)
+    try:
+        if path.exists():
+            os.rename(path, old)
+        try:
+            os.rename(tmp, path)
+        except BaseException:
+            if old.exists() and not path.exists():
+                os.rename(old, path)  # restore the previous version
+            raise
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     if old.exists():
         shutil.rmtree(old)
 
