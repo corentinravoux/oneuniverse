@@ -5,7 +5,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
-from fixtures.synthetic import synthetic_point_table
+from fixtures.two_surveys import make_two_survey_db, pair_tables, write_survey
 
 from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.geometry import Cone
@@ -16,44 +16,13 @@ from oneuniverse.data.oneuid import ONEUID_SCHEMA
 from oneuniverse.data.schema import Geometry, stable_object_id
 from oneuniverse.data.writer import write_dataset
 
-
-def _write(root, name, table, **kw):
-    return write_dataset(table, root / name, geometry=Geometry.POINT,
-                         survey=SurveyMeta(name, "test"), loader=LoaderInfo("test", "1", {}),
-                         partition_nside=4, extra_stats_columns=["mag"], **kw)
-
-
-def _pair_tables(n, n_common, seed=0):
-    """a and b with n rows each; source rows < n_common are the same objects (jittered)."""
-    kw = {"dec_range": (-80.0, 80.0)}
-    ta = synthetic_point_table(n, seed, survey="a", **kw)
-    tb = synthetic_point_table(n, seed + 1, survey="b", **kw)
-    pos_a = np.argsort(ta["source_row"].to_numpy())  # position of source row k
-    src_b = tb["source_row"].to_numpy()
-    common = src_b < n_common
-    rng = np.random.default_rng(seed + 2)
-    cols = {c: tb[c].to_numpy().copy() for c in ("ra", "dec", "z")}
-    ia = pos_a[src_b[common]]
-    k = int(common.sum())
-    cols["ra"][common] = ta["ra"].to_numpy()[ia] + rng.uniform(-0.2, 0.2, k) / 3600 / np.cos(
-        np.radians(ta["dec"].to_numpy()[ia]))
-    cols["dec"][common] = ta["dec"].to_numpy()[ia] + rng.uniform(-0.2, 0.2, k) / 3600
-    cols["z"][common] = ta["z"].to_numpy()[ia] + rng.uniform(-1e-4, 1e-4, k)
-    for c, v in cols.items():
-        tb = tb.set_column(tb.schema.get_field_index(c), c, pa.array(v))
-    return ta, tb
-
-
-def _make_db(root, n=30_000, n_common=10_000):
-    ta, tb = _pair_tables(n, n_common)
-    _write(root, "a", ta)
-    _write(root, "b", tb)
-    return Database(root)
+_write = write_survey
+_pair_tables = pair_tables
 
 
 @pytest.fixture(scope="module")
 def db2(tmp_path_factory):
-    return _make_db(tmp_path_factory.mktemp("db2"))
+    return make_two_survey_db(tmp_path_factory.mktemp("db2"))
 
 
 def test_build_and_load(db2):
@@ -134,7 +103,7 @@ def test_restrict_to_keeps_ids(db2):
 
 
 def test_rebuild_archives_and_as_of(tmp_path):
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a"], rules=CrossMatchRules(), name="x")
     t0 = datetime.now(UTC)
     time.sleep(0.01)
@@ -144,7 +113,7 @@ def test_rebuild_archives_and_as_of(tmp_path):
 
 
 def test_hydrate_refuses_changed_dataset(tmp_path):
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
     ta, _ = _pair_tables(2_000, 500, seed=7)
     _write(tmp_path, "a", ta, overwrite=True)
@@ -193,7 +162,7 @@ def test_mixed_column_types_and_errors(tmp_path):
 
 
 def test_database_as_of_defaults_index_time(tmp_path):
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     assert db.as_of_time is None
     db.build_oneuid(["a"], rules=CrossMatchRules(), name="x")
     t0 = datetime.now(UTC)
@@ -207,7 +176,7 @@ def test_database_as_of_defaults_index_time(tmp_path):
 
 
 def test_strings_rejected_as_sequences(tmp_path):
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     with pytest.raises(ValidationError, match="list of names"):
         db.build_oneuid("a", rules=CrossMatchRules())
     idx = db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
@@ -244,7 +213,7 @@ def test_hydrate_columns_missing_in_some_datasets(tmp_path):
 
 
 def test_hydrate_raises_before_any_yield_when_second_changed(tmp_path):
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
     _, tb = _pair_tables(2_000, 500, seed=7)
     _write(tmp_path, "b", tb, overwrite=True)  # only the alphabetically second one changes
@@ -257,7 +226,7 @@ def test_hydrate_raises_before_any_yield_when_second_changed(tmp_path):
 
 def test_hydrate_dataset_removed_from_database(tmp_path):
     import shutil
-    db = _make_db(tmp_path, 2_000, 500)
+    db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
     shutil.rmtree(tmp_path / "b")
     q = Database(tmp_path).oneuid_query("ab")

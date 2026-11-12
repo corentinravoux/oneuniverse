@@ -1,4 +1,5 @@
 """Combine datasets: weights, default weights, weighted catalogs."""
+from oneuniverse.combine.catalog import WeightedCatalog
 from oneuniverse.combine.defaults import default_weight_for, register_default
 from oneuniverse.combine.weights import (
     ColumnWeight,
@@ -15,5 +16,5 @@ from oneuniverse.combine.weights import (
 __all__ = [
     "Weight", "ProductWeight", "ColumnWeight", "ConstantWeight",
     "InverseVarianceWeight", "FKPWeight", "HealpixMapWeight", "ShearWeight",
-    "QualityMaskWeight", "default_weight_for", "register_default",
+    "QualityMaskWeight", "default_weight_for", "register_default", "WeightedCatalog",
 ]
