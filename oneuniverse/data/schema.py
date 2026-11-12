@@ -182,6 +182,8 @@ def validate_z_type_values(array: pa.Array | pa.ChunkedArray) -> None:
 def stable_object_id(survey: str, source_row: np.ndarray) -> np.ndarray:
     """``(hash32(survey) << 32) | source_row`` as int64 (computed in uint64)."""
     rows = np.asarray(source_row)
+    if rows.dtype.kind not in "iu":
+        raise ValidationError(f"source_row must be an integer array, got dtype {rows.dtype}")
     if rows.size and (rows.min() < 0 or rows.max() >= 2**32):
         raise ValidationError("source_row must be in [0, 2**32)")
     h = np.uint64(int(hashlib.sha256(survey.encode()).hexdigest()[:8], 16))

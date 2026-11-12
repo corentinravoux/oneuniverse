@@ -64,3 +64,11 @@ def test_cast_to_core_dictionary_encodes():
     t = pa.table({"ra": [1.0], "dec": [2.0], "z": [0.5], "z_type": ["spec"], "z_err": [0.1], "object_id": [1], "survey": ["s"], "source_row": [0], "hpix32": [3], "mag": [20.0]})
     out = cast_to_core(t, Geometry.POINT)
     assert pa.types.is_dictionary(out.schema.field("survey").type) and out.schema.field("z_err").type == pa.float32() and out.schema.field("mag").type == pa.float64()
+
+
+def test_stable_object_id_rejects_non_integer_rows():
+    import numpy as np
+    from oneuniverse._core.errors import ValidationError
+    from oneuniverse.data.schema import stable_object_id
+    with pytest.raises(ValidationError, match="integer"):
+        stable_object_id("s", np.array([1.5, 2.0]))
