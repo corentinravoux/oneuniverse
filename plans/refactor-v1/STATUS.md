@@ -10,6 +10,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R1 T1 | 2026-11-12 | 41bad19 | 273 / 5 | 15 s (`-n 6`) | old data/combine/measure/twin removed |
 | R1 | 2026-11-12 | 5bc6b38 | 376 / 4 | 28 s (`-n 6`); 86 s single-process | OUF 3.0: schema, manifest, bucketed streaming writer, DatasetView (pruning, take, stale-view guard), PDFs, eBOSS/DESI loaders, convert(). Fake 2 M DESI convert peaks 213 MiB anon RSS. Exit criterion met. |
 | R2 | 2026-11-12 | f1fefea | 459 / 4 | 40 s (`-n 6`); 140 s single-process | Versioned sidecar (crash-safe, µs version ids), pair-wise blocked cross-match (brute-force exact), ONEUID with position hydration + dataset-version guard, links with ONEUID-version guard, Database. Row-identity regression green; 2×1 M cross-match 13 s; sidecar crash test green. |
+| R3 | 2026-11-12 | e6813ff | 500 / 3 | 40 s (`-n 6`) | Weight primitives (full-name describe()), default registry, WeightedCatalog with ivar / best / mean / priority strategies; combine on 60 k rows ≈ 0.02 s. |
 
 ## Decisions taken during execution
 
@@ -71,3 +72,13 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 - **Risk for R8.** The default suite takes 140 s single-process (40 s with
   `-n 6`); `test/data` alone is ~110 s. The < 60 s single-process target needs
   slow-marking of the heavier writer/ONEUID tests or smaller fixtures.
+- **R3 — combining values across surveys.** `combine(value, variance=<1-σ
+  column>, strategy=…)`. "ivar" uses only 1/σ² (catalog weights are survey
+  weights for measurements, not for a per-object value); "mean" uses catalog
+  weights; "best" takes the smallest σ; "priority" takes the first dataset in a
+  given order (usual for multi-pipeline QSO redshifts, e.g. DESI before eBOSS).
+  Objects without a valid σ (eBOSS has no redshift error) keep a value with
+  variance NaN instead of being dropped. The plan's algorithm (Σ w·ivar)
+  contradicted its own test and was replaced.
+- **Open for R4.** `combine()` returns no positions, so a combined
+  `WeightedCatalog` cannot yet feed `build_pointset(view, …)`.
