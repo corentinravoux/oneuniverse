@@ -8,6 +8,7 @@ from astropy.io import fits
 
 
 def _write(out: Path, arrays: dict[str, np.ndarray]) -> Path:
+    out.parent.mkdir(parents=True, exist_ok=True)
     cols = []
     for name, a in arrays.items():
         if a.dtype.kind in "US":
