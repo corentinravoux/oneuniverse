@@ -1,5 +1,6 @@
-import resource
-import tracemalloc
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
@@ -15,6 +16,7 @@ from fixtures.synthetic import (
 
 from oneuniverse._core.errors import FormatError, SchemaError, ValidationError
 from oneuniverse._core.healpix import coarsen
+from oneuniverse.data import writer
 from oneuniverse.data.manifest import (
     LoaderInfo,
     OriginalFile,
@@ -84,20 +86,105 @@ def test_extra_stats_columns(tmp_path):
         _w(tab, tmp_path / "x", extra_stats_columns=["nope"])
 
 
-def test_streaming_batches_bounded_memory(tmp_path):
-    def gen():  # 40 batches of 50k rows, never materialised together
-        for i in range(40):
-            yield synthetic_point_table(50_000, i).to_batches()[0]
-    rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    tracemalloc.start()
-    _w(gen(), tmp_path / "ds")
-    peak = tracemalloc.get_traced_memory()[1]
-    tracemalloc.stop()
-    rss_growth_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - rss0
-    print(f"tracemalloc peak {peak / 2**20:.1f} MiB, RSS growth {rss_growth_kib / 1024:.1f} MiB")
-    assert read_manifest(tmp_path / "ds/manifest.json").n_rows == 2_000_000
-    assert peak < 400 * 2**20
-    assert rss_growth_kib < 1024 * 1024  # KiB on Linux: < 1 GiB
+_MEM_SCRIPT = """
+import resource, sys, pathlib
+sys.path[:0] = [sys.argv[1], sys.argv[2]]
+from fixtures.synthetic import synthetic_point_table
+from oneuniverse.data.manifest import LoaderInfo, SurveyMeta, read_manifest
+from oneuniverse.data import writer
+from oneuniverse.data.schema import Geometry
+from oneuniverse.data.writer import write_dataset
+synthetic_point_table(10, 0)
+def gen():
+    for i in range(int(sys.argv[4])):
+        yield synthetic_point_table(50_000, i).to_batches()[0]
+rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+write_dataset(gen(), pathlib.Path(sys.argv[3]), geometry=Geometry.POINT,
+              survey=SurveyMeta("s", "test"), loader=LoaderInfo("t", "1", {}))
+print((resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - rss0) / 1024,
+      read_manifest(pathlib.Path(sys.argv[3]) / "manifest.json").n_rows)
+"""
+
+
+def _rss_growth_mib(tmp_path, n_batches):
+    root = Path(__file__).resolve().parents[2]
+    r = subprocess.run(
+        [sys.executable, "-c", _MEM_SCRIPT, str(root), str(root / "test"),
+         str(tmp_path / "ds"), str(n_batches)],
+        capture_output=True, text=True, check=True)
+    growth, n = r.stdout.split()
+    assert int(n) == n_batches * 50_000
+    print(f"{n_batches * 50_000} rows: RSS growth {float(growth):.0f} MiB")
+    return float(growth)
+
+
+def test_streaming_bounded_memory_500k(tmp_path):
+    assert _rss_growth_mib(tmp_path, 10) < 400  # MiB, fresh process
+
+
+@pytest.mark.slow
+def test_streaming_bounded_memory_2m(tmp_path):
+    assert _rss_growth_mib(tmp_path, 40) < 400  # MiB, fresh process
+
+
+def test_nside32_one_file_per_cell(tmp_path):
+    write_synthetic_dataset(tmp_path / "ds", 200_000, 0, partition_nside=32)
+    idx = read_partition_index(tmp_path / "ds/_index.parquet")
+    assert idx.num_rows == len(set(idx["cell"].to_pylist())) > 10_000
+    assert sum(idx["n_rows"].to_pylist()) == 200_000
+
+
+def test_nside16_and_row_groups_full(tmp_path, monkeypatch):
+    monkeypatch.setattr(writer, "_ROW_GROUP", 100)
+    monkeypatch.setattr(writer, "MAX_ROWS_PER_FILE", 450)
+    write_synthetic_dataset(tmp_path / "ds", 20_000, 0, partition_nside=2)
+    idx = read_partition_index(tmp_path / "ds/_index.parquet")
+    assert sum(idx["n_rows"].to_pylist()) == 20_000
+    per_cell = {}
+    for row in idx.to_pylist():
+        md = pq.ParquetFile(tmp_path / "ds" / row["path"]).metadata
+        sizes = [md.row_group(g).num_rows for g in range(md.num_row_groups)]
+        assert all(x == 100 for x in sizes[:-1]) and row["n_rows"] <= 400
+        per_cell[row["cell"]] = per_cell.get(row["cell"], 0) + 1
+    assert max(per_cell.values()) > 1  # rollover happened
+    write_synthetic_dataset(tmp_path / "ds16", 5_000, 1, partition_nside=16)
+    assert read_manifest(tmp_path / "ds16/manifest.json").partitioning.nside == 16
+
+
+def test_row_groups_full_default(tmp_path):
+    write_synthetic_dataset(tmp_path / "ds", 300_000, 0, partition_nside=1)
+    idx = read_partition_index(tmp_path / "ds/_index.parquet")
+    for row in idx.to_pylist():
+        md = pq.ParquetFile(tmp_path / "ds" / row["path"]).metadata
+        assert all(md.row_group(g).num_rows == writer._ROW_GROUP
+                   for g in range(md.num_row_groups - 1))
+    assert idx.num_rows <= 12
+
+
+def test_extra_stats_validation(tmp_path):
+    t = synthetic_point_table(100, 0)
+    for bad in ("ra", "z"):
+        with pytest.raises(ValidationError, match="core"):
+            _w(t, tmp_path / "x", extra_stats_columns=[bad])
+    assert not (tmp_path / "x.tmp").exists()
+
+
+def test_int64_stats_round_outwards(tmp_path):
+    t = synthetic_point_table(50, 0)
+    # 2**53+1 rounds down and 2**53+3 rounds up as float64: each breaks one bound
+    t = t.append_column("lo", pa.array(np.full(50, 2**53 + 3, dtype=np.int64)))
+    t = t.append_column("hi", pa.array(np.full(50, 2**53 + 1, dtype=np.int64)))
+    _w(t, tmp_path / "ds", extra_stats_columns=["lo", "hi"], partition_nside=1)
+    idx = read_partition_index(tmp_path / "ds/_index.parquet")
+    assert min(idx["lo_min"].to_pylist()) <= 2**53 + 3
+    assert max(idx["hi_max"].to_pylist()) >= 2**53 + 1
+
+
+def test_overwrite_non_ouf3_manifest_message(tmp_path):
+    (tmp_path / "ds").mkdir()
+    (tmp_path / "ds/manifest.json").write_text('{"format_version": "2.0.0"}')
+    with pytest.raises(FormatError, match="not an OUF 3.0 dataset"):
+        _w(synthetic_point_table(10, 0), tmp_path / "ds", overwrite=True)
 
 
 def test_overwrite_is_atomic_and_previous_untouched_on_failure(tmp_path):
