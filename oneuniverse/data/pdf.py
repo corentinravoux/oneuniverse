@@ -187,13 +187,32 @@ class ProbabilisticRedshift:
             std = np.sqrt((cs2[self._offsets[1:]] - cs2[self._offsets[:-1]]) / c)
         return mean, std
 
+    def _quant_moments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Mean/std over u in [lev0, levN] of the piecewise-linear quantile function
+        (exact integrals per linear segment); tails beyond the levels are excluded."""
+        lev, q = np.asarray(self.spec.quant_levels, np.float64), self._values
+        du = np.diff(lev)[None]
+        a, b = q[:, :-1], q[:, 1:]
+        span = lev[-1] - lev[0]
+        m1 = np.sum(0.5 * (a + b) * du, axis=1) / span
+        m2 = np.sum((a * a + a * b + b * b) / 3.0 * du, axis=1) / span
+        return m1, np.sqrt(np.maximum(m2 - m1 ** 2, 0.0))
+
     # ---- summaries ----------------------------------------------------
     def mean(self) -> np.ndarray:
-        self._need("interp", "sample", op="mean")
+        """Mean redshift. For ``quant`` it is the central-mass estimate: tails beyond
+        the stored levels are excluded (integral of the piecewise-linear quantile
+        function over [lev0, levN], normalised by levN - lev0)."""
+        self._need("interp", "sample", "quant", op="mean")
+        if self.spec.kind == "quant":
+            return self._quant_moments()[0]
         return self._moments()[0] if self.spec.kind == "interp" else self._sample_moments()[0]
 
     def std(self) -> np.ndarray:
-        self._need("interp", "sample", op="std")
+        """Standard deviation; for ``quant`` a truncated-tail estimate (see ``mean``)."""
+        self._need("interp", "sample", "quant", op="std")
+        if self.spec.kind == "quant":
+            return self._quant_moments()[1]
         return self._moments()[1] if self.spec.kind == "interp" else self._sample_moments()[1]
 
     def cdf(self, z) -> np.ndarray:
@@ -235,13 +254,15 @@ class ProbabilisticRedshift:
         return np.where(np.isnan(c[:, :1]), np.nan, out)
 
     def ppf(self, q) -> np.ndarray:
-        """Quantile at level ``q`` (scalar or one level per row); interp and quant only."""
+        """Quantile at level ``q`` (scalar or one level per row); interp and quant only.
+        For ``quant``, levels outside [lev0, levN] are clamped to the outer stored values."""
         self._need("interp", "quant", op="ppf")
         qq = np.broadcast_to(np.asarray(q, np.float64), (self._n,))
         return self._ppf2d(np.ascontiguousarray(qq)[:, None])[:, 0]
 
     def sample(self, n_per: int, seed: int) -> np.ndarray:
-        """``n_per`` draws per row, float64 of shape (n, n_per), deterministic for ``seed``."""
+        """``n_per`` draws per row, float64 of shape (n, n_per), deterministic for ``seed``.
+        For ``quant``, u ~ U(lev0, levN) so no mass piles up at the edge values (tails excluded)."""
         if n_per < 1:
             raise ValidationError("n_per must be >= 1")
         rng = np.random.default_rng(seed)
@@ -252,4 +273,8 @@ class ProbabilisticRedshift:
             idx = np.minimum(self._offsets[:-1, None] + pick, max(self._flat.size - 1, 0))
             out = self._flat[idx] if self._flat.size else np.full((self._n, n_per), np.nan)
             return np.where(c > 0, out, np.nan)
-        return self._ppf2d(rng.random((self._n, n_per)))
+        u = rng.random((self._n, n_per))
+        if self.spec.kind == "quant":
+            lo, hi = self.spec.quant_levels[0], self.spec.quant_levels[-1]
+            u = lo + (hi - lo) * u
+        return self._ppf2d(u)

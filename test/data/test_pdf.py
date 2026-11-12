@@ -39,9 +39,23 @@ def test_quant_ppf_and_sample_seeded():
     pz = ProbabilisticRedshift(PdfSpec("quant", quant_levels=levels), vals)
     assert np.allclose(pz.ppf(0.5), [1.0, 2.0]) and pz.sample(5, seed=1).shape == (2, 5) \
         and np.array_equal(pz.sample(5, seed=1), pz.sample(5, seed=1))
-    for op in (lambda: pz.cdf(1.0), pz.mean, pz.std):
-        with pytest.raises(NotImplementedError):
-            op()
+    with pytest.raises(NotImplementedError):
+        pz.cdf(1.0)
+    assert np.allclose(pz.mean(), [1.0, 2.0], atol=1e-6) and np.all(pz.std() > 0)
+    s = pz.sample(2000, seed=2)
+    assert s.min() >= 0.9 and s.max() <= 1.1 + 1.0 and s[0].min() >= 0.9 - 1e-6 and s[0].max() <= 1.1 + 1e-6
+    assert np.mean(s[0] == 0.9) < 0.01  # no pile-up at the edge value
+
+
+def test_quant_moments_gaussian_levels():
+    from scipy.special import ndtri
+    lev = tuple(np.linspace(0.01, 0.99, 99)); mu = np.array([0.7, 1.5]); sig = np.array([0.1, 0.3])
+    vals = mu[:, None] + sig[:, None] * ndtri(np.asarray(lev))[None]
+    pz = ProbabilisticRedshift(PdfSpec("quant", quant_levels=lev), vals)
+    assert np.allclose(pz.mean(), mu, atol=1e-6)
+    # std of a standard normal truncated to its central 98 %: ~0.8, plus piecewise-linear error
+    trunc = np.sqrt(1 - 2 * ndtri(0.99) * np.exp(-0.5 * ndtri(0.99) ** 2) / np.sqrt(2 * np.pi) / 0.98)
+    assert np.allclose(pz.std() / sig, trunc, atol=0.01)
 
 
 def test_pdf_round_trip_through_dataset(tmp_path):
