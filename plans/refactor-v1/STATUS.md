@@ -6,6 +6,7 @@ from the design are recorded under the table with their reason.
 | step | date | commit | tests (passed/skipped) | default suite time | notes |
 |---|---|---|---|---|---|
 | R0 | 2026-11-12 | d058aeb | 931 / 12 | 51 s (`-n 6`); 118 s single-process | `_core` (errors, registry, fs, geometry, healpix) + guards + CI; old suite still green. Single-process time is the old suite's; the < 60 s target is R8's exit criterion. CI has not yet run on the branch (not pushed). |
+| R1 T1 | 2026-11-12 | (this commit) | 273 / 5 | 15 s (`-n 6`) | old data/combine/measure/twin removed |
 
 ## Decisions taken during execution
 

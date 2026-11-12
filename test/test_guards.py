@@ -37,10 +37,9 @@ COSMO_STRINGS = {"comoving_distance", "r_comoving", "dist_mpc"}
 
 # Old-tree violations, keyed by path relative to oneuniverse/. Value is the
 # set of allowed identifiers, or {"*"} for everything in the file.
-# old file deleted in R1 Task 1; R4's new MeasurementSet validator needs these names — re-add then
-ALLOW = {
-    "measure/measurement_set.py": {"comoving_distance", "r_comoving"},
-}
+# Empty after R1 Task 1 (old measure/measurement_set.py deleted); R4 re-adds an
+# entry for the new MeasurementSet validator, which needs the forbidden names as strings.
+ALLOW = {}
 
 
 def _matches(module, prefixes):
