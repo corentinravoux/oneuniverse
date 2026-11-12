@@ -64,3 +64,18 @@ def test_tomographic_nz_shapes(pz_view, prod):
 def test_tomographic_nz_requires_draws(prod):
     with pytest.raises(ValidationError, match="z_draws"):
         tomographic_nz(prod, bin_edges=[0.5, 1.5], nz_edges=np.linspace(0, 3, 31))
+
+
+def test_tomographic_nz_validates_nz_edges(pz_view, prod):
+    p2 = attach_photoz(prod, pz_view, n_draws=2, seed=0)
+    for bad in ([1.0], [0.0, 1.0, 1.0], [2.0, 1.0, 0.0]):
+        with pytest.raises(ValidationError, match="nz_edges"):
+            tomographic_nz(p2, bin_edges=[0.5, 1.5], nz_edges=bad)
+
+
+def test_tomographic_nz_by_z(pz_view, prod):
+    p2 = attach_photoz(prod, pz_view, n_draws=2, seed=0)
+    p3, nz = tomographic_nz(p2, bin_edges=[0.5, 1.0, 1.5], nz_edges=np.linspace(0, 3, 31), by="z")
+    z = p2.catalog["z"].to_numpy()
+    expect = np.where((z >= 0.5) & (z < 1.5), np.searchsorted([0.5, 1.0, 1.5], z, side="right") - 1, -1)
+    assert np.array_equal(p3.extras["tomo_bin"], expect) and nz.counts.shape == (2, 30)

@@ -34,15 +34,15 @@ def galaxy_clustering(view: DatasetView, *, z: tuple[float, float], weight: Weig
 def cosmic_shear(view: DatasetView, *, z: tuple[float, float], shear_weight: ShearWeight,
                  tomo_edges: Sequence[float], nz_edges: Sequence[float],
                  mask: Window | None = None, regions: Regions | int = 20, n_draws: int = 20,
-                 name: str = "cosmic_shear", **kw) -> MeasurementSet:
+                 name: str = "cosmic_shear", seed: int = 0, **kw) -> MeasurementSet:
     """One tracer "src": shear weight, e1/e2 extras, photo-z draws, tomographic n(z)."""
     for k in ("randoms", "keep_columns"):
         if k in kw:
             raise ValidationError(f"cosmic_shear sets {k} itself; do not pass it")
-    seed = int(kw.get("seed", 0))
+    seed = int(seed)
     prod, reg = _build_pointset(
         view, z=z, weight=shear_weight, nz_edges=nz_edges, mask=mask, regions=regions,
-        randoms="none", keep_columns=[*_SHEAR_COLUMNS, *shear_weight.columns], **kw)
+        randoms="none", keep_columns=[*_SHEAR_COLUMNS, *shear_weight.columns], seed=seed, **kw)
     for c in _SHEAR_COLUMNS:
         prod = prod.with_extra(c, np.asarray(prod.catalog[c].to_numpy(), np.float64))
     prod = attach_photoz(prod, view, n_draws=n_draws, seed=seed)

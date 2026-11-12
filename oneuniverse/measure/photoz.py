@@ -52,6 +52,7 @@ def tomographic_nz(product: Product, *, bin_edges: Sequence[float], nz_edges: Se
     ``tomo_bin`` (int32) is the bin of the *by* quantity in *bin_edges*, -1 outside.
     Nz counts have shape (n_bins, k): the catalog-weighted histogram of every draw
     of the bin's members, divided by n_draws; method "photoz_stack".
+    Draws outside *nz_edges* are dropped from the stack.
     Needs the ``z_draws`` extra (and ``z_pdf_mean`` when by="z_pdf_mean").
     """
     if by not in ("z_pdf_mean", "z"):
@@ -70,6 +71,8 @@ def tomographic_nz(product: Product, *, bin_edges: Sequence[float], nz_edges: Se
     tomo = np.where(inb, np.searchsorted(be, q, side="right") - 1, -1).astype(np.int32)
     w = product.catalog["weight"].to_numpy()
     ne = np.asarray(nz_edges, np.float64)
+    if ne.ndim != 1 or ne.size < 2 or np.any(np.diff(ne) <= 0):
+        raise ValidationError("nz_edges must be strictly increasing with >= 2 values")
     counts = np.zeros((n_bins, ne.size - 1))
     n_draws = draws.shape[1]
     for b in range(n_bins):

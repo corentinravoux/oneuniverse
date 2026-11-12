@@ -56,3 +56,16 @@ def test_three_by_two_rejects_same_tracer_name(view):
     a = _gc(view, regions=10)
     with pytest.raises(ValidationError, match="differ"):
         three_by_two(a, a)
+
+
+def test_preset_regions_match_catalog_region_id(view):
+    ms = _gc(view)
+    cat = ms.products["gal"].catalog
+    got = ms.regions.assign(cat["ra"].to_numpy(), cat["dec"].to_numpy())
+    assert np.array_equal(got, cat["region_id"].to_numpy())
+
+
+def test_cosmic_shear_seed_is_explicit_keyword():
+    import inspect
+    p = inspect.signature(cosmic_shear).parameters["seed"]
+    assert p.kind is inspect.Parameter.KEYWORD_ONLY and p.default == 0
