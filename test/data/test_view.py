@@ -239,3 +239,41 @@ def test_view_missing_index_and_row_count_mismatch(tmp_path):
     (p / "manifest.json").write_text(json.dumps(d))
     with pytest.raises(FormatError, match="n_rows"):
         DatasetView.from_path(p)
+
+
+# ---- with_position ----------------------------------------------------
+def _pos_cases():
+    return {
+        "cone": dict(cone=Cone(30.0, 10.0, 12.0)),
+        "patch": dict(patch=SkyPatch(10.0, 80.0, -20.0, 40.0)),
+        "z": dict(z=(0.5, 0.9)),
+        "ranges": dict(ranges={"mag": (17.0, 18.5)}),
+        "filter": dict(filter=pc.field("z_err") > 5e-4),
+        "combo": dict(cone=Cone(30.0, 10.0, 25.0), z=(0.2, 1.2), filter=pc.field("mag") < 20.0),
+    }
+
+
+@pytest.mark.parametrize("name", list(_pos_cases()))
+def test_with_position_round_trips_through_take(ds, name):
+    sel = _pos_cases()[name]
+    cols = ["ra", "dec", "z", "source_row"]
+    plain = ds.table(columns=cols, **sel)
+    pos = ds.table(columns=cols, with_position=True, **sel)
+    assert pos.column_names == cols + ["partition", "offset"]
+    assert pos.schema.field("partition").type == pa.int32() and pos.schema.field("offset").type == pa.int64()
+    assert pos.num_rows == plain.num_rows > 0
+    assert sorted(pos["source_row"].to_pylist()) == sorted(plain["source_row"].to_pylist())
+    back = ds.take(pos["partition"].to_numpy(), pos["offset"].to_numpy(), columns=cols)
+    assert back.equals(pos.select(cols))
+
+
+def test_with_position_empty_keeps_schema(ds):
+    for sel in (dict(z=(50.0, 60.0)), dict(filter=pc.field("z") > 1e9)):
+        t = ds.table(columns=["ra", "z"], with_position=True, **sel)
+        assert t.num_rows == 0 and t.column_names == ["ra", "z", "partition", "offset"]
+        assert t.schema.field("partition").type == pa.int32()
+
+
+def test_with_position_read_and_stale_guard(ds):
+    df = ds.read(columns=["z"], z=(0.5, 0.6), with_position=True)
+    assert list(df.columns) == ["z", "partition", "offset"]

@@ -1,6 +1,7 @@
 """Read-side view over an OUF 3.0 dataset with vectorised partition pruning."""
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
@@ -229,32 +230,88 @@ class DatasetView:
     def _empty(self, cols: list[str]) -> pa.Table:
         return pa.schema([self._schema.field(c) for c in cols]).empty_table()
 
+    def _row_expr(self, cone, patch, z, t, ranges, filter) -> pc.Expression | None:
+        """Row-level selection (no cell term): the part a per-file read must re-apply."""
+        expr = None
+        parts = []
+        if cone is not None:
+            parts.append(cone_expr(cone))
+        if patch is not None:
+            parts.append(patch_expr(patch))
+        for col, (lo, hi) in self._intervals(z, t, ranges).items():
+            parts.append(range_expr(col, lo, hi))
+        if filter is not None:
+            parts.append(filter)
+        for p in parts:
+            expr = p if expr is None else expr & p
+        return expr
+
+    def _needed_columns(self, cols, cone, patch, z, t, ranges, filter) -> list[str]:
+        need = list(cols)
+        extra = set()
+        if cone is not None or patch is not None:
+            extra |= {"ra", "dec"}
+        extra |= set(self._intervals(z, t, ranges))
+        if filter is not None:
+            text = str(filter)
+            extra |= {c for c in self._schema.names
+                      if re.search(rf"(?<![\w.]){re.escape(c)}(?![\w])", text)}
+        return need + sorted(extra - set(need))
+
+    def _scan_positions(self, cols, keep, row_expr, batch_size, needed) -> Iterator[pa.RecordBatch]:
+        for part in np.flatnonzero(keep).tolist():
+            pf = self._open_file(part)
+            start = 0
+            for batch in pf.iter_batches(batch_size=batch_size, columns=needed):
+                n = batch.num_rows
+                tab = pa.Table.from_batches([batch])
+                tab = tab.append_column("partition", pa.array(np.full(n, part, np.int32)))
+                tab = tab.append_column("offset", pa.array(np.arange(start, start + n, dtype=np.int64)))
+                start += n
+                if row_expr is not None:
+                    tab = tab.filter(row_expr)
+                if tab.num_rows:
+                    yield from tab.select([*cols, "partition", "offset"]).to_batches()
+
     def scan(self, *, columns=None, cone=None, patch=None, z=None, t=None,
              ranges=None, filter: pc.Expression | None = None,
-             batch_size: int = 65_536) -> Iterator[pa.RecordBatch]:
+             batch_size: int = 65_536, with_position: bool = False) -> Iterator[pa.RecordBatch]:
+        """Batches of the selected rows.
+
+        with_position=True appends ``partition`` (int32, row of ``.index``) and
+        ``offset`` (int64, row within that file) so ``take(partition, offset)``
+        returns the same rows. Files are walked in index order, so row order
+        differs from the default scan; a user *filter* must not reference ``cell``.
+        """
         cols = self._columns(columns)
+        if with_position and {"partition", "offset"} & set(self._schema.names):
+            raise ValidationError(
+                "with_position needs the names 'partition' and 'offset' free in the dataset")
         keep = self._mask(cone, patch, z, t, ranges)
         self._verify(np.flatnonzero(keep))
         cells = np.unique(self._cells[keep])
         if len(cells) == 0:
             return iter(())
+        if with_position:
+            needed = self._needed_columns(cols, cone, patch, z, t, ranges, filter)
+            return self._scan_positions(cols, keep, self._row_expr(cone, patch, z, t, ranges, filter),
+                                        batch_size, needed)
         expr = pc.field("cell").isin(pa.array(cells, pa.int32()))
-        if cone is not None:
-            expr = expr & cone_expr(cone)
-        if patch is not None:
-            expr = expr & patch_expr(patch)
-        for col, (lo, hi) in self._intervals(z, t, ranges).items():
-            expr = expr & range_expr(col, lo, hi)
-        if filter is not None:
-            expr = expr & filter
+        row = self._row_expr(cone, patch, z, t, ranges, filter)
+        if row is not None:
+            expr = expr & row
         scanner = self._dataset.scanner(columns=cols, filter=expr, batch_size=batch_size)
         return scanner.to_batches()
 
-    def table(self, *, columns=None, **sel) -> pa.Table:
+    def table(self, *, columns=None, with_position: bool = False, **sel) -> pa.Table:
         cols = self._columns(columns)
-        batches = list(self.scan(columns=cols, **sel))
+        batches = list(self.scan(columns=cols, with_position=with_position, **sel))
         if not batches:
-            return self._empty(cols)
+            out = self._empty(cols)
+            if with_position:
+                out = out.append_column("partition", pa.array([], pa.int32()))
+                out = out.append_column("offset", pa.array([], pa.int64()))
+            return out
         return pa.Table.from_batches(batches)
 
     def read(self, *, columns=None, **sel) -> pd.DataFrame:
