@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 
 from oneuniverse._core.errors import NotFoundError, SchemaError, ValidationError
@@ -14,7 +15,7 @@ from oneuniverse.data._names import name_list
 from oneuniverse.data.database import Database
 from oneuniverse.data.oneuid import OneuidIndex, OneuidQuery
 
-_STRATEGIES = ("ivar", "best", "mean")
+_STRATEGIES = ("ivar", "best", "mean", "priority")
 _INDEX_COLUMNS = ("oneuid", "dataset")
 
 
@@ -43,15 +44,24 @@ class WeightedCatalog:
     per-object values of several surveys with vectorised group operations.
     """
 
-    def __init__(self, table: pa.Table, datasets: Sequence[str]) -> None:
+    def __init__(self, table: pa.Table, datasets: Sequence[str], *,
+                 db: Database | None = None) -> None:
         for c in _INDEX_COLUMNS:
             if c not in table.column_names:
                 raise SchemaError(f"table lacks the {c!r} column")
         ds_idx = table.schema.get_field_index("dataset")
         if pa.types.is_dictionary(table.schema.field(ds_idx).type):
             table = table.set_column(ds_idx, "dataset", table["dataset"].cast(pa.string()))
+        names = name_list(datasets, "datasets")
+        if len(set(names)) != len(names):
+            raise ValidationError(f"datasets has duplicates: {names}")
+        present = set(_strings(table["dataset"]).tolist())
+        if set(names) != present:
+            raise ValidationError(
+                f"datasets {sorted(names)} do not match the datasets in the table {sorted(present)}")
         self._table = table
-        self._datasets = list(datasets)
+        self._datasets = names
+        self._db = db
         self._ds = _strings(table["dataset"])
         self._rows = {d: np.flatnonzero(self._ds == d) for d in self._datasets}
         self._explicit: dict[str, Weight] = {}
@@ -77,7 +87,7 @@ class WeightedCatalog:
             cols.append("z_type")
         oneuids = np.unique(index.table["oneuid"].to_numpy())
         table = OneuidQuery(index, db).hydrate_table(oneuids, columns=cols)
-        return cls(table, index.datasets)
+        return cls(table, index.datasets, db=db)
 
     @property
     def datasets(self) -> list[str]:
@@ -95,13 +105,17 @@ class WeightedCatalog:
         self._filled.pop(dataset, None)
         return self
 
-    def fill_defaults(self, db: Database, *, skip_unknown: bool = False) -> WeightedCatalog:
+    def fill_defaults(self, db: Database | None = None, *, skip_unknown: bool = False) -> WeightedCatalog:
         """Give every dataset without an explicit weight its default weight.
 
         The default depends on the dataset's survey kind (manifest) and on
         each row's ``z_type``. Unknown ``(kind, z_type)`` pairs raise
         NotFoundError, or get ``ConstantWeight(1.0)`` with *skip_unknown*.
+        *db* defaults to the Database given to :meth:`from_oneuid`.
         """
+        db = db if db is not None else self._db
+        if db is None:
+            raise ValidationError("fill_defaults needs a Database: pass db= or build with from_oneuid")
         if "z_type" not in self._table.column_names:
             raise SchemaError("fill_defaults needs a 'z_type' column in the catalog")
         zt_all = _strings(self._table["z_type"])
@@ -112,8 +126,11 @@ class WeightedCatalog:
             rows = self._rows[ds]
             out = np.empty(rows.size, dtype=np.float64)
             zt = zt_all[rows]
-            for z_type in sorted({str(z) for z in zt}):
-                sel = np.flatnonzero(zt == (None if z_type == "None" else z_type))
+            null = pd.isna(zt)
+            groups = [(z, np.flatnonzero(~null & (zt == z))) for z in sorted(set(zt[~null]))]
+            if null.any():
+                groups.append(("None", np.flatnonzero(null)))
+            for z_type, sel in groups:
                 try:
                     weight = default_weight_for(kind, z_type)
                 except NotFoundError:
@@ -141,71 +158,131 @@ class WeightedCatalog:
                          "weight": pa.array(w)})
 
     def combine(self, value: str, *, variance: str | None = None,
-                strategy: Literal["ivar", "best", "mean"] = "ivar") -> pa.Table:
+                strategy: Literal["ivar", "best", "mean", "priority"] = "ivar",
+                priority: Sequence[str] | None = None) -> pa.Table:
         """Combine *value* across the datasets of each object.
 
         *variance* names the 1-sigma **uncertainty** column; the output column
         ``variance`` is the combined sigma^2. Output columns: ``oneuid`` (sorted),
         ``value``, ``variance``, ``n_sources``, ``best_dataset``.
 
-        - ``"ivar"``: value = sum(v/s^2)/sum(1/s^2), variance = 1/sum(1/s^2).
-          Catalog weights are not used. Requires *variance*.
-        - ``"best"``: value and s^2 of the member with the smallest s. Requires
-          *variance*.
-        - ``"mean"``: catalog-weighted mean sum(w v)/sum(w); variance =
-          sum(w^2 s^2)/sum(w)^2 with *variance*, else the weighted sample
-          variance sum(w (v-mean)^2)/sum(w). Needs weights for every dataset.
+        A sigma is *valid* when finite and > 0. Surveys without redshift errors
+        (real eBOSS rows have ``z_err`` = NaN) keep their objects: a member with
+        a finite value always counts, and a missing sigma only makes the
+        combined variance NaN. Strategies (s = sigma, v = value):
 
-        Members with non-finite value, or (ivar/best) NaN or <= 0 s, (mean)
-        non-finite w or w <= 0 or non-finite s, are excluded; ``n_sources``
-        counts the valid members and an object with none gets NaN.
-        ``best_dataset`` is the dataset of the member with the smallest s
-        (ivar/best) or the largest weight (mean); None when no member is valid.
+        - ``"ivar"`` (requires *variance*): members with valid s combine as
+          value = sum(v/s^2)/sum(1/s^2), variance = 1/sum(1/s^2); best_dataset =
+          smallest valid s. An object with no valid-s member gets the unweighted
+          mean of its finite values and variance NaN (best_dataset = first
+          finite member in catalog dataset order). Catalog weights are unused.
+        - ``"best"`` (requires *variance*): the member with the smallest valid s
+          gives value and s^2; with none, the first finite-value member in
+          catalog dataset order, variance NaN.
+        - ``"mean"`` (needs weights for every dataset): every finite-value
+          member with finite w > 0 counts in value = sum(w v)/sum(w).
+          With *variance*, variance = sum(w^2 s^2)/sum(w)^2 only if every
+          counted member has a valid s, else NaN; without it, the weighted
+          sample variance sum(w (v-mean)^2)/sum(w). best_dataset = largest w.
+        - ``"priority"`` (*variance* optional): value of the first member with a
+          finite value in the order *priority* (dataset names; default catalog
+          order; datasets not listed come after, in catalog order); variance =
+          s^2 of that member if *variance* is given and s is valid, else NaN.
+          Unknown names raise NotFoundError. This is the usual choice for
+          multi-survey QSO redshifts.
+
+        ``n_sources`` is the number of members that contributed to the value
+        (0 and NaN value/variance when none did; best_dataset is then None).
+        Sigmas from different pipelines may not be comparable; prefer
+        ``"priority"`` when they are not. Positions (``ra``, ``dec``) are not
+        combinable: they live in the ONEUID index.
         """
         if strategy not in _STRATEGIES:
             raise ValidationError(f"strategy must be one of {_STRATEGIES}, got {strategy!r}")
+        if value in ("ra", "dec"):
+            raise ValidationError(
+                "positions live in the ONEUID index; combine does not average angles")
+        if priority is not None and strategy != "priority":
+            raise ValidationError("priority= is only used by strategy 'priority'")
         v = _numeric(self._table, value, "value")
         sigma = None if variance is None else _numeric(self._table, variance, "uncertainty")
-        if strategy != "mean" and sigma is None:
+        if strategy in ("ivar", "best") and sigma is None:
             raise ValidationError(f"strategy {strategy!r} requires the uncertainty column (variance=)")
         uid, inv = np.unique(self._table["oneuid"].to_numpy(), return_inverse=True)
         k = uid.size
-        if strategy == "mean":
-            w = self.weights()["weight"].to_numpy()
-            valid = np.isfinite(v) & np.isfinite(w) & (w > 0)
-            if sigma is not None:
-                valid &= np.isfinite(sigma)
-            rank = np.where(valid, -w, np.inf)  # best member = largest weight
-        else:
-            with np.errstate(invalid="ignore"):
-                valid = np.isfinite(v) & np.isfinite(sigma) & (sigma > 0)
-            rank = np.where(valid, sigma, np.inf)  # best member = smallest sigma
-        n = np.bincount(inv, weights=valid, minlength=k).astype(np.int64)
-        has = n > 0
-        vv = np.where(valid, v, 0.0)
+        n_rows = v.size
+        # position of each row's dataset: catalog order, or priority order (unlisted last)
+        order_names = list(self._datasets)
+        if strategy == "priority" and priority is not None:
+            listed = name_list(priority, "priority")
+            if len(set(listed)) != len(listed):
+                raise ValidationError(f"priority has duplicate datasets: {listed}")
+            unknown = [d for d in listed if d not in self._rows]
+            if unknown:
+                raise NotFoundError(f"priority datasets {unknown} not in the catalog; has {self._datasets}")
+            order_names = listed + [d for d in self._datasets if d not in listed]
+        pos = np.empty(n_rows, dtype=np.int64)
+        for i, d in enumerate(order_names):
+            pos[self._rows[d]] = i
 
-        if strategy == "mean":
-            ww = np.where(valid, w, 0.0)
-            wsum = np.bincount(inv, ww, k)
-            with np.errstate(invalid="ignore", divide="ignore"):
-                mean = np.bincount(inv, ww * vv, k) / wsum
+        fin = np.isfinite(v)
+        if sigma is not None:
+            with np.errstate(invalid="ignore"):
+                sv = np.isfinite(sigma) & (sigma > 0)
+        else:
+            sv = np.zeros(n_rows, dtype=bool)
+        vv = np.where(fin, v, 0.0)
+        s2 = np.where(sv, sigma if sigma is not None else 0.0, 0.0) ** 2
+
+        def bsum(x):
+            return np.bincount(inv, x, k)
+
+        with np.errstate(invalid="ignore", divide="ignore"):
+            if strategy == "ivar":
+                use = fin & sv
+                n_valid = np.bincount(inv, weights=use, minlength=k)
+                iv = np.where(use, 1.0 / np.where(sv, s2, 1.0), 0.0)
+                isum = bsum(iv)
+                nf = np.bincount(inv, weights=fin, minlength=k)
+                fallback = n_valid == 0
+                val = np.where(fallback, bsum(vv) / nf, bsum(iv * vv) / isum)
+                var = np.where(fallback, np.nan, 1.0 / isum)
+                n = np.where(fallback, nf, n_valid)
+                key1 = np.where(use, 0, np.where(fin, 1, 2))
+                key2 = np.where(use, np.sqrt(s2), pos)
+                pick = None
+            elif strategy == "mean":
+                w = self.weights()["weight"].to_numpy()
+                use = fin & np.isfinite(w) & (w > 0)
+                ww = np.where(use, w, 0.0)
+                wsum = bsum(ww)
+                val = bsum(ww * vv) / wsum
                 if sigma is not None:
-                    s2 = np.where(valid, sigma, 0.0) ** 2
-                    var = np.bincount(inv, ww**2 * s2, k) / wsum**2
+                    bad = np.bincount(inv, weights=use & ~sv, minlength=k)
+                    var = np.where(bad > 0, np.nan, bsum(ww**2 * s2) / wsum**2)
                 else:
-                    var = np.bincount(inv, ww * (vv - mean[inv]) ** 2, k) / wsum
-            val = mean
-        elif strategy == "ivar":
-            with np.errstate(invalid="ignore", divide="ignore"):
-                iv = np.where(valid, 1.0 / sigma**2, 0.0)
-                isum = np.bincount(inv, iv, k)
-                val = np.bincount(inv, iv * vv, k) / isum
-                var = 1.0 / isum
-        order = np.lexsort((rank, inv))
+                    var = bsum(ww * (vv - val[inv]) ** 2) / wsum
+                n = np.bincount(inv, weights=use, minlength=k)
+                key1 = np.where(use, 0, 1)
+                key2 = np.where(use, -w, 0.0)
+                pick = None
+            else:
+                use = fin
+                n = np.bincount(inv, weights=use, minlength=k)
+                key1 = np.where(use, 0, 1)
+                key2 = np.where(use, pos, 0)
+                if strategy == "best":
+                    key1 = np.where(fin & sv, 0, np.where(fin, 1, 2))
+                    key2 = np.where(fin & sv, np.sqrt(s2), pos)
+                pick = True
+        order = np.lexsort((key2, key1, inv))
         first = order[np.searchsorted(inv[order], np.arange(k))]
-        if strategy == "best":
-            val = np.where(has, v[first], np.nan)
-            var = np.where(has, sigma[first] ** 2, np.nan)
+        if pick:
+            val = v[first]
+            var = np.where(sv[first], s2[first], np.nan)
+            n = np.minimum(n, 1)
+        n = np.asarray(n).astype(np.int64)
+        has = n > 0
         val = np.where(has, val, np.nan)
         var = np.where(has, var, np.nan)
         best = pa.array(self._ds[first], pa.string(), mask=~has)

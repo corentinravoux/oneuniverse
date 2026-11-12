@@ -17,7 +17,6 @@ def write_survey(root, name, table, **kw):
 
 def pair_tables(n, n_common, seed=0):
     """a and b with n rows each; source rows < n_common are the same objects (jittered)."""
-    """a and b with n rows each; source rows < n_common are the same objects (jittered)."""
     kw = {"dec_range": (-80.0, 80.0)}
     ta = synthetic_point_table(n, seed, survey="a", **kw)
     tb = synthetic_point_table(n, seed + 1, survey="b", **kw)
@@ -35,7 +34,6 @@ def pair_tables(n, n_common, seed=0):
     for c, v in cols.items():
         tb = tb.set_column(tb.schema.get_field_index(c), c, pa.array(v))
     return ta, tb
-
 
 
 def make_two_survey_db(tmp_path, n_each=30_000, n_common=10_000, seed=0) -> Database:

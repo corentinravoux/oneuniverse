@@ -16,8 +16,6 @@ from oneuniverse.data.oneuid import ONEUID_SCHEMA
 from oneuniverse.data.schema import Geometry, stable_object_id
 from oneuniverse.data.writer import write_dataset
 
-_write = write_survey
-_pair_tables = pair_tables
 
 
 @pytest.fixture(scope="module")
@@ -115,8 +113,8 @@ def test_rebuild_archives_and_as_of(tmp_path):
 def test_hydrate_refuses_changed_dataset(tmp_path):
     db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
-    ta, _ = _pair_tables(2_000, 500, seed=7)
-    _write(tmp_path, "a", ta, overwrite=True)
+    ta, _ = pair_tables(2_000, 500, seed=7)
+    write_survey(tmp_path, "a", ta, overwrite=True)
     q = Database(tmp_path).oneuid_query("ab")
     ids = q.index.table["oneuid"].to_numpy()[:10]
     with pytest.raises(FormatError, match="dataset a changed since ONEUID ab was built"):
@@ -131,9 +129,9 @@ def test_hydrate_refuses_changed_dataset(tmp_path):
 @pytest.mark.slow
 def test_crossmatch_two_million_rows_under_a_minute(tmp_path):
     n = 1_000_000
-    ta, tb = _pair_tables(n, n // 5)
-    _write(tmp_path, "a", ta)
-    _write(tmp_path, "b", tb)
+    ta, tb = pair_tables(n, n // 5)
+    write_survey(tmp_path, "a", ta)
+    write_survey(tmp_path, "b", tb)
     db = Database(tmp_path)
     t = time.perf_counter()
     idx = db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="big")
@@ -144,10 +142,10 @@ def test_crossmatch_two_million_rows_under_a_minute(tmp_path):
 
 
 def test_mixed_column_types_and_errors(tmp_path):
-    ta, tb = _pair_tables(2_000, 500)
+    ta, tb = pair_tables(2_000, 500)
     ta = ta.set_column(ta.schema.get_field_index("mag"), "mag", ta["mag"].cast(pa.float64()))
-    _write(tmp_path, "a", ta)
-    _write(tmp_path, "b", tb)  # mag f4 in b, f8 in a
+    write_survey(tmp_path, "a", ta)
+    write_survey(tmp_path, "b", tb)  # mag f4 in b, f8 in a
     db = Database(tmp_path)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
     q = db.oneuid_query("ab")
@@ -193,8 +191,8 @@ def test_strings_rejected_as_sequences(tmp_path):
 
 
 def test_hydrate_columns_missing_in_some_datasets(tmp_path):
-    ta, tb = _pair_tables(2_000, 500)
-    _write(tmp_path, "a", ta)
+    ta, tb = pair_tables(2_000, 500)
+    write_survey(tmp_path, "a", ta)
     write_dataset(tb.drop_columns(["mag"]), tmp_path / "b", geometry=Geometry.POINT,
                   survey=SurveyMeta("b", "test"), loader=LoaderInfo("test", "1", {}),
                   partition_nside=4)
@@ -215,8 +213,8 @@ def test_hydrate_columns_missing_in_some_datasets(tmp_path):
 def test_hydrate_raises_before_any_yield_when_second_changed(tmp_path):
     db = make_two_survey_db(tmp_path, 2_000, 500)
     db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
-    _, tb = _pair_tables(2_000, 500, seed=7)
-    _write(tmp_path, "b", tb, overwrite=True)  # only the alphabetically second one changes
+    _, tb = pair_tables(2_000, 500, seed=7)
+    write_survey(tmp_path, "b", tb, overwrite=True)  # only the alphabetically second one changes
     q = Database(tmp_path).oneuid_query("ab")
     ids = q.index.table["oneuid"].to_numpy()[:10]
     gen = q.hydrate(ids, columns=["z"])
