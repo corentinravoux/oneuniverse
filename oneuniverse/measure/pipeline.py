@@ -7,6 +7,7 @@ Nothing here depends on a cosmology.
 """
 from __future__ import annotations
 
+import functools
 from collections.abc import Sequence
 from typing import Literal
 
@@ -227,13 +228,13 @@ def randoms_from_view(view: DatasetView, *, z: tuple[float, float], window: Wind
                      "region_id": rid.astype(np.int32)}).select(list(RANDOMS_CORE))
 
 
-def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight | None = None,
+def _build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight | None = None,
                    nz_edges: Sequence[float], mask: Window | None = None,
                    regions: Regions | int = 20,
                    randoms: Literal["generate", "none"] | DatasetView = "generate",
                    random_factor: int = 10, keep_columns: Sequence[str] = (),
                    quality: tuple[str, str, float] | None = None, cone=None, patch=None,
-                   seed: int = 0) -> Product:
+                   seed: int = 0) -> tuple[Product, Regions]:
     """Build a point-set Product from an OUF view.
 
     Steps: scan (with positions) -> drop non-finite ra/dec/z -> quality cut ->
@@ -257,6 +258,9 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
     is ingested (see :func:`randoms_from_view`), capped at ``random_factor * n``
     by a deterministic subsample; "none" gives no randoms.
     The catalog holds CATALOG_CORE then *keep_columns*.
+
+    This private form returns ``(Product, Regions)``; :func:`build_pointset` is the
+    public Product-only view of it (the presets need the Regions object).
     """
     if isinstance(keep_columns, str):
         raise ValidationError("keep_columns must be a sequence of names, not a str")
@@ -323,7 +327,12 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
         "quality": list(quality) if quality is not None else None,
         "keep_columns": keep_columns, **winfo,
     }
-    return Product(catalog=catalog, randoms=rnd, window=window, nz=nz, provenance=prov)
+    return Product(catalog=catalog, randoms=rnd, window=window, nz=nz, provenance=prov), reg
+
+
+@functools.wraps(_build_pointset)
+def build_pointset(*args, **kwargs) -> Product:
+    return _build_pointset(*args, **kwargs)[0]
 
 
 def build_sightlines(view: DatasetView, *, z: tuple[float, float],
