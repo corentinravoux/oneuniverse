@@ -14,7 +14,16 @@ from oneuniverse.combine.weights import (
 )
 
 __all__ = [
-    "Weight", "ProductWeight", "ColumnWeight", "ConstantWeight",
-    "InverseVarianceWeight", "FKPWeight", "HealpixMapWeight", "ShearWeight",
-    "QualityMaskWeight", "default_weight_for", "register_default", "WeightedCatalog",
+    "ColumnWeight",
+    "ConstantWeight",
+    "FKPWeight",
+    "HealpixMapWeight",
+    "InverseVarianceWeight",
+    "ProductWeight",
+    "QualityMaskWeight",
+    "ShearWeight",
+    "Weight",
+    "WeightedCatalog",
+    "default_weight_for",
+    "register_default",
 ]

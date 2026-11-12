@@ -32,6 +32,9 @@ def _as_table(table: pa.Table | pd.DataFrame) -> pa.Table:
 
 def _col(table: pa.Table, name: str) -> np.ndarray:
     """Column *name* as float64 with nulls as NaN."""
+    typ = table[name].type
+    if not (pa.types.is_integer(typ) or pa.types.is_floating(typ) or pa.types.is_boolean(typ)):
+        raise SchemaError(f"column {name!r} must be numeric or boolean, got {typ}")
     arr = table[name].cast(pa.float64()).combine_chunks()
     return np.asarray(arr.fill_null(np.nan).to_numpy(zero_copy_only=False), dtype=np.float64)
 
@@ -121,7 +124,7 @@ class ConstantWeight(Weight):
         return np.full(table.num_rows, float(self.value))
 
     def describe(self) -> str:
-        return f"Const({self.value:g})"
+        return f"Constant({self.value:g})"
 
 
 @dataclass(frozen=True)
@@ -153,7 +156,7 @@ class InverseVarianceWeight(Weight):
         return out
 
     def describe(self) -> str:
-        return f"IVar({self.err_column})"
+        return f"InverseVariance({self.err_column})"
 
 
 @dataclass(frozen=True)
@@ -183,7 +186,9 @@ class FKPWeight(Weight):
         return 1.0 / (1.0 + nb * self.P0)
 
     def describe(self) -> str:
-        return f"FKP(P0={self.P0:g})"
+        nb = self.nbar if isinstance(self.nbar, str) else getattr(
+            self.nbar, "__name__", type(self.nbar).__name__)
+        return f"FKP(P0={self.P0:g}, nbar={nb})"
 
 
 @dataclass(frozen=True, eq=False)
@@ -232,7 +237,7 @@ class HealpixMapWeight(Weight):
         return out
 
     def describe(self) -> str:
-        return f"HealpixMap(nside={self.nside})"
+        return f"HealpixMap(nside={self.nside}, nest={self.nest})"
 
 
 @dataclass(frozen=True)
@@ -281,7 +286,7 @@ _OPS = {"==": operator.eq, "!=": operator.ne, "<": operator.lt,
 
 @dataclass(frozen=True)
 class QualityMaskWeight(Weight):
-    """1.0 where ``column op threshold`` holds, else 0.0 (NaN compares false)."""
+    """1.0 where ``column op threshold`` holds, else 0.0. NaN and null values never pass, whatever the op."""
 
     column: str
     op: Literal["==", "!=", "<", "<=", ">", ">="]
@@ -296,7 +301,9 @@ class QualityMaskWeight(Weight):
         return frozenset({self.column})
 
     def compute(self, table: pa.Table) -> np.ndarray:
-        return _OPS[self.op](_col(table, self.column), self.threshold).astype(np.float64)
+        x = _col(table, self.column)
+        with np.errstate(invalid="ignore"):
+            return (_OPS[self.op](x, self.threshold) & ~np.isnan(x)).astype(np.float64)
 
     def describe(self) -> str:
-        return f"Mask({self.column}{self.op}{self.threshold:g})"
+        return f"QualityMask({self.column} {self.op} {self.threshold:g})"

@@ -6,8 +6,15 @@ import pytest
 from oneuniverse._core.errors import SchemaError, ValidationError
 from oneuniverse._core.healpix import radec_to_pix
 from oneuniverse.combine.weights import (
-    ColumnWeight, ConstantWeight, FKPWeight, HealpixMapWeight, InverseVarianceWeight,
-    ProductWeight, QualityMaskWeight, ShearWeight)
+    ColumnWeight,
+    ConstantWeight,
+    FKPWeight,
+    HealpixMapWeight,
+    InverseVarianceWeight,
+    ProductWeight,
+    QualityMaskWeight,
+    ShearWeight,
+)
 
 T = pa.table({"ra": [0.0, 10.0, 20.0], "dec": [0.0, 0.0, 0.0], "z": [0.5, 1.0, 1.5],
               "z_err": [0.01, np.nan, 0.0], "q": [1, 0, 1], "nbar_col": [1e-4, 2e-4, 3e-4]})
@@ -22,7 +29,7 @@ def test_column_and_constant_and_product():
 def test_product_flattens_and_unions_columns():
     w = (ColumnWeight("q") * ColumnWeight("z")) * (ConstantWeight(2.0) * ColumnWeight("nbar_col"))
     assert len(w.factors) == 4 and w.columns == {"q", "z", "nbar_col"}
-    assert w.describe() == "Column(q) × Column(z) × Const(2) × Column(nbar_col)"
+    assert w.describe() == "Column(q) × Column(z) × Constant(2) × Column(nbar_col)"
 
 
 def test_ivar_missing_policies():
@@ -108,3 +115,30 @@ def test_healpix_map_weight_stores_a_copy():
     w = HealpixMapWeight(m, 4)
     m[:] = -1.0
     assert (w.map >= 0).all()
+
+
+def test_describe_strings():
+    assert InverseVarianceWeight("z_err").describe() == "InverseVariance(z_err)"
+    assert FKPWeight("nbar_col", 1e4).describe() == "FKP(P0=10000, nbar=nbar_col)"
+
+    def nb(z):
+        return z
+
+    assert FKPWeight(nb, 2.0).describe() == "FKP(P0=2, nbar=nb)"
+    assert HealpixMapWeight(np.ones(12), 1, nest=False).describe() == "HealpixMap(nside=1, nest=False)"
+    assert ShearWeight("lensfit").describe() == "Shear(lensfit)"
+    assert QualityMaskWeight("q", ">=", 1).describe() == "QualityMask(q >= 1)"
+    assert ColumnWeight("q").describe() == "Column(q)"
+    assert ConstantWeight(2.0).describe() == "Constant(2)"
+
+
+def test_quality_mask_nan_never_passes():
+    t = pa.table({"x": pa.array([1.0, float("nan"), 0.0, None])})
+    assert QualityMaskWeight("x", "!=", 1.0)(t).tolist() == [0.0, 0.0, 1.0, 0.0]
+    assert QualityMaskWeight("x", "<=", 5.0)(t).tolist() == [1.0, 0.0, 1.0, 0.0]
+
+
+def test_non_numeric_column_is_schema_error():
+    t = pa.table({"s": ["a", "b"]})
+    with pytest.raises(SchemaError, match="'s'.*string"):
+        ColumnWeight("s")(t)
