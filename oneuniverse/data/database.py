@@ -24,7 +24,9 @@ class Database:
     Discovery walks *root* to depth 2: a directory holding ``manifest.json`` is a
     dataset (not descended into); names starting with ``_`` and ``<x>.tmp`` /
     ``<x>.old`` staging directories are skipped. The dataset name is its relative
-    path with ``/`` replaced by ``__``. With ``strict=False`` datasets whose
+    path with ``/`` replaced by ``__``; two datasets mapping to the same name
+    (``a/b`` and ``a__b``) are a collision: FormatError when strict, else both are
+    excluded and recorded in :attr:`errors`. Symlinked directories are not followed. With ``strict=False`` datasets whose
     manifest cannot be read are skipped and recorded in :attr:`errors`.
     ``as_of_time`` is the restriction time given to :meth:`as_of`, else ``None``.
     """
@@ -51,7 +53,7 @@ class Database:
             except OSError as e:
                 raise FormatError(f"cannot list {d}: {e}") from e
             for p in entries:
-                if p.name.startswith("_") or is_staging(p):
+                if p.name.startswith("_") or is_staging(p) or p.is_symlink():
                     continue
                 if (p / MANIFEST_FILENAME).is_file():
                     yield p
@@ -63,8 +65,14 @@ class Database:
 
     def _discover(self) -> None:
         found: dict[str, tuple[Path, Manifest]] = {}
+        clashes: dict[str, list[Path]] = {}
         for p in self._candidates():
             name = "__".join(p.relative_to(self.root).parts)
+            if name in clashes or name in found:
+                if name in found:
+                    clashes[name] = [found.pop(name)[0]]
+                clashes[name].append(p)
+                continue
             try:
                 m = read_manifest(p / MANIFEST_FILENAME)
             except (FormatError, OSError, KeyError, ValueError) as e:
@@ -73,6 +81,11 @@ class Database:
                 self.errors[name] = str(e)
                 continue
             found[name] = (p, m)
+        for name, paths in clashes.items():
+            msg = f"dataset name {name!r} is ambiguous: " + ", ".join(str(q) for q in paths)
+            if self.strict:
+                raise FormatError(msg)
+            self.errors[name] = msg
         when = self.as_of_time
         for name in sorted(found):
             p, m = found[name]
