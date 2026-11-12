@@ -135,7 +135,7 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
         pid, cid = pid[st], cid[st]
     # ambiguity: distinct candidate parents per child
     if len(cid):
-        uc, inv, n = np.unique(cid, return_inverse=True, return_counts=True)
+        _, inv, n = np.unique(cid, return_inverse=True, return_counts=True)
         ncand = n[inv.ravel()]
     else:
         n, ncand = np.empty(0, np.int64), np.empty(0, np.int64)
