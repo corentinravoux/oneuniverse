@@ -25,7 +25,7 @@ from oneuniverse._core.errors import SchemaError, ValidationError
 from oneuniverse._core.healpix import NSIDE_FINE, coarsen
 from oneuniverse.data.schema import z_types
 
-__all__ = ["CrossMatchRules", "Pairs", "match_pair", "components"]
+__all__ = ["CrossMatchRules", "Pairs", "components", "match_pair"]
 
 _ARCSEC = np.pi / 180.0 / 3600.0
 _REQUIRED = ("ra", "dec", "z", "z_type", "hpix32")
@@ -245,7 +245,10 @@ def components(n: int, left, right, sep_arcsec, *, survey_of: np.ndarray,
         return _renumber(lab)
     order = np.lexsort((right, left, np.asarray(sep_arcsec, np.float64)))
     parent = np.arange(n)
-    surveys = [{int(s)} for s in np.asarray(survey_of)]
+    codes = np.asarray(survey_of, np.int64)
+    if codes.size and (codes.min() < 0 or codes.max() >= 63):
+        raise ValidationError("survey codes must be in [0, 63) for the bitmask")
+    surveys = np.left_shift(np.int64(1), codes)  # bit = survey code
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -255,12 +258,12 @@ def components(n: int, left, right, sep_arcsec, *, survey_of: np.ndarray,
 
     for k in order.tolist():
         ra_, rb_ = find(int(left[k])), find(int(right[k]))
-        if ra_ == rb_ or (surveys[ra_] & surveys[rb_]):
+        if ra_ == rb_ or (int(surveys[ra_]) & int(surveys[rb_])):
             continue
         if ra_ > rb_:
             ra_, rb_ = rb_, ra_
         parent[rb_] = ra_
         surveys[ra_] |= surveys[rb_]
-        surveys[rb_] = set()
+        surveys[rb_] = 0
     roots = np.array([find(i) for i in range(n)], np.int64)
     return _renumber(roots)

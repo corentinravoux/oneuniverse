@@ -80,6 +80,11 @@ def test_oneuid_row_identity_regression(db2):
         assert joined.num_rows == src.num_rows
         assert np.array_equal(joined["source_row"].to_numpy(),
                               joined["source_row_idx"].to_numpy())
+        idx_rows = sample.filter(pc.field("dataset") == ds_name)
+        jj = joined.join(idx_rows.select(["oneuid", "ra", "dec", "z"]), keys=["oneuid"],
+                         right_suffix="_idx")
+        hy = hyd.filter(pc.field("dataset") == ds_name)
+        assert hy.num_rows == jj.num_rows
         assert np.array_equal(joined["object_id"].to_numpy(),
                               stable_object_id(ds_name, joined["source_row"].to_numpy()))
 
@@ -165,3 +170,21 @@ def test_crossmatch_two_million_rows_under_a_minute(tmp_path):
     print(f"two-million build: {dt:.1f} s")
     assert idx.n_multi == n // 5
     assert dt < 60
+
+
+def test_mixed_column_types_and_errors(tmp_path):
+    ta, tb = _pair_tables(2_000, 500)
+    ta = ta.set_column(ta.schema.get_field_index("mag"), "mag", ta["mag"].cast(pa.float64()))
+    _write(tmp_path, "a", ta)
+    _write(tmp_path, "b", tb)  # mag f4 in b, f8 in a
+    db = Database(tmp_path)
+    db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    q = db.oneuid_query("ab")
+    ids = q.index.multi_only()["oneuid"].unique().to_numpy()[:20]
+    t = q.hydrate_table(ids)
+    assert t["mag"].type == pa.float64() and t.num_rows == 40
+    from oneuniverse._core.errors import NotFoundError
+    with pytest.raises(NotFoundError):
+        q.select(datasets=["zzz"])
+    empty = q.hydrate_table([-1], columns=["mag", "z"])
+    assert empty.num_rows == 0 and empty.schema.field("mag").type == pa.float64()

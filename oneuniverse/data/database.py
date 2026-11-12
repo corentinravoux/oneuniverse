@@ -150,15 +150,17 @@ class Database:
         return build_oneuid(self, datasets, rules=rules, name=name)
 
     def load_oneuid(self, name: str = "default", *, as_of=None):
+        """Load ONEUID index *name*; *as_of* defaults to this Database's ``as_of_time``."""
         from oneuniverse.data.oneuid import load_oneuid
-        return load_oneuid(self, name, as_of=as_of)
+        return load_oneuid(self, name, as_of=as_of if as_of is not None else self.as_of_time)
 
     def list_oneuids(self) -> list[str]:
         return VersionedSidecar.names(self.root, "oneuid")
 
-    def oneuid_query(self, name: str = "default"):
+    def oneuid_query(self, name: str = "default", *, as_of=None):
+        """Query object for index *name* (``as_of`` defaults to ``as_of_time`` when set)."""
         from oneuniverse.data.oneuid import OneuidQuery
-        return OneuidQuery(self.load_oneuid(name), self)
+        return OneuidQuery(self.load_oneuid(name, as_of=as_of), self)
 
     # ------------------------------------------------------------- summary
     def summary(self) -> dict:
