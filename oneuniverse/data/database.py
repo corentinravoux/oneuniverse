@@ -162,6 +162,25 @@ class Database:
         from oneuniverse.data.oneuid import OneuidQuery
         return OneuidQuery(self.load_oneuid(name, as_of=as_of), self)
 
+    # ------------------------------------------------------------- links
+    def build_links(self, *, parents, children, rules, name: str = "default",
+                    oneuid_name: str = "default"):
+        from oneuniverse.data.links import build_links
+        return build_links(self, parents=parents, children=children, rules=rules, name=name,
+                           oneuid_name=oneuid_name)
+
+    def load_links(self, name: str = "default", *, as_of=None):
+        """Load link set *name*; *as_of* defaults to this Database's ``as_of_time``."""
+        from oneuniverse.data.links import load_links
+        return load_links(self, name, as_of=as_of if as_of is not None else self.as_of_time)
+
+    def list_links(self) -> list[str]:
+        return VersionedSidecar.names(self.root, "links")
+
+    def chain(self, starts, names, *, as_of=None):
+        from oneuniverse.data.links import chain
+        return chain(self, starts, names, as_of=as_of if as_of is not None else self.as_of_time)
+
     # ------------------------------------------------------------- summary
     def summary(self) -> dict:
         datasets = {}
