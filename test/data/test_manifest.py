@@ -20,6 +20,7 @@ def _manifest(**kw) -> Manifest:
         partitioning=Partitioning(32),
         original_files=(OriginalFile("f.fits", "ab" * 32, None),), n_rows=10,
         validity=Validity("2026-11-12T00:00:00Z", None, 1),
+        dataset_uuid="0123456789abcdef0123456789abcdef",
         extensions={"coordinate": {"version": 1, "frame": "icrs"}})
     base.update(kw)
     return Manifest(**base)
@@ -63,3 +64,13 @@ def test_partition_index_round_trip(tmp_path):
     write_partition_index(tmp_path / "_index.parquet", t); assert read_partition_index(tmp_path / "_index.parquet").equals(t)
     with pytest.raises(FormatError): write_partition_index(tmp_path / "x.parquet", t.drop(["cell"]))
     assert not (tmp_path / "x.parquet").exists()
+
+
+def test_manifest_requires_dataset_uuid(tmp_path):
+    m = _manifest()
+    assert len(m.dataset_uuid) == 32
+    d = m.to_dict(); assert d["dataset_uuid"] == m.dataset_uuid
+    del d["dataset_uuid"]
+    (tmp_path / "m.json").write_text(json.dumps(d))
+    with pytest.raises(FormatError, match="dataset_uuid"):
+        read_manifest(tmp_path / "m.json")

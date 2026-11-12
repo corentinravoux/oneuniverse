@@ -207,3 +207,35 @@ def test_t_selection_with_temporal_extension(tmp_path, monkeypatch):
     got = v.table(t=(52_000.0, 53_000.0), columns=["mjd"])["mjd"].to_numpy()
     assert got.size == np.sum((full >= 52_000) & (full <= 53_000)) > 0
     assert got.min() >= 52_000 and got.max() <= 53_000
+
+
+# ---- stale views (dataset_uuid) -------------------------------------
+def test_view_detects_overwrite(tmp_path):
+    p = tmp_path / "ds"
+    write_synthetic_dataset(p, 20_000, 0, partition_nside=4)
+    v = DatasetView.from_path(p)
+    assert v.table(columns=["z"]).num_rows == 20_000
+    m0 = v.manifest
+    assert v.version == (m0.validity.version, m0.created_utc, m0.dataset_uuid)
+    write_synthetic_dataset(p, 20_000, 1, partition_nside=4, overwrite=True)
+    for call in (lambda: v.take([0], [0]), lambda: v.table(columns=["z"]),
+                 lambda: list(v.iter_partitions(["z"])), lambda: v.read(columns=["z"])):
+        with pytest.raises(FormatError, match="rewritten since this view was opened"):
+            call()
+    fresh = DatasetView.from_path(p)
+    assert fresh.version != v.version and fresh.version[0] == 2
+    assert fresh.take([0], [0]).num_rows == 1 and fresh.table(columns=["z"]).num_rows == 20_000
+
+
+def test_view_missing_index_and_row_count_mismatch(tmp_path):
+    p = tmp_path / "ds"
+    write_synthetic_dataset(p, 5_000, 0, partition_nside=2)
+    (p / "_index.parquet").unlink()
+    with pytest.raises(FormatError, match="_index.parquet"):
+        DatasetView.from_path(p)
+    write_synthetic_dataset(p, 5_000, 0, partition_nside=2, overwrite=True)
+    import json
+    d = json.loads((p / "manifest.json").read_text()); d["n_rows"] += 1
+    (p / "manifest.json").write_text(json.dumps(d))
+    with pytest.raises(FormatError, match="n_rows"):
+        DatasetView.from_path(p)

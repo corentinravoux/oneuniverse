@@ -8,6 +8,8 @@ whole dataset is published atomically with :func:`oneuniverse._core.fs.atomic_di
 from __future__ import annotations
 
 import shutil
+import uuid
+from contextlib import contextmanager
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +24,7 @@ from oneuniverse._core.fs import atomic_dir, hash_file
 from oneuniverse._core.healpix import NSIDE_FINE, radec_to_pix
 from oneuniverse.data.manifest import (
     DATA_DIR,
+    DATASET_UUID_KEY,
     FORMAT_VERSION,
     INDEX_FILENAME,
     INDEX_SCHEMA,
@@ -85,10 +88,13 @@ def _check_batch_schema(schema: pa.Schema, geometry: Geometry) -> None:
 
 def _prepare(batch: pa.RecordBatch, geometry: Geometry, has_z_type: bool) -> pa.RecordBatch:
     table = pa.Table.from_batches([batch])
-    if "hpix32" not in table.schema.names:
-        hp = radec_to_pix(NSIDE_FINE, table["ra"].to_numpy(zero_copy_only=False),
-                          table["dec"].to_numpy(zero_copy_only=False))
-        table = table.append_column("hpix32", pa.array(hp, pa.int32()))
+    # always recomputed: a caller-supplied hpix32 must never break cell pruning
+    hp = pa.array(radec_to_pix(NSIDE_FINE, table["ra"].to_numpy(zero_copy_only=False),
+                               table["dec"].to_numpy(zero_copy_only=False)), pa.int32())
+    if "hpix32" in table.schema.names:
+        table = table.set_column(table.schema.get_field_index("hpix32"), "hpix32", hp)
+    else:
+        table = table.append_column("hpix32", hp)
     if has_z_type:
         validate_z_type_values(table["z_type"])
     table = cast_to_core(table, geometry).combine_chunks()
@@ -106,7 +112,7 @@ def _cast_pdf(batch: pa.RecordBatch, spec: PdfSpec) -> pa.RecordBatch:
     ok = pa.types.is_fixed_size_list(typ) and typ.list_size == k
     if not ok and (pa.types.is_list(typ) or pa.types.is_large_list(typ)):
         lengths = pc.list_value_length(col)
-        ok = lengths.null_count == 0 and bool(pc.all(pc.equal(lengths, k)).as_py() is not False)
+        ok = lengths.null_count == 0 and bool(pc.all(pc.equal(lengths, k), min_count=0).as_py())
     if not ok or col.null_count:
         raise SchemaError(
             f"pdf column {name!r}: every row must have {k} components (no nulls), "
@@ -197,6 +203,15 @@ def _build_index(root: Path, stats_cols: Sequence[str]) -> pa.Table:
     return table.sort_by([("cell", "ascending"), ("path", "ascending")])
 
 
+@contextmanager
+def _io_errors(out: Path):
+    """Turn the writer's own flush / partition I/O failures into FormatError."""
+    try:
+        yield
+    except (pa.ArrowException, OSError) as e:
+        raise FormatError(f"writing {out} failed: {e}") from e
+
+
 def _flush_bucket(stage: Path, bucket: int, tables: list[pa.Table], serial: list[int]) -> None:
     d = stage / f"{bucket:04d}"
     d.mkdir(exist_ok=True)
@@ -206,7 +221,7 @@ def _flush_bucket(stage: Path, bucket: int, tables: list[pa.Table], serial: list
                    compression="zstd")
 
 
-def _stage_stream(stream: Iterator[pa.RecordBatch], stage: Path) -> None:
+def _stage_stream(stream: Iterator[pa.RecordBatch], stage: Path, out: Path) -> None:
     """Spill *stream* into per-bucket parquet files with a bounded in-memory buffer."""
     buffers: dict[int, list[pa.Table]] = {}
     sizes: dict[int, int] = {}
@@ -226,16 +241,25 @@ def _stage_stream(stream: Iterator[pa.RecordBatch], stage: Path) -> None:
             total += piece.nbytes
         while total > _STAGE_BUFFER_BYTES:
             big = max(sizes, key=sizes.__getitem__)
-            _flush_bucket(stage, big, buffers.pop(big), serial)
+            with _io_errors(out):
+                _flush_bucket(stage, big, buffers.pop(big), serial)
             total -= sizes.pop(big)
     for b in sorted(buffers):
-        _flush_bucket(stage, b, buffers[b], serial)
+        with _io_errors(out):
+            _flush_bucket(stage, b, buffers[b], serial)
 
 
-def _read_bucket(stage: Path, bucket_dir: Path, schema: pa.Schema) -> pa.Table:
-    parts = [pq.ParquetFile(f).read() for f in sorted(bucket_dir.glob("*.parquet"))]
+def _stage_number(f: Path) -> int:
+    return int(f.stem[1:])  # s<serial>
+
+
+def _read_bucket(bucket_dir: Path) -> pa.Table:
+    files = sorted(bucket_dir.glob("*.parquet"), key=_stage_number)
+    parts = [pq.ParquetFile(f).read() for f in files]
     table = pa.concat_tables(parts).unify_dictionaries().combine_chunks()
-    return table.take(pc.sort_indices(table["hpix32"]))
+    # (hpix32, source_row): row order is independent of how the input was batched
+    return table.take(pc.sort_indices(
+        table, sort_keys=[("hpix32", "ascending"), ("source_row", "ascending")]))
 
 
 class _CellWriter:
@@ -259,7 +283,7 @@ class _CellWriter:
         self.in_file = 0
 
     def _write(self, table: pa.Table) -> None:
-        file_rows = (MAX_ROWS_PER_FILE // _ROW_GROUP) * _ROW_GROUP
+        file_rows = max(1, MAX_ROWS_PER_FILE // _ROW_GROUP) * _ROW_GROUP  # >= one row group
         pos = 0
         while pos < table.num_rows:
             if self.writer is not None and self.in_file >= file_rows:
@@ -317,7 +341,7 @@ def _partition_pass(stage: Path, root: Path, schema: pa.Schema, nside: int) -> N
     cw = _CellWriter(root, schema)
     try:
         for bdir in sorted(d for d in stage.iterdir() if d.is_dir()):
-            table = _read_bucket(stage, bdir, schema)
+            table = _read_bucket(bdir)
             cells = table["hpix32"].to_numpy().astype(np.int64) >> shift
             uniq, start = np.unique(cells, return_index=True)
             stop = np.append(start[1:], len(cells))
@@ -336,16 +360,16 @@ def write_dataset(batches: Iterable[pa.RecordBatch] | pa.Table, out: Path, *,
                   partition_nside: int | None = None,
                   extra_stats_columns: Sequence[str] = (),
                   extensions: dict[str, dict] | None = None,
-                  overwrite: bool = False, batch_size: int = 250_000) -> Manifest:
+                  overwrite: bool = False, batch_size: int = 100_000) -> Manifest:
     """Write *batches* as an OUF 3.0 dataset at *out* and return its manifest.
 
     ``out`` existing without ``overwrite`` raises FormatError before anything is
     touched. On overwrite the previous manifest is kept under
     ``_history/<created_utc>.manifest.json`` and ``validity.version`` increments.
-    ``hpix32`` is computed from ra/dec when absent. Any failure (including one
+    ``hpix32`` is always computed from ra/dec (a supplied column is overwritten). Any failure (including one
     raised by the batch iterator) leaves a pre-existing *out* untouched.
 
-    Memory: the stage pass buffers at most ~128 MiB; the partition pass holds one
+    Memory: the stage pass buffers at most ``_STAGE_BUFFER_BYTES`` (48 MiB); the partition pass holds one
     NEST nside-8 bucket (~54 deg^2) at a time, so a survey concentrated in a single
     such bucket is loaded whole. In the ``_index.parquet`` a null ``<col>_min/_max``
     means *unknown* (e.g. all-NaN column): readers must keep such files.
@@ -375,11 +399,13 @@ def write_dataset(batches: Iterable[pa.RecordBatch] | pa.Table, out: Path, *,
         f if isinstance(f, OriginalFile) else OriginalFile(Path(f).name, hash_file(f), None)
         for f in original_files)
     created = _utc_now()
+    dataset_uuid = uuid.uuid4().hex
     version = 1 if previous is None else previous.validity.version + 1
     template = Manifest(
         format_version=FORMAT_VERSION, geometry=geometry, survey=survey, loader=loader,
         created_utc=created, schema=pa.schema([]), partitioning=Partitioning(1),
         original_files=files, n_rows=0, validity=Validity(created, None, version),
+        dataset_uuid=dataset_uuid,
         extensions=extensions)  # validates the extensions before any I/O
 
     with atomic_dir(out) as tmp:
@@ -408,13 +434,12 @@ def write_dataset(batches: Iterable[pa.RecordBatch] | pa.Table, out: Path, *,
             yield first
             yield from stream
 
-        try:
-            _stage_stream(chain(), stage)
-            n_rows = counter.n_rows
-            nside = partition_nside or auto_partition_nside(n_rows)
-            _partition_pass(stage, tmp, schema, nside)
-        except (pa.ArrowException, OSError) as e:
-            raise FormatError(f"writing {out} failed: {e}") from e
+        _stage_stream(chain(), stage, out)  # user-iterator errors propagate unchanged
+        n_rows = counter.n_rows
+        nside = partition_nside or auto_partition_nside(n_rows)
+        with _io_errors(out):
+            _partition_pass(stage, tmp, schema.with_metadata({DATASET_UUID_KEY: dataset_uuid}),
+                            nside)
         shutil.rmtree(stage)
 
         index = _build_index(tmp, stats_cols)
@@ -433,7 +458,7 @@ def write_dataset(batches: Iterable[pa.RecordBatch] | pa.Table, out: Path, *,
             format_version=FORMAT_VERSION, geometry=geometry, survey=survey, loader=loader,
             created_utc=created, schema=schema, partitioning=Partitioning(nside, True),
             original_files=template.original_files, n_rows=n_rows,
-            validity=template.validity, extensions=extensions)
+            validity=template.validity, dataset_uuid=dataset_uuid, extensions=extensions)
         write_partition_index(tmp / INDEX_FILENAME, index)
         write_manifest(tmp / MANIFEST_FILENAME, manifest)
     return manifest

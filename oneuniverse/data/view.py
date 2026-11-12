@@ -14,8 +14,9 @@ import pyarrow.parquet as pq
 from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.geometry import Cone, SkyPatch, ZRange
 from oneuniverse._core.healpix import cone_pixels, patch_pixels
-from oneuniverse.data.manifest import (DATA_DIR, INDEX_FILENAME, MANIFEST_FILENAME,
-                                       Manifest, read_manifest, read_partition_index)
+from oneuniverse.data.manifest import (DATA_DIR, DATASET_UUID_KEY, INDEX_FILENAME,
+                                       MANIFEST_FILENAME, Manifest, read_manifest,
+                                       read_partition_index)
 from oneuniverse.data.pdf import PdfSpec, ProbabilisticRedshift
 from oneuniverse.data.schema import Geometry
 
@@ -87,6 +88,10 @@ class DatasetView:
 
     def __init__(self, path: Path, manifest: Manifest, index: pa.Table) -> None:
         self.path = path
+        if int(pc.sum(index["n_rows"]).as_py() or 0) != manifest.n_rows:
+            raise FormatError(
+                f"{path}: partition index rows ({pc.sum(index['n_rows']).as_py()}) do not "
+                f"match manifest n_rows ({manifest.n_rows})")
         self.manifest = manifest
         self.index = index
         self._dataset = pads.dataset(
@@ -102,8 +107,12 @@ class DatasetView:
         path = Path(path)
         if not (path / MANIFEST_FILENAME).exists():
             raise FormatError(f"{path} is not an OUF dataset (no {MANIFEST_FILENAME})")
-        return cls(path, read_manifest(path / MANIFEST_FILENAME),
-                   read_partition_index(path / INDEX_FILENAME))
+        manifest = read_manifest(path / MANIFEST_FILENAME)
+        try:
+            index = read_partition_index(path / INDEX_FILENAME)
+        except (OSError, pa.ArrowException) as e:
+            raise FormatError(f"{path}: cannot read {INDEX_FILENAME}: {e}") from e
+        return cls(path, manifest, index)
 
     # ---- properties -------------------------------------------------
     @property
@@ -129,6 +138,36 @@ class DatasetView:
     @property
     def nside(self) -> int:
         return self.manifest.partitioning.nside
+
+    @property
+    def version(self) -> tuple[int, str, str]:
+        """``(validity.version, created_utc, dataset_uuid)`` of the opened publish."""
+        m = self.manifest
+        return (m.validity.version, m.created_utc, m.dataset_uuid)
+
+    # ---- stale-view guard -------------------------------------------
+    def _stale(self) -> FormatError:
+        return FormatError(
+            f"dataset {self.path} was rewritten since this view was opened; reopen it")
+
+    def _check_token(self, md: pq.FileMetaData) -> None:
+        kv = md.metadata or {}
+        if kv.get(DATASET_UUID_KEY.encode(), b"").decode() != self.manifest.dataset_uuid:
+            raise self._stale()
+
+    def _open_file(self, partition: int) -> pq.ParquetFile:
+        try:
+            pf = pq.ParquetFile(self.path / self._paths[partition])
+        except (OSError, pa.ArrowException) as e:
+            raise self._stale() from e
+        self._check_token(pf.metadata)
+        return pf
+
+    def _verify(self, partitions: np.ndarray) -> None:
+        """Check the dataset token of each file (footer read only; never cached, so a
+        rewrite between two scans is caught)."""
+        for i in partitions.tolist():
+            self._open_file(i)
 
     # ---- pruning ----------------------------------------------------
     def _time_column(self) -> str:
@@ -194,7 +233,9 @@ class DatasetView:
              ranges=None, filter: pc.Expression | None = None,
              batch_size: int = 65_536) -> Iterator[pa.RecordBatch]:
         cols = self._columns(columns)
-        cells = self.cells_for(cone=cone, patch=patch, z=z, t=t, ranges=ranges)
+        keep = self._mask(cone, patch, z, t, ranges)
+        self._verify(np.flatnonzero(keep))
+        cells = np.unique(self._cells[keep])
         if len(cells) == 0:
             return iter(())
         expr = pc.field("cell").isin(pa.array(cells, pa.int32()))
@@ -223,7 +264,7 @@ class DatasetView:
 
     # ---- random access ----------------------------------------------
     def _read_file(self, partition: int, columns: list[str]) -> pa.Table:
-        return pq.ParquetFile(self.path / self._paths[partition]).read(columns=columns)
+        return self._open_file(partition).read(columns=columns)
 
     def iter_partitions(self, columns=None) -> Iterator[tuple[int, pa.Table]]:
         cols = self._columns(columns)
@@ -232,7 +273,7 @@ class DatasetView:
 
     def _take_from_file(self, partition: int, offsets: np.ndarray, cols: list[str]) -> pa.Table:
         """Rows at *offsets* of one file, reading only the row groups that hold them."""
-        pf = pq.ParquetFile(self.path / self._paths[partition])
+        pf = self._open_file(partition)
         md = pf.metadata
         sizes = np.array([md.row_group(g).num_rows for g in range(md.num_row_groups)], np.int64)
         ends = np.cumsum(sizes)

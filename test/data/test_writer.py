@@ -285,3 +285,78 @@ def test_validity_version_increments_on_overwrite(tmp_path):
     m3 = write_synthetic_dataset(tmp_path / "ds", 100, 2, overwrite=True)
     assert m3.validity.version == 3
     assert len(list((tmp_path / "ds/_history").glob("*.manifest.json"))) == 2
+
+
+def _rows_by_file(root):
+    idx = read_partition_index(root / "_index.parquet")
+    return [(r["path"], pq.read_table(root / r["path"], columns=["source_row", "hpix32"]))
+            for r in idx.to_pylist()]
+
+
+def test_row_order_independent_of_batch_splits(tmp_path):
+    t = synthetic_point_table(30_000, 3)
+    for name, bs in (("a", 30_000), ("b", 2_500), ("c", 777)):
+        _w(t, tmp_path / name, partition_nside=2, batch_size=bs)
+    ref = _rows_by_file(tmp_path / "a")
+    for name in ("b", "c"):
+        got = _rows_by_file(tmp_path / name)
+        assert [p for p, _ in got] == [p for p, _ in ref]
+        assert all(x.equals(y) for (_, x), (_, y) in zip(got, ref, strict=True))
+    for _, tab in ref:
+        h, s = tab["hpix32"].to_numpy(), tab["source_row"].to_numpy()
+        assert np.all((np.diff(h) > 0) | ((np.diff(h) == 0) & (np.diff(s) > 0)))
+
+
+def test_row_order_with_many_stage_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(writer, "_STAGE_BUFFER_BYTES", 20_000)  # > 10 stage files per bucket
+    t = synthetic_point_table(30_000, 4)
+    _w(t, tmp_path / "a", partition_nside=2)
+    monkeypatch.setattr(writer, "_STAGE_BUFFER_BYTES", 48 * 2**20)
+    _w(t, tmp_path / "b", partition_nside=2)
+    for (_, x), (_, y) in zip(_rows_by_file(tmp_path / "a"), _rows_by_file(tmp_path / "b"), strict=True):
+        assert x.equals(y)
+
+
+def test_caller_hpix32_is_ignored(tmp_path):
+    t = synthetic_point_table(5_000, 0)
+    good = _w(t, tmp_path / "g", partition_nside=4)
+    if "hpix32" in t.schema.names:
+        t = t.drop_columns(["hpix32"])
+    t = t.append_column("hpix32", pa.array(np.zeros(t.num_rows, np.int32)))
+    _w(t, tmp_path / "w", partition_nside=4)
+    from oneuniverse.data import DatasetView
+    a, b = DatasetView.from_path(tmp_path / "g"), DatasetView.from_path(tmp_path / "w")
+    assert good.n_rows == b.n_rows
+    assert a.index["cell"].to_pylist() == b.index["cell"].to_pylist()
+    assert a.table(columns=["hpix32"])["hpix32"].equals(b.table(columns=["hpix32"])["hpix32"])
+
+
+def test_user_iterator_oserror_propagates_unchanged(tmp_path):
+    t = synthetic_point_table(4_000, 0)
+
+    def gen(at):
+        for i, b in enumerate(t.to_batches(max_chunksize=1_000)):
+            if i == at:
+                raise OSError("disk on fire")
+            yield b
+    for at in (0, 2):
+        with pytest.raises(OSError, match="disk on fire") as ei:
+            _w(gen(at), tmp_path / f"x{at}")
+        assert not isinstance(ei.value, FormatError)
+        assert not (tmp_path / f"x{at}").exists()
+
+
+def test_dataset_uuid_stamped_in_every_file(tmp_path):
+    m = write_synthetic_dataset(tmp_path / "ds", 20_000, 0, partition_nside=4)
+    assert len(m.dataset_uuid) == 32
+    for f in (tmp_path / "ds/data").rglob("*.parquet"):
+        kv = pq.ParquetFile(f).metadata.metadata
+        assert kv[b"oneuniverse.dataset_uuid"].decode() == m.dataset_uuid
+    m2 = write_synthetic_dataset(tmp_path / "ds", 20_000, 0, partition_nside=4, overwrite=True)
+    assert m2.dataset_uuid != m.dataset_uuid
+
+
+def test_small_max_rows_per_file_still_writes(tmp_path, monkeypatch):
+    monkeypatch.setattr(writer, "MAX_ROWS_PER_FILE", 10)  # below one row group
+    m = write_synthetic_dataset(tmp_path / "ds", 3_000, 0, partition_nside=1)
+    assert m.n_rows == 3_000

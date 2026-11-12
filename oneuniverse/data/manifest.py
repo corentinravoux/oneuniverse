@@ -19,6 +19,7 @@ FORMAT_VERSION = "3.0.0"
 MANIFEST_FILENAME = "manifest.json"
 INDEX_FILENAME = "_index.parquet"
 DATA_DIR = "data"
+DATASET_UUID_KEY = "oneuniverse.dataset_uuid"  # parquet key-value metadata of every data file
 EXTENSION_VERSIONS: dict[str, int] = {
     "coordinate": 1, "spectrum": 1, "temporal": 1, "pdf": 1}
 
@@ -104,12 +105,14 @@ def _check_extensions(extensions: Mapping[str, Mapping]) -> None:
 
 _REQUIRED = ("format_version", "geometry", "survey", "loader", "created_utc",
              "schema", "partitioning", "original_files", "n_rows", "validity",
-             "extensions")
+             "dataset_uuid", "extensions")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class Manifest:
-    """Dataset manifest. Not hashable (carries a schema and mutable dicts);
+    """Dataset manifest. ``dataset_uuid`` identifies one publish: the writer stamps it
+    into every data file, so readers detect a dataset rewritten under an open view.
+    Not hashable (carries a schema and mutable dicts);
     equality compares the Arrow schema with ``Schema.equals``."""
 
     format_version: str
@@ -122,6 +125,7 @@ class Manifest:
     original_files: tuple[OriginalFile, ...]
     n_rows: int
     validity: Validity
+    dataset_uuid: str
     extensions: dict[str, dict]
 
     __hash__ = None  # type: ignore[assignment]
@@ -164,6 +168,7 @@ class Manifest:
             "validity": {"valid_from": self.validity.valid_from,
                          "valid_to": self.validity.valid_to,
                          "version": self.validity.version},
+            "dataset_uuid": self.dataset_uuid,
             "extensions": {k: dict(v) for k, v in self.extensions.items()},
         }
 
@@ -202,6 +207,7 @@ class Manifest:
             partitioning=Partitioning(p["nside"], p.get("nest", True)),
             original_files=tuple(files), n_rows=d["n_rows"],
             validity=Validity(v["valid_from"], v["valid_to"], v["version"]),
+            dataset_uuid=str(d["dataset_uuid"]),
             extensions={k: dict(e) for k, e in d["extensions"].items()},
         )
 
