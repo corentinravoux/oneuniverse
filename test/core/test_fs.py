@@ -56,3 +56,30 @@ def test_hash_bytes_is_16_hex():
 def test_hash_file_matches_hash_bytes(tmp_path):
     p = tmp_path / "h"; data = b"x" * 3_000_000; p.write_bytes(data)
     assert hash_file(p) == hash_bytes(data)
+
+
+def test_atomic_dir_refuses_stale_old(tmp_path):
+    target = tmp_path / "ds"; target.mkdir()
+    (tmp_path / "ds.old").mkdir()
+    with pytest.raises(FormatError):
+        with atomic_dir(target):
+            pass
+    assert target.exists() and not (tmp_path / "ds.tmp").exists()
+
+
+def test_atomic_dir_publish_failure_removes_tmp_and_restores(tmp_path, monkeypatch):
+    import os as _os
+    target = tmp_path / "ds"; target.mkdir(); (target / "old").write_text("x")
+    real = _os.rename
+
+    def flaky(src, dst):
+        if str(src).endswith(".tmp"):
+            raise OSError("boom")
+        return real(src, dst)
+
+    monkeypatch.setattr("oneuniverse._core.fs.os.rename", flaky)
+    with pytest.raises(OSError):
+        with atomic_dir(target) as d:
+            (d / "new").write_text("y")
+    assert (target / "old").exists()
+    assert not (tmp_path / "ds.tmp").exists() and not (tmp_path / "ds.old").exists()
