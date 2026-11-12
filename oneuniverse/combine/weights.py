@@ -198,7 +198,7 @@ class HealpixMapWeight(Weight):
     dec_column: str = "dec"
 
     def __post_init__(self) -> None:
-        m = np.asarray(self.map, dtype=np.float64)
+        m = np.array(self.map, dtype=np.float64, copy=True)
         if m.ndim != 1 or m.size != 12 * self.nside**2:
             raise ValidationError(
                 f"map has {m.size} pixels, expected 12*nside^2 = {12 * self.nside**2}")
@@ -222,7 +222,7 @@ class HealpixMapWeight(Weight):
         if self.nest:
             pix = radec_to_pix(self.nside, ra, dec)
         else:
-            pix = hp.ang2pix(self.nside, ra, dec, lonlat=True)
+            pix = radec_to_pix(self.nside, ra, dec, nest=False)
         out = self.map[pix].copy()
         nan = np.isnan(out)
         if nan.any():

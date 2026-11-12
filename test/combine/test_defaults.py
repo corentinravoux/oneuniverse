@@ -3,9 +3,18 @@ import pytest
 
 from oneuniverse._core.errors import NotFoundError, ValidationError
 from oneuniverse.combine import default_weight_for, register_default
+from oneuniverse.combine import defaults as _defaults_mod
 from oneuniverse.combine.defaults import defaults
 from oneuniverse.combine.weights import ConstantWeight, InverseVarianceWeight
 from oneuniverse.data.schema import z_types
+
+
+@pytest.fixture(autouse=True)
+def _restore_registry():
+    saved = dict(_defaults_mod._DEFAULTS)
+    yield
+    _defaults_mod._DEFAULTS.clear()
+    _defaults_mod._DEFAULTS.update(saved)
 
 
 def test_builtin_keys_use_registered_z_types():

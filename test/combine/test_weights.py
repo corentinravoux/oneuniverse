@@ -76,6 +76,11 @@ def test_shear_weight_metacal_and_lensfit():
     assert np.allclose(ShearWeight("metacal")(S), [1 / 0.8**2, 1 / 0.9**2])
     assert np.allclose(ShearWeight("lensfit", sigma_e_columns=("e1_err", "e2_err"))(S),
                        [1 / (0.9**2 + 0.09), 1 / (1.0 + 0.09)])
+    S2 = pa.table({"shear_weight": [1.0], "R11": [0.5], "R22": [0.5], "R_S": [0.0],
+                   "e1_err": [0.2], "e2_err": [0.4]})
+    # sigma_e^2 = (0.2^2 + 0.4^2) / 2 = 0.10
+    assert np.allclose(ShearWeight("metacal", sigma_e_columns=("e1_err", "e2_err"))(S2),
+                       [1 / (0.25 + 0.10)])
     with pytest.raises(SchemaError, match="R_S"):
         ShearWeight("metacal")(S.drop_columns(["R_S"]))
 
@@ -96,3 +101,10 @@ def test_result_validation():
     with pytest.raises(ValidationError, match=r"Column\(x\).*1 non-finite"):
         ColumnWeight("x")(pa.table({"x": [np.inf, 1.0]}))
     assert ConstantWeight(0.0)(T).tolist() == [0.0] * 3
+
+
+def test_healpix_map_weight_stores_a_copy():
+    m = np.arange(12 * 4**2, dtype=float)
+    w = HealpixMapWeight(m, 4)
+    m[:] = -1.0
+    assert (w.map >= 0).all()
