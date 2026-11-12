@@ -88,7 +88,7 @@ def test_name_collision(tmp_path):
     write_synthetic_dataset(tmp_path / "ok", 10, 2)
     with pytest.raises(FormatError, match="a__b") as ei:
         Database(tmp_path)
-    assert str(tmp_path / "a" / "b") in str(ei.value)
+    assert str(tmp_path / "a" / "b") in str(ei.value) and str(tmp_path / "a__b") in str(ei.value)
     db = Database(tmp_path, strict=False)
     assert db.names() == ["ok"]
     assert str(tmp_path / "a" / "b") in db.errors["a__b"] and str(tmp_path / "a__b") in db.errors["a__b"]
@@ -97,7 +97,20 @@ def test_name_collision(tmp_path):
 def test_symlinked_dirs_skipped(tmp_path):
     write_synthetic_dataset(tmp_path / "a/b", 10, 0)
     (tmp_path / "loop").symlink_to(tmp_path, target_is_directory=True)
+    (tmp_path / "alias").symlink_to(tmp_path / "a" / "b", target_is_directory=True)
     assert Database(tmp_path).names() == ["a__b"]
+
+
+def test_collision_with_corrupt_first_candidate(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a/b").mkdir()
+    (tmp_path / "a/b/manifest.json").write_text("{")
+    write_synthetic_dataset(tmp_path / "a__b", 10, 0)
+    with pytest.raises(FormatError, match="ambiguous"):
+        Database(tmp_path)
+    db = Database(tmp_path, strict=False)
+    assert db.names() == []
+    assert str(tmp_path / "a" / "b") in db.errors["a__b"] and str(tmp_path / "a__b") in db.errors["a__b"]
 
 
 def test_as_of_boundary_and_timezone(tmp_path):

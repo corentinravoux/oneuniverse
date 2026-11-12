@@ -64,28 +64,30 @@ class Database:
         yield from walk(self.root, 1)
 
     def _discover(self) -> None:
-        found: dict[str, tuple[Path, Manifest]] = {}
-        clashes: dict[str, list[Path]] = {}
+        groups: dict[str, list[Path]] = {}
         for p in self._candidates():
-            name = "__".join(p.relative_to(self.root).parts)
-            if name in clashes or name in found:
-                if name in found:
-                    clashes[name] = [found.pop(name)[0]]
-                clashes[name].append(p)
-                continue
-            try:
-                m = read_manifest(p / MANIFEST_FILENAME)
-            except (FormatError, OSError, KeyError, ValueError) as e:
+            groups.setdefault("__".join(p.relative_to(self.root).parts), []).append(p)
+        found: dict[str, tuple[Path, Manifest]] = {}
+        for name, paths in groups.items():
+            problems: list[str] = []
+            m = None
+            err: Exception | None = None
+            for p in paths:
+                try:
+                    m = read_manifest(p / MANIFEST_FILENAME)
+                except (FormatError, OSError, KeyError, ValueError) as e:
+                    err = e
+                    problems.append(f"dataset {p}: unreadable manifest: {e}")
+            clash = len(paths) > 1
+            if clash:
+                problems.insert(0, f"dataset name {name!r} is ambiguous: "
+                                + ", ".join(str(q) for q in paths))
+            if problems:
                 if self.strict:
-                    raise FormatError(f"dataset {p}: unreadable manifest: {e}") from e
-                self.errors[name] = str(e)
+                    raise FormatError("; ".join(problems)) from err
+                self.errors[name] = "; ".join(problems)
                 continue
-            found[name] = (p, m)
-        for name, paths in clashes.items():
-            msg = f"dataset name {name!r} is ambiguous: " + ", ".join(str(q) for q in paths)
-            if self.strict:
-                raise FormatError(msg)
-            self.errors[name] = msg
+            found[name] = (paths[0], m)
         when = self.as_of_time
         for name in sorted(found):
             p, m = found[name]
