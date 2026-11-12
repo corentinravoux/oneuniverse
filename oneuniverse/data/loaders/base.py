@@ -7,6 +7,7 @@ from typing import ClassVar, Iterator
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 from astropy.io import fits
 
 from oneuniverse._core.errors import NotFoundError
@@ -25,7 +26,7 @@ class SurveyLoader(ABC):
     extensions: ClassVar[dict[str, dict]] = {}
 
     @abstractmethod
-    def batches(self, source: Path, *, batch_size: int = 250_000, **kwargs) -> Iterator[pa.RecordBatch]:
+    def batches(self, source: Path, *, batch_size: int = 100_000, **kwargs) -> Iterator[pa.RecordBatch]:
         """Yield core-complete record batches."""
 
     def original_files(self, source: Path) -> list[Path]:
@@ -35,10 +36,14 @@ class SurveyLoader(ABC):
 def _column_to_arrow(col: np.ndarray) -> pa.Array:
     col = np.asarray(col)
     if col.dtype.kind in "SU":
-        stripped = np.char.rstrip(col)
-        if stripped.dtype.kind == "S":
-            stripped = np.char.decode(stripped, "ascii", errors="replace")
-        return pa.array(stripped.tolist(), pa.string())
+        arr = pa.array(col)  # fixed-width bytes / str -> binary / string, no Python objects
+        if col.dtype.kind == "S":
+            try:
+                arr = arr.cast(pa.string())
+            except pa.ArrowInvalid:  # not valid UTF-8: replace like the old ascii decode
+                return pa.array(np.char.decode(np.char.rstrip(col), "ascii", errors="replace")
+                                .tolist(), pa.string())
+        return pc.utf8_rtrim_whitespace(arr)
     if col.dtype.kind == "b":
         return pa.array(col, pa.bool_())
     if col.dtype.byteorder == ">":
@@ -48,6 +53,10 @@ def _column_to_arrow(col: np.ndarray) -> pa.Array:
         flat = pa.array(col.reshape(-1))
         return pa.FixedSizeListArray.from_arrays(flat, col.shape[1])
     return pa.array(col)
+
+
+def _constant_dictionary(value: str, n: int) -> pa.DictionaryArray:
+    return pa.DictionaryArray.from_arrays(np.zeros(n, np.int8), pa.array([value]))
 
 
 def read_fits_batches(path: Path, hdu: int, columns: list[str], batch_size: int) -> Iterator[tuple[int, pa.Table]]:
@@ -75,7 +84,7 @@ class FitsCatalogLoader(SurveyLoader):
     def original_files(self, source: Path) -> list[Path]:
         return [Path(source) / self.filename]
 
-    def batches(self, source: Path, *, batch_size: int = 250_000, z_min: float | None = None,
+    def batches(self, source: Path, *, batch_size: int = 100_000, z_min: float | None = None,
                 z_max: float | None = None, **options) -> Iterator[pa.RecordBatch]:
         path = Path(source) / self.filename
         if not path.exists():  # eager: raised at call time, not at first next()
@@ -115,8 +124,8 @@ class FitsCatalogLoader(SurveyLoader):
                 continue
             n = len(source_row)
             ra, dec = tbl["ra"].to_numpy(), tbl["dec"].to_numpy()
-            tbl = tbl.append_column("survey", pa.array([survey] * n))
-            tbl = tbl.append_column("z_type", pa.array([self.z_type] * n))
+            tbl = tbl.append_column("survey", _constant_dictionary(survey, n))
+            tbl = tbl.append_column("z_type", _constant_dictionary(self.z_type, n))
             tbl = tbl.append_column("z_err", z_err)
             tbl = tbl.append_column("source_row", pa.array(source_row))
             tbl = tbl.append_column("object_id", pa.array(stable_object_id(survey, source_row)))
