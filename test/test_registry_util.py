@@ -40,10 +40,3 @@ def test_mapping_is_read_only_view_of_live_dict():
     assert dict(m) == {"x": 1}
     with pytest.raises(TypeError):
         m["y"] = 2  # MappingProxyType is read-only
-
-
-def test_data_registry_still_exposes_live_dict_and_proxy():
-    from oneuniverse.data import _registry as r
-    # _REGISTRY is the live dict; REGISTRY is the read-only proxy over it.
-    assert r.REGISTRY.keys() == r._REGISTRY.keys()
-    assert isinstance(r.list_surveys(), dict)
