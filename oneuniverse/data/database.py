@@ -144,6 +144,22 @@ class Database:
         """
         return Database(self.root, as_of=self._check_when(when), strict=self.strict)
 
+    # ------------------------------------------------------------- oneuid
+    def build_oneuid(self, datasets, *, rules, name: str = "default"):
+        from oneuniverse.data.oneuid import build_oneuid
+        return build_oneuid(self, datasets, rules=rules, name=name)
+
+    def load_oneuid(self, name: str = "default", *, as_of=None):
+        from oneuniverse.data.oneuid import load_oneuid
+        return load_oneuid(self, name, as_of=as_of)
+
+    def list_oneuids(self) -> list[str]:
+        return VersionedSidecar.names(self.root, "oneuid")
+
+    def oneuid_query(self, name: str = "default"):
+        from oneuniverse.data.oneuid import OneuidQuery
+        return OneuidQuery(self.load_oneuid(name), self)
+
     # ------------------------------------------------------------- summary
     def summary(self) -> dict:
         datasets = {}
