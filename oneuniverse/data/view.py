@@ -16,6 +16,7 @@ from oneuniverse._core.geometry import Cone, SkyPatch, ZRange
 from oneuniverse._core.healpix import cone_pixels, patch_pixels
 from oneuniverse.data.manifest import (DATA_DIR, INDEX_FILENAME, MANIFEST_FILENAME,
                                        Manifest, read_manifest, read_partition_index)
+from oneuniverse.data.pdf import PdfSpec, ProbabilisticRedshift
 from oneuniverse.data.schema import Geometry
 
 _RAD = np.pi / 180.0
@@ -246,7 +247,12 @@ class DatasetView:
         inverse[order] = np.arange(part.size)
         return out.take(pa.array(inverse))
 
-    def load_pdf(self, rows: pa.Table | None = None):
-        if self.manifest.extension("pdf") is None:
+    def load_pdf(self, rows: pa.Table | None = None) -> ProbabilisticRedshift:
+        """PDFs of *rows* (a table holding the value column) or of the whole dataset."""
+        ext = self.manifest.extension("pdf")
+        if ext is None:
             raise FormatError("dataset has no 'pdf' extension")
-        raise FormatError("pdf loading is not implemented yet")
+        spec = PdfSpec.from_dict(ext)
+        if rows is None:
+            rows = self.table(columns=[spec.value_column])
+        return ProbabilisticRedshift.from_table(rows, spec)

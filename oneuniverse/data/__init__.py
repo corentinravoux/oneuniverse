@@ -5,9 +5,10 @@ from oneuniverse.data.schema import (Geometry, cast_to_core, core_schema,
                                      register_z_type, stable_object_id,
                                      validate_schema, validate_z_type_values,
                                      z_types)
+from oneuniverse.data.pdf import PdfSpec, ProbabilisticRedshift
 from oneuniverse.data.view import DatasetView
 
-__all__ = ["Cone", "SkyPatch", "ZRange", "Geometry", "Manifest", "DatasetView", "SurveyMeta",
+__all__ = ["Cone", "SkyPatch", "ZRange", "Geometry", "Manifest", "DatasetView", "SurveyMeta", "PdfSpec", "ProbabilisticRedshift",
            "read_manifest", "cast_to_core", "core_schema", "register_z_type",
            "stable_object_id", "validate_schema", "validate_z_type_values",
            "z_types"]

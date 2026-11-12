@@ -5,10 +5,29 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
+from scipy.special import ndtri
 
 from oneuniverse.data.manifest import LoaderInfo, Manifest, SurveyMeta
 from oneuniverse.data.schema import Geometry, stable_object_id
 from oneuniverse.data.writer import write_dataset
+
+
+def _pdf_column(spec, z: np.ndarray, rng) -> pa.Array:
+    """Gaussian p(z) centred on each row's z, sigma = 0.05 (1 + z)."""
+    sig = 0.05 * (1.0 + z)
+    if spec.kind == "interp":
+        g = np.asarray(spec.grid)
+        p = np.exp(-0.5 * ((g[None] - z[:, None]) / sig[:, None]) ** 2)
+        p /= np.trapezoid(p, g, axis=1)[:, None]
+        return pa.FixedSizeListArray.from_arrays(pa.array(p.astype(np.float32).ravel()),
+                                                 g.size)
+    if spec.kind == "quant":
+        lev = np.asarray(spec.quant_levels)
+        q = z[:, None] + sig[:, None] * ndtri(lev)[None]
+        return pa.FixedSizeListArray.from_arrays(pa.array(q.astype(np.float32).ravel()),
+                                                 lev.size)
+    draws = (z[:, None] + sig[:, None] * rng.standard_normal((z.size, 20))).astype(np.float32)
+    return pa.array(list(draws), pa.list_(pa.float32()))
 
 
 def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
@@ -19,8 +38,6 @@ def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
     ``source_row`` is the index before shuffling, so file order differs from
     source order. ``dec`` is uniform in sin(dec) inside *dec_range*.
     """
-    if with_pdf is not None:
-        raise NotImplementedError("with_pdf is wired up with the pdf module")
     rng = np.random.default_rng(seed)
     ra = rng.uniform(*ra_range, n)
     s0, s1 = np.sin(np.radians(dec_range[0])), np.sin(np.radians(dec_range[1]))
@@ -31,6 +48,7 @@ def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
     src = np.arange(n, dtype=np.int64)
     perm = rng.permutation(n)
     ra, dec, z, z_err, mag, src = (a[perm] for a in (ra, dec, z, z_err, mag, src))
+    extra = {} if with_pdf is None else {with_pdf.value_column: _pdf_column(with_pdf, z, rng)}
     return pa.table({
         "ra": ra, "dec": dec, "z": z,
         "z_type": pa.array(["spec"] * n, pa.string()),
@@ -39,16 +57,19 @@ def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
         "survey": pa.array([survey] * n, pa.string()),
         "source_row": src,
         "mag": mag,
+        **extra,
     })
 
 
 def write_synthetic_dataset(out: Path, n: int, seed: int, *, partition_nside=None,
                             overwrite: bool = False, **kw) -> Manifest:
+    pdf = kw.get("with_pdf")
+    ext = None if pdf is None else {"pdf": {"version": 1, **pdf.to_dict()}}
     return write_dataset(
         synthetic_point_table(n, seed, **kw), out, geometry=Geometry.POINT,
         survey=SurveyMeta("synthetic", "test"), loader=LoaderInfo("test", "1", {}),
         partition_nside=partition_nside, extra_stats_columns=["mag"],
-        overwrite=overwrite)
+        extensions=ext, overwrite=overwrite)
 
 
 def synthetic_sightline_table(n: int, seed: int, *, n_pixels: int = 50) -> pa.Table:

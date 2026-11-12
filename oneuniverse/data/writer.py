@@ -36,6 +36,7 @@ from oneuniverse.data.manifest import (
     write_manifest,
     write_partition_index,
 )
+from oneuniverse.data.pdf import PdfSpec
 from oneuniverse.data.schema import (
     Geometry,
     cast_to_core,
@@ -95,14 +96,35 @@ def _prepare(batch: pa.RecordBatch, geometry: Geometry, has_z_type: bool) -> pa.
         [], schema=table.schema)
 
 
+def _cast_pdf(batch: pa.RecordBatch, spec: PdfSpec) -> pa.RecordBatch:
+    """Cast the pdf value column of an interp/quant batch to fixed_size_list<float32>."""
+    name, k = spec.value_column, spec.n_components
+    if name not in batch.schema.names:
+        raise SchemaError(f"pdf extension needs column {name!r}, missing from the batch")
+    col = batch.column(name)
+    typ = col.type
+    ok = pa.types.is_fixed_size_list(typ) and typ.list_size == k
+    if not ok and (pa.types.is_list(typ) or pa.types.is_large_list(typ)):
+        lengths = pc.list_value_length(col)
+        ok = lengths.null_count == 0 and bool(pc.all(pc.equal(lengths, k)).as_py() is not False)
+    if not ok or col.null_count:
+        raise SchemaError(
+            f"pdf column {name!r}: every row must have {k} components (no nulls), "
+            f"got type {typ}")
+    flat = col.flatten().cast(pa.float32())
+    new = pa.FixedSizeListArray.from_arrays(flat, k)
+    return batch.set_column(batch.schema.get_field_index(name),
+                            pa.field(name, new.type), new)
+
+
 class _Counter:
     def __init__(self) -> None:
         self.n_rows = 0
         self.schema: pa.Schema | None = None
 
 
-def _validated_stream(data, geometry: Geometry, batch_size: int, counter: _Counter
-                      ) -> Iterator[pa.RecordBatch]:
+def _validated_stream(data, geometry: Geometry, batch_size: int, counter: _Counter,
+                      pdf: PdfSpec | None = None) -> Iterator[pa.RecordBatch]:
     has_z_type = "z_type" in core_schema(geometry).names
     for raw in _as_batches(data, batch_size):
         if counter.schema is None:
@@ -110,6 +132,8 @@ def _validated_stream(data, geometry: Geometry, batch_size: int, counter: _Count
         if raw.num_rows == 0 and counter.schema is not None:
             continue
         batch = _prepare(raw, geometry, has_z_type)
+        if pdf is not None and pdf.kind != "sample":
+            batch = _cast_pdf(batch, pdf)
         if counter.schema is None:
             counter.schema = batch.schema.remove_metadata()
         elif not batch.schema.remove_metadata().equals(counter.schema):
@@ -362,7 +386,9 @@ def write_dataset(batches: Iterable[pa.RecordBatch] | pa.Table, out: Path, *,
         stage = tmp / _STAGE
         stage.mkdir()
         counter = _Counter()
-        stream = _validated_stream(batches, geometry, batch_size, counter)
+        stream = _validated_stream(
+            batches, geometry, batch_size, counter,
+            PdfSpec.from_dict(extensions["pdf"]) if "pdf" in extensions else None)
         first = next(stream, None)
         if first is None:
             raise ValidationError("no rows: refusing to write an empty dataset")
