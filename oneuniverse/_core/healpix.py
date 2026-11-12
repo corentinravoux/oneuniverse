@@ -5,9 +5,14 @@ import healpy as hp
 import numpy as np
 from numpy.typing import ArrayLike
 
+from oneuniverse._core.errors import ValidationError
+from oneuniverse._core.geometry import Cone, SkyPatch
+
 NSIDE_FINE = 32
 
-_MIN_RA_WIDTH = 1e-6  # degrees; thinner pieces use the strip cover
+_MIN_RA_WIDTH = 1e-3  # degrees; thinner RA pieces are widened to this
+_ZERO_WIDTH = 1e-12   # degrees; a piece this thin is degenerate (split artefact)
+MAX_NSIDE = 8192      # 12 * nside**2 must fit in int32
 _MAX_SLICES = 720
 
 
@@ -24,8 +29,10 @@ def _pad_dec(w_rad: float, dec_deg: float) -> float:
 
 
 def _check_nside(nside: int) -> None:
-    if not hp.isnsideok(nside, nest=True):
-        raise ValueError(f"nside must be a power of 2, got {nside}")
+    """Shared validation: power of 2 with 1 <= nside <= 8192."""
+    if not hp.isnsideok(nside, nest=True) or not 1 <= nside <= MAX_NSIDE:
+        raise ValidationError(
+            f"nside must be a power of 2 in [1, {MAX_NSIDE}], got {nside}")
 
 
 def _finish(pix: np.ndarray) -> np.ndarray:
@@ -34,8 +41,14 @@ def _finish(pix: np.ndarray) -> np.ndarray:
 
 def radec_to_pix(nside: int, ra: ArrayLike, dec: ArrayLike, *, nest: bool = True) -> np.ndarray:
     """HEALPix pixel of (ra, dec) in degrees."""
-    pix = hp.ang2pix(nside, np.asarray(ra, dtype=np.float64),
-                     np.asarray(dec, dtype=np.float64), nest=nest, lonlat=True)
+    _check_nside(nside)
+    ra = np.asarray(ra, dtype=np.float64)
+    dec = np.asarray(dec, dtype=np.float64)
+    if not (np.all(np.isfinite(ra)) and np.all(np.isfinite(dec))):
+        raise ValidationError("ra and dec must be finite")
+    if np.any(np.abs(dec) > 90.0):
+        raise ValidationError("|dec| must be <= 90 degrees")
+    pix = hp.ang2pix(nside, ra, dec, nest=nest, lonlat=True)
     return np.asarray(pix).astype(np.int32)
 
 
@@ -44,7 +57,7 @@ def coarsen(pix: ArrayLike, nside_from: int, nside_to: int) -> np.ndarray:
     _check_nside(nside_from)
     _check_nside(nside_to)
     if nside_to > nside_from:
-        raise ValueError(f"cannot coarsen to a finer grid: {nside_from} -> {nside_to}")
+        raise ValidationError(f"cannot coarsen to a finer grid: {nside_from} -> {nside_to}")
     shift = 2 * (int(np.log2(nside_from)) - int(np.log2(nside_to)))
     return (np.asarray(pix, dtype=np.int64) >> shift).astype(np.int32)
 
@@ -52,8 +65,10 @@ def coarsen(pix: ArrayLike, nside_from: int, nside_to: int) -> np.ndarray:
 def cone_pixels(nside: int, ra: float, dec: float, radius_deg: float, *,
                 nest: bool = True) -> np.ndarray:
     """Inclusive pixel cover of a cone (degrees)."""
-    vec = hp.ang2vec(ra, dec, lonlat=True)
-    return _finish(hp.query_disc(nside, vec, np.radians(radius_deg), inclusive=True, nest=nest))
+    _check_nside(nside)
+    cone = Cone(ra, dec, radius_deg)  # validates finite ra/dec/radius, radius > 0
+    vec = hp.ang2vec(cone.ra, cone.dec, lonlat=True)
+    return _finish(hp.query_disc(nside, vec, np.radians(cone.radius), inclusive=True, nest=nest))
 
 
 def _strip_cover(nside: int, dec_min: float, dec_max: float, nest: bool) -> np.ndarray:
@@ -66,16 +81,20 @@ def _piece_cover(nside: int, ra0: float, ra1: float, dec_min: float, dec_max: fl
                  nest: bool) -> np.ndarray:
     """Cover of a non-wrapping RA piece [ra0, ra1].
 
-    Pieces wider than 180 deg, thinner than ``_MIN_RA_WIDTH``, or whose Dec band
-    comes within one pixel resolution of a pole use the full-RA
-    ``query_strip`` cover of the Dec band (a superset, still a valid cover).
-    Otherwise the piece is covered by a union of narrow convex polygons.
+    Pieces wider than 180 deg, or whose Dec band comes within one pixel
+    resolution of a pole, use the full-RA ``query_strip`` cover of the Dec band
+    (a superset, still a valid cover). Pieces thinner than ``_MIN_RA_WIDTH``
+    are widened to that width (clamped to [0, 360]). Otherwise the piece is covered by a union of narrow convex polygons.
     """
     width = ra1 - ra0
     pole_margin = 90.0 - float(np.degrees(hp.nside2resol(nside)))
-    if (width > 180.0 or width < _MIN_RA_WIDTH
-            or dec_max > pole_margin or dec_min < -pole_margin):
+    if width > 180.0 or dec_max > pole_margin or dec_min < -pole_margin:
         return _strip_cover(nside, dec_min, dec_max, nest)
+    if width < _MIN_RA_WIDTH:
+        centre = 0.5 * (ra0 + ra1)
+        ra0 = min(max(centre - _MIN_RA_WIDTH / 2, 0.0), 360.0 - _MIN_RA_WIDTH)
+        ra1 = ra0 + _MIN_RA_WIDTH
+        width = ra1 - ra0
     # Lat/lon boxes are not convex polygons once sampled along constant-Dec
     # edges, so the piece is cut into narrow slices, each a convex 4-corner
     # polygon. A great-circle edge between two points at the same Dec bows
@@ -97,8 +116,13 @@ def _piece_cover(nside: int, ra0: float, ra1: float, dec_min: float, dec_max: fl
 def patch_pixels(nside: int, ra_min: float, ra_max: float, dec_min: float, dec_max: float, *,
                  nest: bool = True) -> np.ndarray:
     """Inclusive pixel cover of an RA/Dec patch (degrees); ``ra_min > ra_max`` wraps."""
+    _check_nside(nside)
+    SkyPatch(ra_min, ra_max, dec_min, dec_max)  # validates the arguments
     if ra_min > ra_max:
         pieces = [(ra_min, 360.0), (0.0, ra_max)]
+        # a degenerate piece from the split (e.g. ra_max == 0) adds nothing:
+        # RA 0 and 360 are the same meridian, covered by the other piece.
+        pieces = [pc for pc in pieces if pc[1] - pc[0] > _ZERO_WIDTH] or pieces
     else:
         pieces = [(ra_min, ra_max)]
     covers = [_piece_cover(nside, a, b, dec_min, dec_max, nest) for a, b in pieces]

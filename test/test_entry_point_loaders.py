@@ -19,7 +19,6 @@ def test_load_entry_points_registers_plugin(monkeypatch):
         rmod, "entry_points",
         lambda group=None: [_FakeEP("plugin_survey", sentinel)]
         if group == "oneuniverse.survey_loaders" else [],
-        raising=False,
     )
     reg = Registry("survey loader")
     added = reg.load_entry_points("oneuniverse.survey_loaders")
@@ -32,7 +31,6 @@ def test_builtin_wins_over_entry_point_of_same_name(monkeypatch):
     monkeypatch.setattr(
         rmod, "entry_points",
         lambda group=None: [_FakeEP("dup", object())],
-        raising=False,
     )
     reg = Registry("survey loader")
     builtin = object()

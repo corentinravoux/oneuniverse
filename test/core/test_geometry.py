@@ -45,3 +45,37 @@ def test_selections_are_frozen_and_hashable():
 def test_invalid_arguments_raise(make):
     with pytest.raises(ValueError):
         make()
+
+
+def test_cube_normalises_to_float_tuples():
+    ref = Cube((0, 0, 0), (1, 2, 3))
+    for c in (Cube([0, 0, 0], [1, 2, 3]),
+              Cube(np.array([0, 0, 0]), np.array([1, 2, 3]))):
+        assert c == ref and hash(c) == hash(ref)
+        assert isinstance(c.lo, tuple) and all(isinstance(v, float) for v in c.hi)
+
+
+@pytest.mark.parametrize("lo,hi", [((0, 0), (1, 1, 1)), ((0, 0, 0), (1, 1, 1, 1))])
+def test_cube_wrong_length_raises(lo, hi):
+    from oneuniverse._core.errors import ValidationError
+    with pytest.raises(ValidationError):
+        Cube(lo, hi)
+
+
+def test_geometry_errors_are_validation_errors():
+    from oneuniverse._core.errors import ValidationError
+    with pytest.raises(ValidationError):
+        Cone(0, 0, -1)
+
+
+@pytest.mark.parametrize("args", [(np.nan, 0, 1), (0, np.inf, 1), (0, 0, np.inf), (0, 0, np.nan)])
+def test_cone_rejects_non_finite(args):
+    with pytest.raises(ValueError):
+        Cone(*args)
+
+
+def test_skypatch_contains_accepts_negative_ra():
+    p = SkyPatch(350.0, 10.0, -5.0, 5.0)
+    assert p.contains([-5.0, 5.0, -90.0], [0, 0, 0]).tolist() == [True, True, False]
+    q = SkyPatch(10.0, 360.0, -5.0, 5.0)
+    assert q.contains([360.0, -170.0, 5.0], [0, 0, 0]).tolist() == [True, True, False]
