@@ -4,7 +4,7 @@ import pyarrow.compute as pc
 import pytest
 from fixtures.synthetic import synthetic_point_table
 
-from oneuniverse._core.errors import ValidationError
+from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse.data.crossmatch import CrossMatchRules
 from oneuniverse.data.database import Database
 from oneuniverse.data.links import LINKS_SCHEMA, SubobjectRules, load_links
@@ -149,3 +149,73 @@ def test_rules_validation():
     with pytest.raises(ValidationError):
         SubobjectRules("a", "b", relation="bogus")
     assert SubobjectRules("a", "b").hash() != SubobjectRules("a", "b", accept_ambiguous=True).hash()
+
+
+def test_stale_oneuid_rejected_and_as_of(db_hosts):
+    from datetime import UTC, datetime
+    db = db_hosts
+    rules = SubobjectRules("galaxy", "snia", dz_tol=None)
+    db.build_links(parents=["hosts"], children=["sne"], rules=rules, name="host")
+    cl = db.build_links(parents=["clusters"], children=["hosts"], rules=SubobjectRules(
+        "cluster", "galaxy", dz_tol=None), name="members")
+    before = datetime.now(UTC)
+    db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None))
+    with pytest.raises(FormatError, match="rebuild the links"):
+        db.load_links("host")
+    with pytest.raises(FormatError, match="rebuild the links"):
+        db.chain([0], ["members", "host"])
+    assert db.load_links("host", as_of=before).table.num_rows == 480
+    assert len(db.chain([0], ["members", "host"], as_of=before)) <= 1
+    assert db.as_of(before).load_links("members").table.equals(cl.table)
+
+
+def test_chain_version_mismatch(db_hosts):
+    db = db_hosts
+    db.build_links(parents=["clusters"], children=["hosts"], rules=SubobjectRules(
+        "cluster", "galaxy", dz_tol=None), name="members")
+    db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None),
+                    name="other")
+    db.build_links(parents=["hosts"], children=["sne"], rules=SubobjectRules("galaxy", "snia", dz_tol=None),
+                   name="h2", oneuid_name="other")
+    with pytest.raises(ValidationError, match="not comparable"):
+        db.chain([0], ["members", "h2"])
+
+
+def _mini(root):
+    """p1/p2 and c1/c2 hold two member rows of one parent / one child object (3" apart)."""
+    s = 1.0 / 3600
+    def put(name, kind, ra, dec, z, seed):
+        _write(root, name, kind, np.array(ra, float), np.array(dec, float), np.array(z, float), seed)
+    # object P at dec 0 (p1 0, p2 0.2"), child C 3" away (c1 3.0, c2 3.2"); Q/D at ra 20
+    put("p1", "galaxy", [10, 20], [0, 0], [0.1, 0.2], 1)
+    put("p2", "galaxy", [10, 50], [0.2 * s, 0], [0.1, 0.3], 2)
+    put("c1", "snia", [10, 20], [3.0 * s, 2.0 * s], [0.1, np.nan], 3)
+    put("c2", "snia", [10, 80], [3.2 * s, 0], [0.1, 0.4], 4)
+    return Database(root)
+
+
+def test_multi_member_objects(tmp_path):
+    db = _mini(tmp_path)
+    ds = ["p1", "p2", "c1", "c2"]
+    db.build_oneuid(ds, rules=CrossMatchRules(sky_tol_arcsec=0.5, dz_tol=None))
+    l = db.build_links(parents=["p1", "p2"], children=["c1", "c2"], rules=SubobjectRules(
+        "galaxy", "snia", sky_tol_arcsec=5.0, dz_tol=None), name="m")
+    t = l.table
+    assert t.num_rows == 2 and l.meta["n_self_merged"] == 0 and l.meta["n_ambiguous_children"] == 0
+    seps = np.sort(t["sep_arcsec"].to_numpy())
+    assert np.isclose(seps[0], 2.0, atol=0.01) and np.isclose(seps[1], 2.8, atol=0.01)
+    dz = t["dz"].to_numpy()
+    assert np.isnan(dz).sum() == 1 and np.isclose(np.nanmax(dz), 0.0)
+    assert (t["confidence"].to_numpy() == 1.0).all()
+
+
+def test_self_merged_counted_and_empty_raises(db_hosts):
+    db = db_hosts
+    db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(sky_tol_arcsec=1.0, dz_tol=None))
+    l = db.build_links(parents=["hosts"], children=["sne"], rules=SubobjectRules(
+        "galaxy", "snia", dz_tol=None), name="h")
+    # 480 sne merged with their host, 20 with one twin: 500 self objects; the other twin stays a parent
+    assert l.meta["n_self_merged"] == 500 and l.meta["n_links"] == 20
+    with pytest.raises(ValidationError, match="merge parents with children"):
+        db.build_links(parents=["clusters"], children=["hosts"], rules=SubobjectRules(
+            "cluster", "galaxy", dz_tol=None), name="c")

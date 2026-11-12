@@ -114,23 +114,26 @@ class VersionedSidecar:
             out.append(meta)
         return out
 
-    def load(self, *, as_of: datetime | None = None) -> tuple[pa.Table, dict]:
-        """Load the current version, or the one live at *as_of* (tz-aware)."""
+    def meta(self, *, as_of: datetime | None = None) -> dict:
+        """Meta of the current version, or of the one live at *as_of* (tz-aware)."""
         if as_of is not None and (as_of.tzinfo is None or as_of.utcoffset() is None):
             raise ValidationError("as_of must be timezone-aware")
         metas = self.versions()
         if not metas:
             raise NotFoundError(f"no version of {self.kind}/{self.name} under {self.root}")
         if as_of is None:
-            meta = metas[-1]
-        else:
-            when = _fmt(as_of)
-            live = [m for m in metas
-                    if m["valid_from"] <= when and (m["valid_to"] is None or when < m["valid_to"])]
-            if not live:
-                raise NotFoundError(
-                    f"no version of {self.kind}/{self.name} is live at {as_of.isoformat()}")
-            meta = live[-1]
+            return metas[-1]
+        when = _fmt(as_of)
+        live = [m for m in metas
+                if m["valid_from"] <= when and (m["valid_to"] is None or when < m["valid_to"])]
+        if not live:
+            raise NotFoundError(
+                f"no version of {self.kind}/{self.name} is live at {as_of.isoformat()}")
+        return live[-1]
+
+    def load(self, *, as_of: datetime | None = None) -> tuple[pa.Table, dict]:
+        """Load the current version, or the one live at *as_of* (tz-aware)."""
+        meta = self.meta(as_of=as_of)
         table = pq.read_table(self.dir / meta["version"] / "table.parquet")
         return table, meta
 

@@ -18,10 +18,9 @@ from typing import Literal
 import numpy as np
 import pyarrow as pa
 
-from oneuniverse._core.errors import ValidationError
+from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.healpix import radec_to_pix
 from oneuniverse.data.crossmatch import CrossMatchRules, match_pair
-from oneuniverse.data.oneuid import load_oneuid
 from oneuniverse.data.sidecar import VersionedSidecar
 
 __all__ = ["LINKS_SCHEMA", "SubobjectLinks", "SubobjectRules", "build_links", "chain", "load_links"]
@@ -98,6 +97,10 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
                 name: str = "default", oneuid_name: str = "default") -> SubobjectLinks:
     """Match *children* to *parents* on ONEUID index *oneuid_name* and publish link set *name*.
 
+    Self-links (parent and child in the same oneuid) are excluded before the
+    ambiguity count; ``meta["n_self_merged"]`` counts the distinct objects
+    concerned, and an empty result caused by them raises ValidationError.
+
     Raises ValidationError if a dataset is not in the index or its
     ``survey.kind`` differs from ``rules.parent_kind`` / ``rules.child_kind``.
     """
@@ -110,7 +113,7 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
         if kind != want:
             raise ValidationError(
                 f"{role} dataset {ds!r} has kind {kind!r}, rules expect {role}_kind {want!r}")
-    idx = load_oneuid(db, oneuid_name)
+    idx = db.load_oneuid(oneuid_name)
     missing = [d for d in parents + children if d not in idx.datasets]
     if missing:
         raise ValidationError(f"datasets {missing} are not members of ONEUID {oneuid_name!r}")
@@ -122,7 +125,8 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
     pairs = match_pair(ptab, ctab, rules.match_rules())
     pid, cid = poid[pairs.left], coid[pairs.right]
     sep, dz = pairs.sep_arcsec, pairs.dz
-    keep = pid != cid  # never link an object to itself
+    keep = pid != cid  # never link an object to itself (before the ambiguity count)
+    n_self = int(np.unique(pid[~keep]).size)  # distinct objects that merged parent with child
     pid, cid, sep, dz = pid[keep], cid[keep], sep[keep], dz[keep]
     # collapse multi-member objects: one link per (child, parent) oneuid pair
     order = np.lexsort((pid, cid))
@@ -148,10 +152,14 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
         "dz": pa.array(dz[ok], pa.float64()),
         "confidence": pa.array((1.0 / ncand[ok]).astype(np.float32), pa.float32()),
     }, schema=LINKS_SCHEMA)
+    if table.num_rows == 0 and n_self:
+        raise ValidationError(
+            f"no links: {n_self} object(s) of ONEUID {oneuid_name!r} merge parents with children "
+            f"(self-links are excluded); rebuild the ONEUID with a smaller sky_tol or separate rules")
     meta = {
         "rules": rules.to_dict(), "rules_hash": rules.hash(), "oneuid_name": oneuid_name,
         "oneuid_version": idx.meta["version"], "parents": parents, "children": children,
-        "n_links": table.num_rows, "n_ambiguous_children": n_amb,
+        "n_links": table.num_rows, "n_ambiguous_children": n_amb, "n_self_merged": n_self,
     }
     VersionedSidecar(db.root, _KIND, name).write(table, meta)
     return load_links(db, name)
@@ -160,6 +168,12 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
 def load_links(db, name: str = "default", *, as_of=None) -> SubobjectLinks:
     """Load link set *name* (the version live at *as_of* if given)."""
     table, meta = VersionedSidecar(db.root, _KIND, name).load(as_of=as_of)
+    # ONEUID ids are renumbered on every build: links are valid only for their ONEUID version
+    now = VersionedSidecar(db.root, "oneuid", meta["oneuid_name"]).meta(as_of=as_of)["version"]
+    if now != meta["oneuid_version"]:
+        raise FormatError(
+            f"links {name} were built on ONEUID {meta['oneuid_name']} version "
+            f"{meta['oneuid_version']}; it is now {now}; rebuild the links")
     return SubobjectLinks(table, meta, name)
 
 
@@ -197,20 +211,22 @@ def chain(db, starts: Sequence[int], names: Sequence[str], *, as_of=None) -> np.
 
     Returns the sorted unique leaf oneuids (int64); no names returns *starts*
     unchanged. Raises ValidationError if consecutive link sets were built on
-    different ONEUID indexes.
+    different ONEUID indexes or versions. Each link set must be built on the
+    ONEUID version live at *as_of* (FormatError otherwise, see :func:`load_links`).
     """
     cur = np.asarray(starts, dtype=np.int64).ravel()
     if not names:
         return cur
     cur = np.unique(cur)
-    prev: tuple[str, str] | None = None
+    prev: tuple[str, str, str] | None = None
     for n in names:
         links = load_links(db, n, as_of=as_of)
-        if prev is not None and links.meta["oneuid_name"] != prev[1]:
+        ident = (links.meta["oneuid_name"], links.meta["oneuid_version"])
+        if prev is not None and ident != prev[1:]:
             raise ValidationError(
-                f"link set {n!r} is built on ONEUID {links.meta['oneuid_name']!r} but {prev[0]!r} "
-                f"on ONEUID {prev[1]!r}; ids are not comparable")
-        prev = (n, links.meta["oneuid_name"])
+                f"link set {n!r} is built on ONEUID {ident[0]!r} version {ident[1]} but "
+                f"{prev[0]!r} on ONEUID {prev[1]!r} version {prev[2]}; ids are not comparable")
+        prev = (n, *ident)
         t = links.table
         m = np.isin(t["parent_oneuid"].to_numpy(), cur)
         cur = np.unique(t["child_oneuid"].to_numpy()[m]).astype(np.int64)
