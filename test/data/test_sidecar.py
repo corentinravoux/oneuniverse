@@ -7,7 +7,7 @@ import pyarrow as pa
 import pytest
 
 import oneuniverse.data.sidecar as mod
-from oneuniverse._core.errors import NotFoundError, ValidationError
+from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
 from oneuniverse.data.sidecar import VersionedSidecar
 
 
@@ -157,3 +157,37 @@ def test_meta_roundtrip_is_json(tmp_path):
     sc = VersionedSidecar(tmp_path, "links", "x")
     v = sc.write(_t(1), {"k": [1, 2]})
     assert json.loads((tmp_path / "_links/x" / v / "meta.json").read_text())["k"] == [1, 2]
+
+
+@pytest.mark.parametrize("bad", ["x.tmp", "x.old"])
+def test_staging_suffix_segments_rejected(tmp_path, bad):
+    with pytest.raises(ValidationError):
+        VersionedSidecar(tmp_path, "oneuid", bad)
+    with pytest.raises(ValidationError):
+        VersionedSidecar(tmp_path, bad, "qso")
+
+
+def test_unknown_format_version_and_corruption(tmp_path):
+    sc = VersionedSidecar(tmp_path, "oneuid", "qso")
+    v = sc.write(_t(2), {})
+    meta_p = sc.dir / v / "meta.json"
+    good = meta_p.read_text()
+    meta = json.loads(good)
+    meta["format_version"] = 99
+    meta_p.write_text(json.dumps(meta))
+    with pytest.raises(FormatError, match="format_version"):
+        sc.load()
+    meta_p.write_text("{not json")
+    with pytest.raises(FormatError) as ei:
+        sc.meta()
+    assert ei.value.__cause__ is not None
+    meta_p.write_text(json.dumps({"format_version": 1}))
+    with pytest.raises(FormatError):
+        sc.load()
+    meta_p.write_text(good)
+    (sc.dir / "current.json").write_text("garbage")
+    with pytest.raises(FormatError):
+        sc.current()
+    (sc.dir / "current.json").write_text("{}")
+    with pytest.raises(FormatError):
+        sc.load()

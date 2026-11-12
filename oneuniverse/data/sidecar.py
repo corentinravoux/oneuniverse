@@ -42,8 +42,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from oneuniverse._core.errors import NotFoundError, ValidationError
+from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
 from oneuniverse._core.fs import (
+    STAGING_SUFFIXES,
     _json_default,
     atomic_dir,
     atomic_write_json,
@@ -68,7 +69,30 @@ def _segment(value: str, what: str) -> str:
         raise ValidationError(
             f"invalid {what} {value!r}: use letters, digits, '_', '-', '.', "
             f"not starting with '.' or '_'")
+    if value.endswith(STAGING_SUFFIXES):
+        raise ValidationError(
+            f"invalid {what} {value!r}: must not end with a staging suffix {STAGING_SUFFIXES}")
     return value
+
+
+def _read_json(path: Path, what: str) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise FormatError(f"cannot read {what} {path}: {exc}") from exc
+
+
+def _read_meta(path: Path) -> dict:
+    meta = _read_json(path, "sidecar meta")
+    if not isinstance(meta, dict) or meta.get("format_version") != SIDECAR_FORMAT_VERSION:
+        got = meta.get("format_version") if isinstance(meta, dict) else None
+        raise FormatError(
+            f"unsupported sidecar format_version {got!r} in {path} "
+            f"(this version reads {SIDECAR_FORMAT_VERSION})")
+    missing = [k for k in ("version", "valid_from") if k not in meta]
+    if missing:
+        raise FormatError(f"corrupt sidecar meta {path}: missing {missing}")
+    return meta
 
 
 def _fmt(dt: datetime) -> str:
@@ -89,7 +113,10 @@ class VersionedSidecar:
         p = self.dir / "current.json"
         if not p.exists():
             return None
-        return json.loads(p.read_text())["version"]
+        cur = _read_json(p, "sidecar pointer")
+        if not isinstance(cur, dict) or not isinstance(cur.get("version"), str):
+            raise FormatError(f"corrupt sidecar pointer {p}: no 'version'")
+        return cur["version"]
 
     def _ids(self) -> list[str]:
         """Version ids <= current, oldest first (orphans and staging ignored)."""
@@ -113,7 +140,7 @@ class VersionedSidecar:
         ids = self._ids()
         out = []
         for i, vid in enumerate(ids):
-            meta = json.loads((self.dir / vid / "meta.json").read_text())
+            meta = _read_meta(self.dir / vid / "meta.json")
             if meta.get("valid_to") is None and i + 1 < len(ids):
                 meta["valid_to"] = ids[i + 1]
             out.append(meta)
@@ -130,7 +157,7 @@ class VersionedSidecar:
             return metas[-1]
         when = _fmt(as_of)
         live = [m for m in metas
-                if m["valid_from"] <= when and (m["valid_to"] is None or when < m["valid_to"])]
+                if m["valid_from"] <= when and (m.get("valid_to") is None or when < m["valid_to"])]
         if not live:
             raise NotFoundError(
                 f"no version of {self.kind}/{self.name} is live at {as_of.isoformat()}")
@@ -184,7 +211,7 @@ class VersionedSidecar:
         # (3) close the previous version
         if cur is not None:
             p = self.dir / cur / "meta.json"
-            prev = json.loads(p.read_text())
+            prev = _read_meta(p)
             prev["valid_to"] = vid
             atomic_write_json(p, prev)
         return vid
