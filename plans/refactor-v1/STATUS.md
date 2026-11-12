@@ -9,6 +9,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R0 | 2026-11-12 | a0251e2 | 931 / 12 | 51 s (`-n 6`); 118 s single-process | `_core` (errors, registry, fs, geometry, healpix) + guards + CI; old suite still green. Single-process time is the old suite's; the < 60 s target is R8's exit criterion. CI has not yet run on the branch (not pushed). |
 | R1 T1 | 2026-11-12 | 41bad19 | 273 / 5 | 15 s (`-n 6`) | old data/combine/measure/twin removed |
 | R1 | 2026-11-12 | 5bc6b38 | 376 / 4 | 28 s (`-n 6`); 86 s single-process | OUF 3.0: schema, manifest, bucketed streaming writer, DatasetView (pruning, take, stale-view guard), PDFs, eBOSS/DESI loaders, convert(). Fake 2 M DESI convert peaks 213 MiB anon RSS. Exit criterion met. |
+| R2 | 2026-11-12 | f1fefea | 459 / 4 | 40 s (`-n 6`); 140 s single-process | Versioned sidecar (crash-safe, µs version ids), pair-wise blocked cross-match (brute-force exact), ONEUID with position hydration + dataset-version guard, links with ONEUID-version guard, Database. Row-identity regression green; 2×1 M cross-match 13 s; sidecar crash test green. |
 
 ## Decisions taken during execution
 
@@ -51,3 +52,22 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
   documented exception to the no-`except Exception` rule.
 - **Open for R4.** `DatasetView.scan` cannot yet return `(partition, offset)`;
   `build_pointset` needs it (fix before R4 Task 3).
+- **R2 — identity guards.** ONEUID meta records each dataset's
+  `DatasetView.version`; hydration and `build_links` refuse a dataset changed
+  since the build ("rebuild the index"). Links record the ONEUID version they
+  were built on; `load_links`/`chain` refuse a rebuilt ONEUID. A `Database`
+  pinned with `as_of` is read-only.
+- **R2 — `survey.kind` (decision for the owner to confirm).** R1 and R3 use
+  `survey.kind` as the survey type (`"spectroscopic"`, `"photometric"`), so the
+  plan's links guard `SubobjectRules(parent_kind="galaxy", child_kind="snia")`
+  could never match a real loader. The guard was removed; `parent_kind` /
+  `child_kind` are labels recorded in meta, and the `parents` / `children`
+  dataset lists are authoritative. If an object-class notion is wanted, it
+  needs a new manifest field (e.g. `SurveyMeta.objects`).
+- **R2 — keeping hosts and SNe apart (provisional answer to the owner's
+  question).** `CrossMatchRules(separate=(("hosts", "sne"),))` stops the ONEUID
+  from merging two datasets, transitively. `build_links` raises if the ONEUID
+  merged any parent with a child, unless `allow_self_merged=True`.
+- **Risk for R8.** The default suite takes 140 s single-process (40 s with
+  `-n 6`); `test/data` alone is ~110 s. The < 60 s single-process target needs
+  slow-marking of the heavier writer/ONEUID tests or smaller fixtures.
