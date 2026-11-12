@@ -128,3 +128,82 @@ def test_sightline_geometry_round_trip(tmp_path):
     m = write_dataset(t, tmp_path / "sl", geometry=Geometry.SIGHTLINE, survey=SurveyMeta("lya", "lyman_alpha"), loader=LoaderInfo("t", "1", {}))
     v = DatasetView.from_path(tmp_path / "sl"); assert m.geometry == Geometry.SIGHTLINE and v.n_rows == n and v.table(columns=["delta"])["delta"].type == pa.list_(pa.float32())
     with pytest.raises(SchemaError, match="wavelength"): write_dataset(t.drop(["wavelength"]), tmp_path / "bad", geometry=Geometry.SIGHTLINE, survey=SurveyMeta("lya", "lyman_alpha"), loader=LoaderInfo("t", "1", {}))
+
+
+# ---- Task 5 review follow-ups ---------------------------------------
+def _boundary_points(rng, cone, n):
+    """Points at angular distance exactly ``cone.radius`` (up to rounding) from the centre."""
+    ra0, dec0, r = np.radians(cone.ra), np.radians(cone.dec), np.radians(cone.radius)
+    b = rng.uniform(0, 2 * np.pi, n)
+    dec = np.arcsin(np.sin(dec0) * np.cos(r) + np.cos(dec0) * np.sin(r) * np.cos(b))
+    ra = ra0 + np.arctan2(np.sin(b) * np.sin(r) * np.cos(dec0),
+                          np.cos(r) - np.sin(dec0) * np.sin(dec))
+    return np.degrees(ra) % 360.0, np.degrees(dec)
+
+
+def test_cone_expr_boundary_agrees_with_cone_contains():
+    rng = np.random.default_rng(7)
+    tot = bad = 0
+    for _ in range(100):
+        cone = Cone(rng.uniform(0, 360), rng.uniform(-80, 80), rng.uniform(0.5, 30))
+        ra, dec = _boundary_points(rng, cone, 2_000)
+        tab = pa.table({"ra": ra, "dec": dec, "i": np.arange(ra.size)})
+        got = np.zeros(ra.size, bool)
+        got[tab.filter(cone_expr(cone))["i"].to_numpy()] = True
+        bad += int(np.sum(got != cone.contains(ra, dec))); tot += ra.size
+    assert bad / tot <= 1e-4, (bad, tot)  # >= 99.99 % (ulp-level sin differences)
+
+
+def _multi_rg_dataset(tmp_path, monkeypatch, with_time=False, n=6_000):
+    import numpy as _np
+    from oneuniverse.data import writer
+    monkeypatch.setattr(writer, "_ROW_GROUP", 32)
+    monkeypatch.setattr(writer, "MAX_ROWS_PER_FILE", 32 * 1000)
+    from fixtures.synthetic import synthetic_point_table
+    t = synthetic_point_table(n, 1)
+    ext = None
+    if with_time:
+        t = t.append_column("mjd", pa.array(_np.linspace(50_000, 60_000, n)))
+        ext = {"temporal": {"version": 1, "time_column": "mjd"}}
+    write_dataset(t, tmp_path / "ds", geometry=Geometry.POINT, survey=SurveyMeta("s", "test"),
+                  loader=LoaderInfo("t", "1", {}), partition_nside=1,
+                  extra_stats_columns=["mjd"] if with_time else [], extensions=ext)
+    return DatasetView.from_path(tmp_path / "ds")
+
+
+def test_take_reads_only_needed_row_groups(tmp_path, monkeypatch):
+    import pyarrow.parquet as pq
+    v = _multi_rg_dataset(tmp_path, monkeypatch)
+    sizes = v.index["n_rows"].to_numpy(); p = int(np.argmax(sizes))
+    pf = pq.ParquetFile(v.path / v.index["path"][p].as_py())
+    assert pf.metadata.num_row_groups > 2
+    ids = pf.read(columns=["object_id"])["object_id"].to_numpy()
+    off = np.array([100, 5, 100, 200])  # three groups, with a repeat
+    calls = []
+    orig = pq.ParquetFile.read_row_groups
+    monkeypatch.setattr(pq.ParquetFile, "read_row_groups",
+                        lambda self, rgs, **kw: calls.append(list(rgs)) or orig(self, rgs, **kw))
+    monkeypatch.setattr(pq.ParquetFile, "read",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("whole-file read")))
+    got = v.take(np.full(off.size, p, np.int32), off, columns=["object_id"])
+    assert got["object_id"].to_numpy().tolist() == ids[off].tolist()
+    assert calls and all(len(c) < pf.metadata.num_row_groups for c in calls)
+    one = v.take(np.array([p]), np.array([40]), columns=["object_id"])
+    assert one["object_id"].to_pylist() == [ids[40]] and calls[-1] == [1]
+
+
+def test_take_rejects_non_integer_indices(ds):
+    with pytest.raises(ValidationError):
+        ds.take(np.array([0.0]), np.array([1]))
+    with pytest.raises(ValidationError):
+        ds.take(np.array([0]), np.array([1.5]))
+    with pytest.raises(ValidationError):
+        ds.take(np.array([True]), np.array([1]))
+
+
+def test_t_selection_with_temporal_extension(tmp_path, monkeypatch):
+    v = _multi_rg_dataset(tmp_path, monkeypatch, with_time=True)
+    full = v.table(columns=["mjd"])["mjd"].to_numpy()
+    got = v.table(t=(52_000.0, 53_000.0), columns=["mjd"])["mjd"].to_numpy()
+    assert got.size == np.sum((full >= 52_000) & (full <= 53_000)) > 0
+    assert got.min() >= 52_000 and got.max() <= 53_000

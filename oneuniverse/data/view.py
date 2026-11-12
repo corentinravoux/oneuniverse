@@ -27,13 +27,22 @@ def _rad(x) -> pc.Expression:
 
 
 def cone_expr(cone: Cone) -> pc.Expression:
-    """Closed haversine cone membership in float64 (mirrors ``Cone.contains``)."""
+    """Closed haversine cone membership in float64, mirroring ``Cone.contains``.
+
+    Same operation order as numpy. Exact agreement on points constructed *on* the
+    boundary is not achievable: Arrow's libm ``sin``/``pow`` and numpy's (possibly
+    SIMD) ``sin`` can differ by an ulp, so ~4e-5 of such adversarial points flip
+    (the property test asserts >= 99.99 % agreement). Generic points never differ.
+    """
     ra = _rad(pc.field("ra").cast(pa.float64()))
     dec = _rad(pc.field("dec").cast(pa.float64()))
     ra0, dec0 = float(np.radians(cone.ra)), float(np.radians(cone.dec))
     sd = pc.sin((dec - dec0) / 2.0)
     sr = pc.sin((ra - ra0) / 2.0)
-    a = sd * sd + pc.cos(dec) * float(np.cos(dec0)) * sr * sr
+    # Same operation order as numpy in Cone.contains: sd**2 + (cos*cos0) * sr**2.
+    # The squares use pc.power: Acero re-associates ``c * (s * s)`` into ``(c * s) * s``,
+    # which differs from numpy by an ulp and flips boundary points.
+    a = sd * sd + (pc.cos(dec) * float(np.cos(dec0))) * pc.power(sr, 2.0)
     a = pc.max_element_wise(pc.min_element_wise(a, 1.0), 0.0)
     sep = pc.asin(pc.sqrt(a)) * 2.0
     return sep <= float(np.radians(cone.radius))
@@ -221,11 +230,27 @@ class DatasetView:
         for i in range(self.n_partitions):
             yield i, self._read_file(i, cols)
 
+    def _take_from_file(self, partition: int, offsets: np.ndarray, cols: list[str]) -> pa.Table:
+        """Rows at *offsets* of one file, reading only the row groups that hold them."""
+        pf = pq.ParquetFile(self.path / self._paths[partition])
+        md = pf.metadata
+        sizes = np.array([md.row_group(g).num_rows for g in range(md.num_row_groups)], np.int64)
+        ends = np.cumsum(sizes)
+        rg = np.searchsorted(ends, offsets, side="right")
+        sel = np.unique(rg)
+        base = np.concatenate([[0], np.cumsum(sizes[sel])[:-1]])
+        local = offsets - (ends[rg] - sizes[rg]) + base[np.searchsorted(sel, rg)]
+        tab = pf.read_row_groups(sel.tolist(), columns=cols)
+        return tab.take(pa.array(local))
+
     def take(self, partition, offset, *, columns=None) -> pa.Table:
         """Rows ``(partition, offset)`` in the order given; partition = row in ``.index``."""
         cols = self._columns(columns)
-        part = np.asarray(partition).astype(np.int64, copy=False).ravel()
-        off = np.asarray(offset).astype(np.int64, copy=False).ravel()
+        part, off = np.asarray(partition).ravel(), np.asarray(offset).ravel()
+        for name, a in (("partition", part), ("offset", off)):
+            if a.size and a.dtype.kind not in "iu":
+                raise ValidationError(f"{name} must be an integer array, got dtype {a.dtype}")
+        part, off = part.astype(np.int64, copy=False), off.astype(np.int64, copy=False)
         if part.shape != off.shape:
             raise ValidationError("partition and offset must have the same length")
         if part.size == 0:
@@ -240,8 +265,7 @@ class DatasetView:
         bounds = np.flatnonzero(np.diff(sorted_part)) + 1
         for grp in np.split(np.arange(part.size), bounds):
             idx = order[grp]
-            tab = self._read_file(int(part[idx[0]]), cols)
-            pieces.append(tab.take(pa.array(off[idx])))
+            pieces.append(self._take_from_file(int(part[idx[0]]), off[idx], cols))
         out = pa.concat_tables(pieces)
         inverse = np.empty(part.size, np.int64)
         inverse[order] = np.arange(part.size)
