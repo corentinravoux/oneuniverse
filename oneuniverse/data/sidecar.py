@@ -36,14 +36,19 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from oneuniverse._core.errors import NotFoundError, ValidationError
-from oneuniverse._core.fs import _json_default, atomic_dir, atomic_write_json, is_staging
+from oneuniverse._core.fs import (
+    _json_default,
+    atomic_dir,
+    atomic_write_json,
+    is_staging,
+)
 
 SIDECAR_FORMAT_VERSION = 1
 
@@ -55,7 +60,7 @@ _RESERVED = frozenset(
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _segment(value: str, what: str) -> str:
@@ -67,7 +72,7 @@ def _segment(value: str, what: str) -> str:
 
 
 def _fmt(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime(_FMT)
+    return dt.astimezone(UTC).strftime(_FMT)
 
 
 class VersionedSidecar:
@@ -164,7 +169,7 @@ class VersionedSidecar:
         now = _now()
         vid = _fmt(now)
         if cur is not None and vid <= cur:
-            vid = _fmt(datetime.strptime(cur, _FMT).replace(tzinfo=timezone.utc)
+            vid = _fmt(datetime.strptime(cur, _FMT).replace(tzinfo=UTC)
                        + timedelta(microseconds=1))
         full = {**meta, "format_version": SIDECAR_FORMAT_VERSION, "kind": self.kind,
                 "name": self.name, "version": vid, "valid_from": vid, "valid_to": None,
