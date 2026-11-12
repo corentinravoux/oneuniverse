@@ -13,7 +13,7 @@ class _FakeEP:
 
 
 def test_load_entry_points_registers_plugin(monkeypatch):
-    import oneuniverse._registry as rmod
+    import oneuniverse._core.registry as rmod
     sentinel = object()
     monkeypatch.setattr(
         rmod, "entry_points",
@@ -28,7 +28,7 @@ def test_load_entry_points_registers_plugin(monkeypatch):
 
 
 def test_builtin_wins_over_entry_point_of_same_name(monkeypatch):
-    import oneuniverse._registry as rmod
+    import oneuniverse._core.registry as rmod
     monkeypatch.setattr(
         rmod, "entry_points",
         lambda group=None: [_FakeEP("dup", object())],
