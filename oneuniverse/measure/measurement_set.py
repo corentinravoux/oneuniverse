@@ -46,7 +46,11 @@ class MeasurementSpec:
 def _region_range(table, label: str, n_regions: int, tracer: str) -> None:
     if table is None or table.num_rows == 0:
         return
-    mm = pc.min_max(table.column("region_id"))
+    col = table.column("region_id")
+    if col.null_count:
+        raise ValidationError(
+            f"{label} of {tracer!r} has {col.null_count} null region_id value(s)")
+    mm = pc.min_max(col)
     lo, hi = mm["min"].as_py(), mm["max"].as_py()
     if lo < 0 or hi >= n_regions:
         raise ValidationError(

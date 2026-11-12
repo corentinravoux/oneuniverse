@@ -6,6 +6,7 @@ consumer chooses the cosmology.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -104,7 +105,6 @@ class Product:
         return self.catalog.num_rows
 
     def with_extra(self, name: str, value) -> "Product":
-        import dataclasses
         return dataclasses.replace(self, extras={**self.extras, name: value})
 
 

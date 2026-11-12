@@ -181,6 +181,10 @@ class Regions:
 
         *nside* (default window.nside) must not exceed window.nside; the mask
         is coarsened by max (a coarse pixel is masked if any child is).
+
+        Regions are k-means clusters of pixel centres, so they are not
+        equal-area. The empty-cluster ValidationError only occurs when
+        n_regions is close to the number of masked pixels.
         """
         nside = window.nside if nside is None else int(nside)
         healpix._check_nside(nside)

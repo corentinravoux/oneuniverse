@@ -92,3 +92,10 @@ def test_measurement_set_negative_region_and_spec_validation():
     with pytest.raises(ValidationError): MeasurementSpec("t", ("g",), ("pk",), covariance="bogus")
     with pytest.raises(ValidationError): MeasurementSpec("t", "g", ("pk",))
     with pytest.raises(TypeError): dataclasses.replace(Product(_cat()), extras={"x": {"a": 1}})
+
+
+def test_measurement_set_rejects_null_region_id():
+    cat = _cat().set_column(4, "region_id", pa.array([0] * 9 + [None], pa.int32()))
+    r = Regions(1, True, 1, np.zeros(12, np.int32), "x")
+    with pytest.raises(ValidationError, match="null"):
+        MeasurementSet({"g": Product(cat)}, MeasurementSpec("m", ("g",), ("pk",)), r)
