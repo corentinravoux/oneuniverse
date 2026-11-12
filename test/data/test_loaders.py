@@ -87,7 +87,7 @@ def test_unknown_option_and_missing_file(tmp_path):
     with pytest.raises(TypeError):
         list(get_loader("desi_qso").batches(src.parent, bogus=1))
     with pytest.raises(NotFoundError, match="QSO_full.dat.fits"):
-        list(get_loader("desi_qso").batches(tmp_path / "empty"))
+        get_loader("desi_qso").batches(tmp_path / "empty")  # eager, no iteration
     assert get_loader("desi_qso").original_files(src.parent) == [src]
 
 
@@ -99,16 +99,34 @@ def test_fits_batches_native_types(tmp_path):
     assert t["SDSS_NAME"][0].as_py() == t["SDSS_NAME"][0].as_py().strip()
 
 
-def test_broken_entry_point_does_not_break_loading(monkeypatch):
+def test_broken_entry_points_skipped(monkeypatch):
+    from oneuniverse._core import registry as core_registry
     from oneuniverse.data.loaders import registry
 
     class _EP:
-        name = "broken_plugin"
+        def __init__(self, name, obj=None, exc=None):
+            self.name, self._obj, self._exc = name, obj, exc
 
         def load(self):
-            raise ImportError("boom")
+            if self._exc:
+                raise self._exc
+            return self._obj
 
-    monkeypatch.setattr(registry, "entry_points", lambda group: [_EP()])
-    with pytest.warns(RuntimeWarning, match="broken_plugin"):
+    class NoMeta(registry.SurveyLoader):
+        def batches(self, source, *, batch_size=1, **kw):
+            return iter(())
+
+    eps = [_EP("syn", exc=SyntaxError("bad")), _EP("nometa", NoMeta), _EP("notcls", object())]
+    monkeypatch.setattr(core_registry, "entry_points", lambda group=None: eps)
+    with pytest.warns(RuntimeWarning) as w:
         assert registry.load_entry_points() == []
-    assert "broken_plugin" not in list_surveys()
+    assert len(w) == 3
+    assert set(registry._registry.plugin_errors) == {"syn", "nometa", "notcls"}
+    assert set(list_surveys()) >= {"eboss_qso", "desi_qso"}
+    registry._registry.plugin_errors.clear()
+
+
+def test_leading_space_preserved():
+    from oneuniverse.data.loaders.base import _column_to_arrow
+    out = _column_to_arrow(np.array([b" ab  ", b"c"], dtype="S5"))
+    assert out.to_pylist() == [" ab", "c"]

@@ -35,7 +35,7 @@ class SurveyLoader(ABC):
 def _column_to_arrow(col: np.ndarray) -> pa.Array:
     col = np.asarray(col)
     if col.dtype.kind in "SU":
-        stripped = np.char.strip(col)
+        stripped = np.char.rstrip(col)
         if stripped.dtype.kind == "S":
             stripped = np.char.decode(stripped, "ascii", errors="replace")
         return pa.array(stripped.tolist(), pa.string())
@@ -78,8 +78,12 @@ class FitsCatalogLoader(SurveyLoader):
     def batches(self, source: Path, *, batch_size: int = 250_000, z_min: float | None = None,
                 z_max: float | None = None, **options) -> Iterator[pa.RecordBatch]:
         path = Path(source) / self.filename
-        if not path.exists():
+        if not path.exists():  # eager: raised at call time, not at first next()
             raise NotFoundError(f"expected FITS file not found: {path}")
+        return self._stream(path, batch_size, z_min, z_max, options)
+
+    def _stream(self, path: Path, batch_size: int, z_min: float | None,
+                z_max: float | None, options: dict) -> Iterator[pa.RecordBatch]:
         read = list(self.columns)
         if self.z_err_column is not None and self.z_err_column not in read:
             read.append(self.z_err_column)
