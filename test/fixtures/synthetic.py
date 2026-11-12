@@ -32,8 +32,9 @@ def _pdf_column(spec, z: np.ndarray, rng) -> pa.Array:
 
 def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
                           ra_range=(0.0, 360.0), dec_range=(-90.0, 90.0),
-                          z_range=(0.01, 2.0), with_pdf=None) -> pa.Table:
-    """Core POINT columns (no ``hpix32``) plus ``mag``; rows shuffled.
+                          z_range=(0.01, 2.0), with_pdf=None, with_shear: bool = False) -> pa.Table:
+    """Core POINT columns (no ``hpix32``) plus ``mag`` and an int ``quality`` (0/1/2,
+    mostly >= 1); rows shuffled. ``with_shear`` adds e1, e2, R11, R22, R_S, shear_weight.
 
     ``source_row`` is the index before shuffling, so file order differs from
     source order. ``dec`` is uniform in sin(dec) inside *dec_range*.
@@ -49,6 +50,19 @@ def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
     perm = rng.permutation(n)
     ra, dec, z, z_err, mag, src = (a[perm] for a in (ra, dec, z, z_err, mag, src))
     extra = {} if with_pdf is None else {with_pdf.value_column: _pdf_column(with_pdf, z, rng)}
+    # independent stream: leaves every pre-existing column value unchanged
+    r2 = np.random.default_rng([seed, 1])
+    quality = r2.choice(np.array([0, 1, 2], np.int8), size=n, p=[0.1, 0.45, 0.45])
+    shear = {}
+    if with_shear:
+        shear = {
+            "e1": r2.normal(0, 0.25, n).astype(np.float32),
+            "e2": r2.normal(0, 0.25, n).astype(np.float32),
+            "R11": r2.uniform(0.7, 0.9, n).astype(np.float32),
+            "R22": r2.uniform(0.7, 0.9, n).astype(np.float32),
+            "R_S": r2.uniform(0.0, 0.05, n).astype(np.float32),
+            "shear_weight": r2.uniform(0.9, 1.1, n),
+        }
     return pa.table({
         "ra": ra, "dec": dec, "z": z,
         "z_type": pa.array(["spec"] * n, pa.string()),
@@ -57,6 +71,8 @@ def synthetic_point_table(n: int, seed: int, *, survey: str = "synthetic",
         "survey": pa.array([survey] * n, pa.string()),
         "source_row": src,
         "mag": mag,
+        "quality": quality,
+        **shear,
         **extra,
     })
 
