@@ -15,6 +15,7 @@ import numpy as np
 import pyarrow as pa
 
 from oneuniverse._core.errors import FormatError, ValidationError
+from oneuniverse._core.healpix import cone_pixels, patch_pixels, radec_to_pix
 from oneuniverse.combine.weights import QualityMaskWeight, Weight
 from oneuniverse.data.schema import Geometry
 from oneuniverse.data.view import DatasetView
@@ -23,6 +24,8 @@ from oneuniverse.measure.product import CATALOG_CORE, RANDOMS_CORE, Product, Sig
 
 _WINDOW_NSIDE = 256     # footprint fallback resolution
 _REGION_NSIDE = 64      # upper bound of the jackknife-region resolution
+_MIN_POINTS_PER_PIXEL = 10
+_MIN_WINDOW_NSIDE = 8
 
 
 def _empty(stage: str) -> ValidationError:
@@ -60,21 +63,94 @@ def _regions_arg(window: Window, regions, seed: int) -> Regions:
     return _clamped_regions(window, int(regions), seed)
 
 
-def _window_for(ra: np.ndarray, dec: np.ndarray, mask: Window | None) -> Window:
-    if mask is not None:
-        if not isinstance(mask, Window):
-            raise ValidationError(f"mask must be a Window, got {type(mask).__name__}")
-        return mask
-    return Window.footprint(ra, dec, nside=_WINDOW_NSIDE)
+def _footprint(ra: np.ndarray, dec: np.ndarray) -> tuple[Window, dict]:
+    """Footprint window at the largest nside <= 256 (floor 8) holding >= 10 points
+    per occupied pixel on average."""
+    pix = np.unique(radec_to_pix(_WINDOW_NSIDE, ra, dec, nest=True))
+    nside = _WINDOW_NSIDE
+    while True:
+        occ = len(np.unique(pix >> (2 * int(np.log2(_WINDOW_NSIDE // nside)))))
+        if len(ra) / occ >= _MIN_POINTS_PER_PIXEL or nside <= _MIN_WINDOW_NSIDE:
+            break
+        nside //= 2
+    return (Window.footprint(ra, dec, nside=nside),
+            {"window_nside": nside, "points_per_pixel": float(len(ra) / occ)})
 
 
-def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: int) -> pa.Table:
+def _window_for(ra: np.ndarray, dec: np.ndarray, mask: Window | None, cone=None,
+                patch=None) -> tuple[Window, dict]:
+    if mask is None:
+        return _footprint(ra, dec)
+    if not isinstance(mask, Window):
+        raise ValidationError(f"mask must be a Window, got {type(mask).__name__}")
+    info = {"window_nside": mask.nside}
+    if cone is None and patch is None:
+        return mask, info
+    cover = np.zeros(12 * mask.nside ** 2, bool)
+    if cone is not None:
+        cover[cone_pixels(mask.nside, cone.ra, cone.dec, cone.radius, nest=mask.nest)] = True
+        if patch is not None:
+            both = np.zeros_like(cover)
+            both[patch_pixels(mask.nside, patch.ra_min, patch.ra_max, patch.dec_min,
+                              patch.dec_max, nest=mask.nest)] = True
+            cover &= both
+    else:
+        cover[patch_pixels(mask.nside, patch.ra_min, patch.ra_max, patch.dec_min,
+                           patch.dec_max, nest=mask.nest)] = True
+    win = Window(mask.nside, mask.nest, np.where(cover, mask.mask, 0.0), "mask", mask.systematics)
+    if not (win.mask > 0).any():
+        raise _empty("restricting the mask to the cone/patch")
+    return win, info
+
+
+def _in_selection(ra: np.ndarray, dec: np.ndarray, cone, patch) -> np.ndarray:
+    ok = np.ones(len(ra), bool)
+    if cone is not None:
+        ok &= cone.contains(ra, dec)
+    if patch is not None:
+        ok &= patch.contains(ra, dec)
+    return ok
+
+
+def _uniform_in_pixels(nside: int, pix: np.ndarray, rng) -> tuple[np.ndarray, np.ndarray]:
+    """One uniform (ra, dec) in degrees inside each NEST pixel of *pix*.
+
+    Rejection: uniform on the sphere in a cap around the pixel centre whose
+    radius is the maximal pixel radius; keep points that fall in the pixel.
+    """
+    r = hp.max_pixrad(nside) * 1.0001
+    cos_r = np.cos(r)
+    th0, ph0 = hp.pix2ang(nside, pix, nest=True)
+    ra = np.empty(len(pix)); dec = np.empty(len(pix))
+    todo = np.arange(len(pix))
+    while len(todo):
+        m = len(todo)
+        ct = 1.0 - rng.random(m) * (1.0 - cos_r)
+        st = np.sqrt(1.0 - ct * ct)
+        ph = rng.random(m) * 2 * np.pi
+        x, y, zc = st * np.cos(ph), st * np.sin(ph), ct
+        t, p = th0[todo], ph0[todo]
+        # rotate local frame (z toward the centre) by R_z(p) R_y(t)
+        xr = np.cos(t) * x + np.sin(t) * zc
+        zr = -np.sin(t) * x + np.cos(t) * zc
+        X, Y, Z = np.cos(p) * xr - np.sin(p) * y, np.sin(p) * xr + np.cos(p) * y, zr
+        lon, lat = hp.vec2ang(np.stack([X, Y, Z], 1), lonlat=True)
+        ok = hp.ang2pix(nside, lon, lat, nest=True, lonlat=True) == pix[todo]
+        ra[todo[ok]], dec[todo[ok]] = lon[ok], lat[ok]
+        todo = todo[~ok]
+    return ra, dec
+
+
+def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: int,
+                     cone=None, patch=None) -> pa.Table:
     """Exactly *n* random points following the window and the (1-D) n(z).
 
     Pixels are drawn with probability proportional to the mask; the position is
-    the centre of a uniformly chosen NEST child at nside*8; z comes from the
-    inverse CDF of ``nz.normalised()`` (uniform inside each bin); weight 1.
-    Deterministic for a seed.
+    a uniform point inside a uniformly chosen NEST child at nside*8 (rejection
+    in a cap around the child centre); z comes from the inverse CDF of
+    ``nz.normalised()`` (uniform inside each bin); weight 1. Points outside the
+    optional exact *cone* / *patch* or outside every region are rejected and
+    redrawn until exactly *n* remain. Deterministic for a seed.
     """
     n = int(n)
     if n < 1:
@@ -95,20 +171,24 @@ def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: 
     fine = window.nside * 8
     rng = np.random.default_rng(seed)
     chunks, have = [], 0
-    for _ in range(100):
-        need = n - have
+    rate = 1.0
+    drawn = 0
+    for _ in range(200):
+        need = int(min(max((n - have) / max(rate, 0.02), 16), 20 * n + 1000))
         pix = np.minimum(np.searchsorted(cdf_pix, rng.random(need), side="right"), len(mask) - 1)
         child = pix * 64 + rng.integers(0, 64, need)
-        ra, dec = hp.pix2ang(fine, child, nest=True, lonlat=True)
+        ra, dec = _uniform_in_pixels(fine, child, rng)
         u = rng.random(need)
         b = np.minimum(np.searchsorted(cdf_z, u, side="right"), len(edges) - 2)
         lo_cdf = np.where(b > 0, cdf_z[np.maximum(b - 1, 0)], 0.0)
         frac = (u - lo_cdf) / np.maximum(cdf_z[b] - lo_cdf, 1e-300)
         z = edges[b] + np.clip(frac, 0.0, 1.0) * (edges[b + 1] - edges[b])
         rid = regions.assign(ra, dec)
-        ok = rid >= 0
+        ok = (rid >= 0) & _in_selection(ra, dec, cone, patch)
         chunks.append((ra[ok], dec[ok], z[ok], rid[ok]))
         have += int(ok.sum())
+        drawn += need
+        rate = max(have / drawn, 1e-3)
         if have >= n:
             break
     else:
@@ -119,12 +199,14 @@ def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: 
 
 
 def randoms_from_view(view: DatasetView, *, z: tuple[float, float], window: Window,
-                      regions: Regions, n_max: int | None = None) -> pa.Table:
+                      regions: Regions, n_max: int | None = None, cone=None,
+                      patch=None) -> pa.Table:
     """Randoms ingested from a view: rows in *z* and inside *window*.
 
     Region ids are assigned from *regions* (rows outside are dropped); the
     ``weight`` column is used when present, else 1. *n_max* subsamples
-    deterministically (fixed seed, row order kept). No positions are carried.
+    deterministically (fixed seed, row order kept). Optional exact *cone* /
+    *patch* cut the randoms too. No positions are carried.
     """
     cols = ["ra", "dec", "z"] + (["weight"] if "weight" in view.columns else [])
     t = view.table(columns=cols, z=z)
@@ -134,7 +216,7 @@ def randoms_from_view(view: DatasetView, *, z: tuple[float, float], window: Wind
     w = _f64(t, "weight") if "weight" in cols else np.ones(t.num_rows)
     rid = regions.assign(ra, dec)
     keep = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(zz) & np.isfinite(w) \
-        & window.contains(ra, dec) & (rid >= 0)
+        & window.contains(ra, dec) & (rid >= 0) & _in_selection(ra, dec, cone, patch)
     ra, dec, zz, w, rid = ra[keep], dec[keep], zz[keep], w[keep], rid[keep]
     if len(ra) == 0:
         raise _empty("applying the window to the randoms")
@@ -155,9 +237,16 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
     """Build a point-set Product from an OUF view.
 
     Steps: scan (with positions) -> drop non-finite ra/dec/z -> quality cut ->
-    weight (None means 1) -> window (the given mask, else the footprint of the
-    selected points at nside 256) -> drop rows outside the window -> regions ->
+    weight (None means 1) -> window -> drop rows outside the window -> regions ->
     weighted spec_hist n(z) on *nz_edges* -> randoms -> provenance.
+
+    Window: the given *mask*; with a *cone* / *patch* it is restricted to the
+    selection (mask times the inclusive pixel cover), and randoms are cut with
+    the exact cone / patch. Without a mask the window is the footprint of the
+    selected points at the largest nside <= 256 (floor 8) with >= 10 points per
+    occupied pixel (recorded as provenance["window_nside"] and
+    ["points_per_pixel"]). A footprint window is only a fallback: sparse data
+    leave holes and the edge is ragged, so pass a survey mask for science.
 
     An int *regions* builds ``Regions.from_window(window, n, nside=min(64,
     window.nside), seed=seed)``: the region resolution is capped at nside 64,
@@ -165,7 +254,8 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
     still work (the clamped count is recorded as provenance["n_regions"]).
     Rows that fall in no region are dropped. randoms="generate" draws
     ``random_factor * n`` points (see :func:`generate_randoms`); a DatasetView
-    is ingested (see :func:`randoms_from_view`); "none" gives no randoms.
+    is ingested (see :func:`randoms_from_view`), capped at ``random_factor * n``
+    by a deterministic subsample; "none" gives no randoms.
     The catalog holds CATALOG_CORE then *keep_columns*.
     """
     if isinstance(keep_columns, str):
@@ -193,7 +283,7 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
         if t.num_rows == 0:
             raise _empty("the quality cut")
     ra, dec = _f64(t, "ra"), _f64(t, "dec")
-    window = _window_for(ra, dec, mask)
+    window, winfo = _window_for(ra, dec, mask, cone, patch)
     inside = window.contains(ra, dec)
     t = _filter(t, inside)
     if t.num_rows == 0:
@@ -215,12 +305,15 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
     counts, _ = np.histogram(zz, np.asarray(nz_edges, np.float64), weights=w)
     nz = Nz(nz_edges, counts, "spec_hist")
     if randoms == "generate":
-        rnd = generate_randoms(window, nz, reg, n=int(random_factor) * catalog.num_rows, seed=seed)
+        rnd = generate_randoms(window, nz, reg, n=int(random_factor) * catalog.num_rows, seed=seed,
+                               cone=cone, patch=patch)
         rsrc = "generated"
     elif randoms == "none":
         rnd, rsrc = None, "none"
     else:
-        rnd, rsrc = randoms_from_view(randoms, z=z, window=window, regions=reg), "ingested"
+        rnd = randoms_from_view(randoms, z=z, window=window, regions=reg, cone=cone, patch=patch,
+                                n_max=int(random_factor) * catalog.num_rows)
+        rsrc = "ingested"
     prov = {
         "dataset": view.manifest.survey.name, "version": list(view.version),
         "z": [float(z[0]), float(z[1])],
@@ -228,7 +321,7 @@ def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight 
         "window_source": window.source, "randoms_source": rsrc, "nz_method": nz.method,
         "n": catalog.num_rows, "seed": int(seed), "n_regions": reg.n_regions,
         "quality": list(quality) if quality is not None else None,
-        "keep_columns": keep_columns,
+        "keep_columns": keep_columns, **winfo,
     }
     return Product(catalog=catalog, randoms=rnd, window=window, nz=nz, provenance=prov)
 
@@ -238,8 +331,8 @@ def build_sightlines(view: DatasetView, *, z: tuple[float, float],
                      cone=None, patch=None, seed: int = 0) -> Sightline:
     """Build a Sightline product from a SIGHTLINE-geometry view.
 
-    Window and regions follow :func:`build_pointset` (footprint fallback at
-    nside 256, regions capped at nside 64). The OUF list column ``weight``
+    Window and regions follow :func:`build_pointset` (adaptive footprint
+    fallback, regions capped at nside 64). The OUF list column ``weight``
     becomes ``pixel_weight``; the scalar per-sightline ``weight`` is 1.
     """
     if view.geometry != Geometry.SIGHTLINE:
@@ -254,7 +347,7 @@ def build_sightlines(view: DatasetView, *, z: tuple[float, float],
     if t.num_rows == 0:
         raise _empty("dropping non-finite ra/dec/z")
     ra, dec = _f64(t, "ra"), _f64(t, "dec")
-    window = _window_for(ra, dec, mask)
+    window, winfo = _window_for(ra, dec, mask, cone, patch)
     t = _filter(t, window.contains(ra, dec))
     if t.num_rows == 0:
         raise _empty("applying the window")
@@ -274,5 +367,5 @@ def build_sightlines(view: DatasetView, *, z: tuple[float, float],
     })
     prov = {"dataset": view.manifest.survey.name, "version": list(view.version),
             "z": [float(z[0]), float(z[1])], "window_source": window.source,
-            "n": n, "seed": int(seed), "n_regions": reg.n_regions}
+            "n": n, "seed": int(seed), "n_regions": reg.n_regions, **winfo}
     return Sightline(catalog=catalog, window=window, provenance=prov)

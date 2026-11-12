@@ -114,3 +114,54 @@ def test_randoms_from_view_subsample(view):
     a = randoms_from_view(view, z=(0.3, 1.0), window=w, regions=r, n_max=100)
     b = randoms_from_view(view, z=(0.3, 1.0), window=w, regions=r, n_max=100)
     assert a.num_rows == 100 and a.equals(b) and (a["weight"].to_numpy() == 1).all()
+
+
+def test_generate_randoms_uniform_inside_pixels():
+    m = np.zeros(12 * 8**2, np.float32); m[100] = 1.0
+    w = Window.from_mask(m, nside=8); r = Regions.from_window(w, 1, nside=8)
+    nz = Nz([0.0, 1.0], [1.0], "spec_hist")
+    t = generate_randoms(w, nz, r, n=200_000, seed=1)
+    ra, dec = t["ra"].to_numpy(), t["dec"].to_numpy()
+    assert len(np.unique(np.stack([ra, dec], 1), axis=0)) == len(ra) and w.contains(ra, dec).all()
+    occ = np.bincount(radec_to_pix(256, ra, dec) - radec_to_pix(256, ra, dec).min())
+    occ = occ[occ > 0]
+    assert len(occ) == 1024
+    chi2 = ((occ - occ.mean()) ** 2 / occ.mean()).sum()
+    from scipy.stats import chi2 as chi2d
+    assert chi2d.sf(chi2, 1023) > 1e-3
+
+
+def test_no_duplicate_randoms_in_pipeline(view):
+    prod = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), random_factor=20, seed=2)
+    xy = np.stack([prod.randoms["ra"].to_numpy(), prod.randoms["dec"].to_numpy()], 1)
+    assert len(np.unique(xy, axis=0)) == len(xy)
+
+
+def test_footprint_is_adaptive_and_close_to_true_area(view):
+    prod = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), randoms="none")
+    true = np.degrees(1) ** 2 * np.radians(60) * (np.sin(np.radians(30)) - np.sin(np.radians(-10)))
+    area = prod.window.area_sr * np.degrees(1) ** 2
+    assert abs(area / true - 1) < 0.15
+    assert prod.provenance["window_nside"] == prod.window.nside < 256 and prod.provenance["points_per_pixel"] >= 10
+    rng = np.random.default_rng(0)
+    ra = rng.uniform(100, 160, 20_000); dec = np.degrees(np.arcsin(rng.uniform(np.sin(np.radians(-10)), np.sin(np.radians(30)), 20_000)))
+    assert prod.window.contains(ra, dec).mean() >= 0.95
+
+
+def test_mask_with_cone_restricts_window_and_randoms(view):
+    from oneuniverse._core.geometry import Cone
+    cone = Cone(130.0, 10.0, 8.0)
+    full = Window.from_mask(np.ones(12 * 32**2, np.float32), nside=32)
+    prod = build_pointset(view, z=(0.1, 1.5), nz_edges=np.linspace(0.1, 1.5, 5), mask=full, cone=cone, regions=6, random_factor=10)
+    assert cone.contains(prod.randoms["ra"].to_numpy(), prod.randoms["dec"].to_numpy()).all()
+    assert prod.randoms.num_rows == 10 * prod.n
+    assert prod.window.fraction < 0.1
+    ing = build_pointset(view, z=(0.1, 1.5), nz_edges=np.linspace(0.1, 1.5, 5), mask=full, cone=cone, regions=6, randoms=view)
+    assert cone.contains(ing.randoms["ra"].to_numpy(), ing.randoms["dec"].to_numpy()).all()
+
+
+def test_ingested_randoms_capped_at_factor(view):
+    prod = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), randoms=view, random_factor=1)
+    assert prod.randoms.num_rows == prod.n
+    small = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), randoms=view, random_factor=1, quality=("quality", ">=", 2))
+    assert small.randoms.num_rows == small.n < prod.n
