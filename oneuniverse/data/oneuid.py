@@ -77,9 +77,10 @@ def build_oneuid(db, datasets: Sequence[str], *, rules: CrossMatchRules,
     two members of the same *dataset* sharing an oneuid. A dataset is never
     matched against itself. Datasets are used in sorted name order.
 
-    Memory: ra, dec, z, z_type, source_row and hpix32 plus positions of **all**
-    rows of the chosen datasets are held in memory at once (measured peak
-    measured: whole 2 x 1M test, incl. generating the data, peaks at 0.97 GB RSS, i.e. under 500 bytes per row).
+    Memory: ra, dec, z, z_type, source_row, hpix32 and positions of **all** rows
+    of the chosen datasets are held in memory at once. Measured build-only cost
+    is about 200 bytes per row above the pre-build RSS (2 x 1M rows: +392 MB);
+    the whole slow test, including data generation, peaks at 0.97 GB.
     """
     names = sorted(set(datasets))
     if not names:

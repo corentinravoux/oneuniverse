@@ -71,20 +71,16 @@ def test_oneuid_row_identity_regression(db2):
     q = db2.oneuid_query("ab")
     sample = q.index.table.slice(0, 2_000)
     sample = sample.set_column(1, "dataset", sample["dataset"].cast(pa.string()))
-    hyd = q.hydrate_table(sample["oneuid"].to_numpy(), columns=["object_id", "source_row", "mag"])
+    hyd = q.hydrate_table(sample["oneuid"].to_numpy(),
+                          columns=["object_id", "source_row", "mag", "ra", "dec", "z"])
     for ds_name in ["a", "b"]:
         part = hyd.filter(pc.field("dataset") == ds_name)
         src = sample.filter(pc.field("dataset") == ds_name).select(
-            ["oneuid", "source_row"])
+            ["oneuid", "source_row", "ra", "dec", "z"])
         joined = part.join(src, keys=["oneuid"], right_suffix="_idx")
         assert joined.num_rows == src.num_rows
-        assert np.array_equal(joined["source_row"].to_numpy(),
-                              joined["source_row_idx"].to_numpy())
-        idx_rows = sample.filter(pc.field("dataset") == ds_name)
-        jj = joined.join(idx_rows.select(["oneuid", "ra", "dec", "z"]), keys=["oneuid"],
-                         right_suffix="_idx")
-        hy = hyd.filter(pc.field("dataset") == ds_name)
-        assert hy.num_rows == jj.num_rows
+        for c in ("source_row", "ra", "dec", "z"):
+            assert np.array_equal(joined[c].to_numpy(), joined[c + "_idx"].to_numpy())
         assert np.array_equal(joined["object_id"].to_numpy(),
                               stable_object_id(ds_name, joined["source_row"].to_numpy()))
 
@@ -188,3 +184,17 @@ def test_mixed_column_types_and_errors(tmp_path):
         q.select(datasets=["zzz"])
     empty = q.hydrate_table([-1], columns=["mag", "z"])
     assert empty.num_rows == 0 and empty.schema.field("mag").type == pa.float64()
+
+
+def test_database_as_of_defaults_index_time(tmp_path):
+    db = _make_db(tmp_path, 2_000, 500)
+    assert db.as_of_time is None
+    db.build_oneuid(["a"], rules=CrossMatchRules(), name="x")
+    t0 = datetime.now(UTC)
+    time.sleep(0.01)
+    db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="x")
+    assert db.load_oneuid("x").datasets == ["a", "b"]
+    past = db.as_of(t0)
+    assert past.as_of_time == t0
+    assert past.load_oneuid("x").datasets == ["a"]
+    assert past.oneuid_query("x").index.datasets == ["a"]
