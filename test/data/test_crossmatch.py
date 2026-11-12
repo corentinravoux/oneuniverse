@@ -133,3 +133,49 @@ def test_components_labels_first_appearance():
     survey_of = np.array([0, 1, 0, 1], np.int16)
     lab = components(4, np.array([2]), np.array([3]), np.array([1.0]), survey_of=survey_of, allow_same_survey_merge=False)
     assert lab.tolist() == [0, 1, 2, 2]
+
+
+def test_separate_rules_normalised_and_roundtrip():
+    r1 = CrossMatchRules(separate=(("b", "a"), ("c", "d")))
+    r2 = CrossMatchRules(separate=(("d", "c"), ("a", "b"), ("a", "b")))
+    assert r1.hash() == r2.hash() and r1.to_dict() == r2.to_dict()
+    assert CrossMatchRules.from_dict(r1.to_dict()).hash() == r1.hash()
+    assert r1.hash() != CrossMatchRules().hash()
+    with pytest.raises(ValidationError):
+        CrossMatchRules(separate=(("a",),))
+    with pytest.raises(ValidationError):
+        CrossMatchRules(separate=(("a", "a"),))
+
+
+def test_components_forbid_blocks_transitive_merge():
+    survey_of = np.array([0, 1, 2], np.int16)
+    left, right, sep = np.array([0, 1]), np.array([1, 2]), np.array([0.1, 0.2])
+    lab = components(3, left, right, sep, survey_of=survey_of, allow_same_survey_merge=False)
+    assert len(set(lab)) == 1
+    forbid = np.array([1 << 2, 0, 1 << 0], np.int64)
+    lab = components(3, left, right, sep, survey_of=survey_of, allow_same_survey_merge=False,
+                     forbid=forbid)
+    assert lab[0] == lab[1] and lab[2] != lab[1]
+    # forbid is also honoured when same-survey merges are allowed
+    lab = components(3, left, right, sep, survey_of=survey_of, allow_same_survey_merge=True,
+                     forbid=forbid)
+    assert lab[0] == lab[1] and lab[2] != lab[1]
+
+
+def test_null_z_type_is_none_code():
+    from oneuniverse.data.crossmatch import _prepare
+    from oneuniverse.data.schema import register_z_type, z_types
+    name = "aaa_test"
+    if name not in z_types():
+        register_z_type(name)
+    try:
+        names = sorted(z_types())
+        assert names.index(name) < names.index("none")
+        ra, dec = [10.0, 20.0], [5.0, 5.0]
+        t = pa.table({"ra": ra, "dec": dec, "z": [0.1, 0.2], "z_type": pa.array([None, "spec"], pa.string()),
+                      "hpix32": radec_to_pix(32, ra, dec)})
+        _, _, code, _ = _prepare(t, names)
+        assert code[0] == names.index("none") and code[1] == names.index("spec")
+    finally:
+        from oneuniverse.data import schema
+        schema._registered_z_types.discard(name)

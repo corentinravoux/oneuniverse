@@ -15,14 +15,14 @@ from oneuniverse.data.writer import write_dataset
 _ARC = 1.0 / 3600.0
 
 
-def _write(root, name, kind, ra, dec, z, seed):
+def _write(root, name, kind, ra, dec, z, seed, **kw):
     n = len(ra)
     t = synthetic_point_table(n, seed, survey=name)
     src = t["source_row"].to_numpy()
     for c, v in (("ra", ra), ("dec", dec), ("z", z)):
         t = t.set_column(t.schema.get_field_index(c), c, pa.array(v[src]))
     write_dataset(t, root / name, geometry=Geometry.POINT, survey=SurveyMeta(name, kind),
-                  loader=LoaderInfo("test", "1", {}), partition_nside=4)
+                  loader=LoaderInfo("test", "1", {}), partition_nside=4, **kw)
 
 
 def _make(root):
@@ -96,9 +96,44 @@ def test_dz_cut(db_hosts):
     assert l.table.num_rows == 480
 
 
-def test_kind_guard(db_hosts):
-    with pytest.raises(ValidationError, match="kind"):
-        db_hosts.build_links(parents=["sne"], children=["hosts"], rules=SubobjectRules("galaxy", "snia"), name="bad")
+def test_kinds_are_labels_recorded_in_meta(db_hosts):
+    # kinds are descriptive: the dataset lists are authoritative, nothing is checked
+    l = db_hosts.build_links(parents=["sne"], children=["hosts"], rules=SubobjectRules(
+        "galaxy", "snia", dz_tol=None), name="swapped")
+    assert l.meta["rules"]["parent_kind"] == "galaxy" and l.meta["rules"]["child_kind"] == "snia"
+    assert l.meta["parents"] == ["sne"] and l.meta["children"] == ["hosts"]
+
+
+def test_strings_rejected_as_name_lists(db_hosts):
+    r = SubobjectRules("galaxy", "snia", dz_tol=None)
+    with pytest.raises(ValidationError, match="list of names"):
+        db_hosts.build_links(parents="hosts", children=["sne"], rules=r)
+    with pytest.raises(ValidationError, match="list of names"):
+        db_hosts.build_links(parents=["hosts"], children="sne", rules=r)
+    with pytest.raises(ValidationError, match="list of names"):
+        db_hosts.chain([0], "host")
+
+
+def test_links_refuse_stale_dataset(tmp_path):
+    db, _, _ = _make(tmp_path)
+    db.build_oneuid(["hosts", "sne"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None))
+    rng = np.random.default_rng(1)
+    n = 50
+    _write(tmp_path, "sne", "snia", rng.uniform(0, 360, n), rng.uniform(-10, 10, n),
+           rng.uniform(0.1, 0.2, n), 9, overwrite=True)
+    with pytest.raises(FormatError, match="dataset sne changed since ONEUID default"):
+        Database(tmp_path).build_links(parents=["hosts"], children=["sne"],
+                                       rules=SubobjectRules("galaxy", "snia", dz_tol=None))
+
+
+def test_pinned_database_is_read_only(db_hosts):
+    from datetime import UTC, datetime
+    past = db_hosts.as_of(datetime.now(UTC))
+    with pytest.raises(ValidationError, match="read-only"):
+        past.build_links(parents=["hosts"], children=["sne"],
+                         rules=SubobjectRules("galaxy", "snia", dz_tol=None))
+    with pytest.raises(ValidationError, match="read-only"):
+        past.build_oneuid(["hosts"], rules=CrossMatchRules())
 
 
 def test_dataset_not_in_index(db_hosts):
@@ -209,13 +244,52 @@ def test_multi_member_objects(tmp_path):
     assert (t["confidence"].to_numpy() == 1.0).all()
 
 
-def test_self_merged_counted_and_empty_raises(db_hosts):
+def test_self_merged_raises_unless_allowed(db_hosts):
     db = db_hosts
     db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(sky_tol_arcsec=1.0, dz_tol=None))
-    l = db.build_links(parents=["hosts"], children=["sne"], rules=SubobjectRules(
-        "galaxy", "snia", dz_tol=None), name="h")
+    rules = SubobjectRules("galaxy", "snia", dz_tol=None)
+    with pytest.raises(ValidationError, match="separate=") as ei:
+        db.build_links(parents=["hosts"], children=["sne"], rules=rules, name="h")
+    assert "allow_self_merged" in str(ei.value)
+    l = db.build_links(parents=["hosts"], children=["sne"], rules=rules, name="h",
+                       allow_self_merged=True)
     # 480 sne merged with their host, 20 with one twin: 500 self objects; the other twin stays a parent
     assert l.meta["n_self_merged"] == 500 and l.meta["n_links"] == 20
+    assert l.meta["allow_self_merged"] is True
     with pytest.raises(ValidationError, match="merge parents with children"):
         db.build_links(parents=["clusters"], children=["hosts"], rules=SubobjectRules(
-            "cluster", "galaxy", dz_tol=None), name="c")
+            "cluster", "galaxy", dz_tol=None), name="c", allow_self_merged=True)
+
+
+def test_separate_gives_full_links(db_hosts):
+    db = db_hosts
+    db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(
+        sky_tol_arcsec=1.0, dz_tol=None, separate=(("hosts", "sne"),)))
+    idx = db.load_oneuid().table
+    ds = idx["dataset"].cast(pa.string()).to_numpy(zero_copy_only=False)
+    oid = idx["oneuid"].to_numpy()
+    assert not set(oid[ds == "hosts"]) & set(oid[ds == "sne"])
+    rules = SubobjectRules("galaxy", "snia", dz_tol=None)
+    l = db.build_links(parents=["hosts"], children=["sne"], rules=rules, name="h")
+    assert l.meta["n_self_merged"] == 0 and l.table.num_rows == 480
+    l2 = db.build_links(parents=["hosts"], children=["sne"], name="h2", rules=SubobjectRules(
+        "galaxy", "snia", dz_tol=None, accept_ambiguous=True))
+    assert l2.table.num_rows == 520
+
+
+def test_separate_blocks_transitive_merge(tmp_path):
+    s = 1.0 / 3600
+    for k, (nm, dec) in enumerate((("x", 0.0), ("y", 0.5 * s), ("z", 1.0 * s))):
+        _write(tmp_path, nm, "galaxy", np.array([10.0]), np.array([dec]), np.array([0.1]), k + 1)
+    db = Database(tmp_path)
+    r = CrossMatchRules(sky_tol_arcsec=0.6, dz_tol=None)
+    def ids(rules):
+        t = db.build_oneuid(["x", "y", "z"], rules=rules).table
+        ds = t["dataset"].cast(pa.string()).to_pylist()
+        return dict(zip(ds, t["oneuid"].to_pylist()))
+    m = ids(r)
+    assert m["x"] == m["y"] == m["z"]
+    m = ids(CrossMatchRules(sky_tol_arcsec=0.6, dz_tol=None, separate=(("z", "x"),)))
+    assert m["x"] != m["z"] and len({m["x"], m["y"], m["z"]}) == 2
+    with pytest.raises(ValidationError, match="separate"):
+        db.build_oneuid(["x", "y"], rules=CrossMatchRules(separate=(("x", "q"),)))

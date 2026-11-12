@@ -20,7 +20,9 @@ import pyarrow as pa
 
 from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.healpix import radec_to_pix
+from oneuniverse.data._names import name_list
 from oneuniverse.data.crossmatch import CrossMatchRules, match_pair
+from oneuniverse.data.oneuid import check_dataset_version, check_writable
 from oneuniverse.data.sidecar import VersionedSidecar
 
 __all__ = ["LINKS_SCHEMA", "SubobjectLinks", "SubobjectRules", "build_links", "chain", "load_links"]
@@ -39,7 +41,11 @@ _RELATIONS = ("contains", "associated", "caused")
 
 @dataclass(frozen=True, slots=True)
 class SubobjectRules:
-    """Which datasets are parents / children and how a child is matched to a parent.
+    """How a child is matched to a parent.
+
+    ``parent_kind`` / ``child_kind`` are descriptive labels recorded in the
+    link meta; they are not checked against the datasets, whose lists in
+    :func:`build_links` are authoritative.
 
     ``dz_tol=None`` disables the redshift cut. A child with several candidate
     parents is dropped unless ``accept_ambiguous``, in which case each of its
@@ -94,29 +100,33 @@ def _rows(index_table: pa.Table, ds_names: np.ndarray, datasets: Sequence[str]):
 
 
 def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: SubobjectRules,
-                name: str = "default", oneuid_name: str = "default") -> SubobjectLinks:
+                name: str = "default", oneuid_name: str = "default",
+                allow_self_merged: bool = False) -> SubobjectLinks:
     """Match *children* to *parents* on ONEUID index *oneuid_name* and publish link set *name*.
 
     Self-links (parent and child in the same oneuid) are excluded before the
     ambiguity count; ``meta["n_self_merged"]`` counts the distinct objects
-    concerned, and an empty result caused by them raises ValidationError.
+    concerned. If it is non-zero, ValidationError is raised unless
+    ``allow_self_merged=True`` (recorded in meta): the ONEUID merged parents
+    with children, so rebuild it with
+    ``CrossMatchRules(separate=((parent_ds, child_ds), ...))`` or a smaller
+    ``sky_tol``.
 
-    Raises ValidationError if a dataset is not in the index or its
-    ``survey.kind`` differs from ``rules.parent_kind`` / ``rules.child_kind``.
+    Raises ValidationError if a dataset is not in the index, or the Database is
+    pinned with ``as_of``; FormatError if a parent or child dataset changed
+    since the ONEUID was built.
     """
-    parents, children = sorted(set(parents)), sorted(set(children))
+    check_writable(db, "build_links")
+    parents = sorted(set(name_list(parents, "parents")))
+    children = sorted(set(name_list(children, "children")))
     if not parents or not children:
         raise ValidationError("build_links needs at least one parent and one child dataset")
-    for ds, want, role in ([(d, rules.parent_kind, "parent") for d in parents]
-                           + [(d, rules.child_kind, "child") for d in children]):
-        kind = db.manifest(ds).survey.kind  # NotFoundError for unknown names
-        if kind != want:
-            raise ValidationError(
-                f"{role} dataset {ds!r} has kind {kind!r}, rules expect {role}_kind {want!r}")
     idx = db.load_oneuid(oneuid_name)
     missing = [d for d in parents + children if d not in idx.datasets]
     if missing:
         raise ValidationError(f"datasets {missing} are not members of ONEUID {oneuid_name!r}")
+    for ds in parents + children:
+        check_dataset_version(db, idx, ds)
     d = idx.table["dataset"].combine_chunks()
     ds_names = np.asarray(d.dictionary.to_pylist(), dtype=object)[
         d.indices.to_numpy(zero_copy_only=False)]
@@ -127,6 +137,11 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
     sep, dz = pairs.sep_arcsec, pairs.dz
     keep = pid != cid  # never link an object to itself (before the ambiguity count)
     n_self = int(np.unique(pid[~keep]).size)  # distinct objects that merged parent with child
+    if n_self and not allow_self_merged:
+        raise ValidationError(
+            f"{n_self} object(s) of ONEUID {oneuid_name!r} merge parents with children; rebuild "
+            f"the ONEUID with CrossMatchRules(separate=((parent_ds, child_ds), ...)) or a smaller "
+            f"sky_tol, or pass allow_self_merged=True")
     pid, cid, sep, dz = pid[keep], cid[keep], sep[keep], dz[keep]
     # collapse multi-member objects: one link per (child, parent) oneuid pair
     order = np.lexsort((pid, cid))
@@ -155,11 +170,13 @@ def build_links(db, *, parents: Sequence[str], children: Sequence[str], rules: S
     if table.num_rows == 0 and n_self:
         raise ValidationError(
             f"no links: {n_self} object(s) of ONEUID {oneuid_name!r} merge parents with children "
-            f"(self-links are excluded); rebuild the ONEUID with a smaller sky_tol or separate rules")
+            f"(self-links are excluded); rebuild the ONEUID with "
+            f"CrossMatchRules(separate=...) or a smaller sky_tol")
     meta = {
         "rules": rules.to_dict(), "rules_hash": rules.hash(), "oneuid_name": oneuid_name,
         "oneuid_version": idx.meta["version"], "parents": parents, "children": children,
         "n_links": table.num_rows, "n_ambiguous_children": n_amb, "n_self_merged": n_self,
+        "allow_self_merged": bool(allow_self_merged),
     }
     VersionedSidecar(db.root, _KIND, name).write(table, meta)
     return load_links(db, name)
@@ -214,6 +231,7 @@ def chain(db, starts: Sequence[int], names: Sequence[str], *, as_of=None) -> np.
     different ONEUID indexes or versions. Each link set must be built on the
     ONEUID version live at *as_of* (FormatError otherwise, see :func:`load_links`).
     """
+    names = name_list(names, "names")
     cur = np.asarray(starts, dtype=np.int64).ravel()
     if not names:
         return cur

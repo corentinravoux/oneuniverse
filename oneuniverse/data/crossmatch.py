@@ -51,6 +51,7 @@ class CrossMatchRules:
     dz_tol_by_pair: tuple[tuple[str, str, float], ...] = ()
     reject_pairs: tuple[tuple[str, str], ...] = ()
     allow_same_survey_merge: bool = False
+    separate: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not (self.sky_tol_arcsec > 0):
@@ -63,6 +64,15 @@ class CrossMatchRules:
         for t in self.reject_pairs:
             if len(t) != 2:
                 raise ValidationError(f"bad reject_pairs entry {t!r}")
+        for t in self.separate:
+            if isinstance(t, str) or len(t) != 2 or not all(isinstance(x, str) for x in t):
+                raise ValidationError(f"bad separate entry {t!r}: expected (dataset, dataset)")
+            if t[0] == t[1]:
+                raise ValidationError(f"separate entry {t!r} names the same dataset twice")
+
+    def separate_pairs(self) -> list[tuple[str, str]]:
+        """Separated dataset pairs, each ordered, deduplicated, sorted."""
+        return sorted({_norm_pair(a, b) for a, b in self.separate})
 
     def to_dict(self) -> dict:
         return {
@@ -71,6 +81,7 @@ class CrossMatchRules:
             "dz_tol_by_pair": [list(t) for t in self.dz_tol_by_pair],
             "reject_pairs": [list(t) for t in self.reject_pairs],
             "allow_same_survey_merge": bool(self.allow_same_survey_merge),
+            "separate": [list(t) for t in self.separate_pairs()],
         }
 
     @classmethod
@@ -81,6 +92,7 @@ class CrossMatchRules:
             dz_tol_by_pair=tuple((str(a), str(b), float(t)) for a, b, t in d["dz_tol_by_pair"]),
             reject_pairs=tuple((str(a), str(b)) for a, b in d["reject_pairs"]),
             allow_same_survey_merge=bool(d["allow_same_survey_merge"]),
+            separate=tuple((str(a), str(b)) for a, b in d.get("separate", [])),
         )
 
     def hash(self) -> str:
@@ -150,8 +162,17 @@ def _prepare(t: pa.Table, names: list[str]):
     if bad:
         raise SchemaError(f"unknown z_type values {bad!r}")
     remap = np.array([lookup[v] for v in dic], dtype=np.int64)
-    idx = zt.indices.fill_null(0).to_numpy(zero_copy_only=False).astype(np.int64)
-    code = remap[idx] if len(remap) else np.empty(0, np.int64)
+    none_code = lookup.get("none", 0)  # a null z_type means "none", not code 0
+    idx = zt.indices.to_numpy(zero_copy_only=False)
+    if zt.null_count:
+        isnull = np.asarray(zt.is_null())
+        idx = np.where(isnull, 0, np.nan_to_num(idx, nan=0)).astype(np.int64)
+    else:
+        isnull = None
+        idx = idx.astype(np.int64)
+    code = remap[idx] if len(remap) else np.empty(len(idx), np.int64)
+    if isnull is not None:
+        code = np.where(isnull, none_code, code)
     hpix = np.asarray(cols[4].to_numpy(), dtype=np.int64)
     r, d = np.radians(ra), np.radians(dec)
     xyz = np.column_stack([np.cos(d) * np.cos(r), np.cos(d) * np.sin(r), np.sin(d)])
@@ -230,16 +251,20 @@ def _renumber(root: np.ndarray) -> np.ndarray:
 
 
 def components(n: int, left, right, sep_arcsec, *, survey_of: np.ndarray,
-               allow_same_survey_merge: bool) -> np.ndarray:
+               allow_same_survey_merge: bool, forbid: np.ndarray | None = None) -> np.ndarray:
     """Label connected rows 0..k-1 (by first appearance in row order).
 
     With ``allow_same_survey_merge=False`` edges are taken greedily in order of
     increasing separation (ties by left, right) and an edge is skipped when the
     two groups it would join already share a survey.
+
+    ``forbid`` (optional, int64, indexed by survey code) gives for each survey
+    the bitmask of survey codes it must never share a component with; this is
+    enforced on the merged groups, so transitive merges are blocked too.
     """
     left = np.asarray(left, np.int64)
     right = np.asarray(right, np.int64)
-    if allow_same_survey_merge:
+    if allow_same_survey_merge and forbid is None:
         g = coo_matrix((np.ones(len(left), np.int8), (left, right)), shape=(n, n))
         _, lab = connected_components(g, directed=False)
         return _renumber(lab)
@@ -249,6 +274,13 @@ def components(n: int, left, right, sep_arcsec, *, survey_of: np.ndarray,
     if codes.size and (codes.min() < 0 or codes.max() >= 63):
         raise ValidationError("survey codes must be in [0, 63) for the bitmask")
     surveys = np.left_shift(np.int64(1), codes)  # bit = survey code
+    if forbid is not None:
+        fb = np.asarray(forbid, np.int64)
+        if codes.size and fb.size <= codes.max():
+            raise ValidationError("forbid must have one entry per survey code")
+        forb = fb[codes] if codes.size else np.empty(0, np.int64)
+    else:
+        forb = None
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -258,12 +290,20 @@ def components(n: int, left, right, sep_arcsec, *, survey_of: np.ndarray,
 
     for k in order.tolist():
         ra_, rb_ = find(int(left[k])), find(int(right[k]))
-        if ra_ == rb_ or (int(surveys[ra_]) & int(surveys[rb_])):
+        if ra_ == rb_:
+            continue
+        if not allow_same_survey_merge and (int(surveys[ra_]) & int(surveys[rb_])):
+            continue
+        if forb is not None and ((int(surveys[ra_]) & int(forb[rb_]))
+                                 or (int(surveys[rb_]) & int(forb[ra_]))):
             continue
         if ra_ > rb_:
             ra_, rb_ = rb_, ra_
         parent[rb_] = ra_
         surveys[ra_] |= surveys[rb_]
         surveys[rb_] = 0
+        if forb is not None:
+            forb[ra_] |= forb[rb_]
+            forb[rb_] = 0
     roots = np.array([find(i) for i in range(n)], np.int64)
     return _renumber(roots)

@@ -23,6 +23,7 @@ from oneuniverse._core.errors import (
     ValidationError,
 )
 from oneuniverse._core.geometry import Cone, SkyPatch, ZRange
+from oneuniverse.data._names import name_list
 from oneuniverse.data.crossmatch import CrossMatchRules, components, match_pair
 from oneuniverse.data.sidecar import VersionedSidecar
 
@@ -41,6 +42,26 @@ ONEUID_SCHEMA = pa.schema([
 ])
 
 _KIND = "oneuid"
+
+
+def check_dataset_version(db, index, name: str):
+    """Return the view of *name*; FormatError if it changed since *index* was built."""
+    recorded = index.meta["dataset_versions"].get(name)
+    if name not in db:
+        raise FormatError(
+            f"dataset {name} changed since ONEUID {index.name} was built "
+            f"(not present in this Database); rebuild the index")
+    view = db[name]
+    if recorded is None or list(view.version) != list(recorded):
+        raise FormatError(
+            f"dataset {name} changed since ONEUID {index.name} was built; rebuild the index")
+    return view
+
+
+def check_writable(db, what: str) -> None:
+    if getattr(db, "as_of_time", None) is not None:
+        raise ValidationError(
+            f"cannot {what}: read-only: this Database is pinned to {db.as_of_time.isoformat()}")
 _MATCH_COLUMNS = ["ra", "dec", "z", "z_type", "source_row", "hpix32"]
 
 
@@ -82,12 +103,20 @@ def build_oneuid(db, datasets: Sequence[str], *, rules: CrossMatchRules,
     is about 200 bytes per row above the pre-build RSS (2 x 1M rows: +392 MB);
     the whole slow test, including data generation, peaks at 0.97 GB.
     """
-    names = sorted(set(datasets))
+    check_writable(db, "build_oneuid")
+    names = sorted(set(name_list(datasets, "datasets")))
     if not names:
         raise ValidationError("build_oneuid needs at least one dataset")
     if len(names) > 32767:
         raise ValidationError("too many datasets")
     views = [db[n] for n in names]  # NotFoundError for unknown names
+    sep_pairs = rules.separate_pairs()
+    unknown = sorted({d for pr in sep_pairs for d in pr} - set(names))
+    if unknown:
+        raise ValidationError(
+            f"separate names datasets {unknown} that are not among the build's datasets {names}")
+    separated = {(names.index(a), names.index(b)) for a, b in sep_pairs}
+    separated |= {(j, i) for i, j in separated}
     versions = {n: list(v.version) for n, v in zip(names, views)}
     tables = [_load_dataset(v, n) for v, n in zip(views, names)]
     sizes = [t.num_rows for t in tables]
@@ -96,6 +125,8 @@ def build_oneuid(db, datasets: Sequence[str], *, rules: CrossMatchRules,
     L, R, S = [], [], []
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
+            if (i, j) in separated:
+                continue
             p = match_pair(tables[i], tables[j], rules, block_nside=block_nside)
             L.append(p.left + off[i])
             R.append(p.right + off[j])
@@ -104,8 +135,13 @@ def build_oneuid(db, datasets: Sequence[str], *, rules: CrossMatchRules,
     right = np.concatenate(R) if R else np.empty(0, np.int64)
     sep = np.concatenate(S) if S else np.empty(0, np.float64)
     dcode = np.repeat(np.arange(len(names), dtype=np.int16), sizes)
+    forbid = None
+    if separated:
+        forbid = np.zeros(len(names), np.int64)
+        for i, j in separated:
+            forbid[i] |= np.int64(1) << np.int64(j)
     label = components(total, left, right, sep, survey_of=dcode,
-                       allow_same_survey_merge=rules.allow_same_survey_merge)
+                       allow_same_survey_merge=rules.allow_same_survey_merge, forbid=forbid)
     del left, right, sep
     full = pa.concat_tables(tables).combine_chunks()
     del tables
@@ -178,7 +214,7 @@ class OneuidIndex:
 
     def restrict_to(self, datasets: Sequence[str]) -> OneuidIndex:
         """Keep only rows of *datasets*; oneuid values are unchanged."""
-        keep = sorted(set(datasets))
+        keep = sorted(set(name_list(datasets, "datasets")))
         missing = [d for d in keep if d not in self.meta["datasets"]]
         if missing:
             raise ValidationError(f"datasets {missing} not in index {self.name!r}")
@@ -230,6 +266,7 @@ class OneuidQuery:
             else:
                 mask &= z.contains(t["z"].to_numpy())
         if datasets is not None:
+            datasets = name_list(datasets, "datasets")
             unknown = [d for d in datasets if d not in self.index.datasets]
             if unknown:
                 raise NotFoundError(f"datasets {unknown} not in ONEUID {self.index.name!r}")
@@ -242,13 +279,6 @@ class OneuidQuery:
         t = self.index.table
         return t.filter(pa.array(np.isin(t["oneuid"].to_numpy(), ids)))
 
-    def _check_version(self, name: str, view) -> None:
-        recorded = self.index.meta["dataset_versions"].get(name)
-        if recorded is None or list(view.version) != list(recorded):
-            raise FormatError(
-                f"dataset {name} changed since ONEUID {self.index.name} was built; "
-                f"rebuild the index")
-
     def hydrate(self, oneuids, *, columns=None, datasets: Sequence[str] | None = None,
                 batch_size: int = 100_000) -> Iterator[pa.Table]:
         """Yield the dataset rows of *oneuids*, per dataset and per batch.
@@ -260,13 +290,16 @@ class OneuidQuery:
         """
         if batch_size < 1:
             raise ValidationError("batch_size must be >= 1")
-        if columns is not None and {"oneuid", "dataset"} & set(columns):
-            raise ValidationError("columns must not include 'oneuid' or 'dataset'")
+        if columns is not None:
+            columns = name_list(columns, "columns")
+            if {"oneuid", "dataset"} & set(columns):
+                raise ValidationError("columns must not include 'oneuid' or 'dataset'")
         rows = self.rows(oneuids)
         ds_col = rows["dataset"].combine_chunks()
         ds_all = np.asarray(ds_col.dictionary.to_pylist(), dtype=object)[
             ds_col.indices.to_numpy(zero_copy_only=False)]
-        wanted = sorted(set(self.index.datasets if datasets is None else datasets))
+        wanted = sorted(set(self.index.datasets if datasets is None
+                            else name_list(datasets, "datasets")))
         unknown = [d for d in wanted if d not in self.index.datasets]
         if unknown:
             raise NotFoundError(f"datasets {unknown} not in ONEUID {self.index.name!r}")
@@ -276,13 +309,30 @@ class OneuidQuery:
         views = {}
         for name in wanted:
             if (ds_all == name).any():
-                views[name] = self.db[name]
-                self._check_version(name, views[name])
+                views[name] = check_dataset_version(self.db, self.index, name)
+        ctypes: dict[str, pa.DataType] = {}
+        if columns is not None and views:
+            for view in views.values():
+                for c in columns:
+                    if c in view.schema.names:
+                        ctypes.setdefault(c, view.schema.field(c).type)
+            absent = [c for c in columns if c not in ctypes]
+            if absent:
+                raise ValidationError(
+                    f"columns {absent} are in none of the hydrated datasets {sorted(views)}")
         for name, view in views.items():
             sel = np.flatnonzero(ds_all == name)
             for s in range(0, sel.size, batch_size):
                 ix = sel[s:s + batch_size]
-                t = view.take(part[ix], off[ix], columns=columns)
+                if columns is None:
+                    t = view.take(part[ix], off[ix])
+                else:
+                    have = [c for c in columns if c in view.schema.names]
+                    t = view.take(part[ix], off[ix], columns=have)
+                    for c in columns:
+                        if c not in have:
+                            t = t.append_column(c, pa.nulls(len(ix), ctypes[c]))
+                    t = t.select(columns)
                 t = t.append_column("oneuid", pa.array(oid[ix], pa.int64()))
                 t = t.append_column("dataset", pa.array([name] * len(ix), pa.string()))
                 yield t

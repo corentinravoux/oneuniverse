@@ -164,10 +164,10 @@ class Database:
 
     # ------------------------------------------------------------- links
     def build_links(self, *, parents, children, rules, name: str = "default",
-                    oneuid_name: str = "default"):
+                    oneuid_name: str = "default", allow_self_merged: bool = False):
         from oneuniverse.data.links import build_links
         return build_links(self, parents=parents, children=children, rules=rules, name=name,
-                           oneuid_name=oneuid_name)
+                           oneuid_name=oneuid_name, allow_self_merged=allow_self_merged)
 
     def load_links(self, name: str = "default", *, as_of=None):
         """Load link set *name*; *as_of* defaults to this Database's ``as_of_time``."""

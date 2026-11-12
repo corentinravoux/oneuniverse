@@ -7,7 +7,7 @@ import pyarrow.compute as pc
 import pytest
 from fixtures.synthetic import synthetic_point_table
 
-from oneuniverse._core.errors import FormatError
+from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.geometry import Cone
 from oneuniverse.data.crossmatch import CrossMatchRules
 from oneuniverse.data.database import Database
@@ -95,7 +95,13 @@ def test_select_by_geometry(db2):
     inside = cone.contains(rows["ra"].to_numpy(), rows["dec"].to_numpy())
     # every selected object has at least one member in the cone
     assert set(np.unique(rows["oneuid"].to_numpy()[inside])) == set(ids.tolist())
-    assert len(q.select(cone=cone, datasets=["a"])) <= len(ids)
+    ta = q.select(cone=cone, datasets=["a"])
+    t = q.index.table
+    ds = t["dataset"].cast(pa.string()).to_numpy(zero_copy_only=False)
+    ra, dec = t["ra"].to_numpy(), t["dec"].to_numpy()
+    oid = t["oneuid"].to_numpy()
+    assert set(ta.tolist()) == set(oid[cone.contains(ra, dec) & (ds == "a")].tolist())
+    assert set(ids.tolist()) == set(oid[cone.contains(ra, dec)].tolist())
     zs = q.select(z=(0.5, 0.6))
     zr = q.rows(zs)["z"].to_numpy()
     assert len(zs) > 0 and ((zr >= 0.5) & (zr <= 0.6)).any()
@@ -198,3 +204,63 @@ def test_database_as_of_defaults_index_time(tmp_path):
     assert past.as_of_time == t0
     assert past.load_oneuid("x").datasets == ["a"]
     assert past.oneuid_query("x").index.datasets == ["a"]
+
+
+def test_strings_rejected_as_sequences(tmp_path):
+    db = _make_db(tmp_path, 2_000, 500)
+    with pytest.raises(ValidationError, match="list of names"):
+        db.build_oneuid("a", rules=CrossMatchRules())
+    idx = db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    q = db.oneuid_query("ab")
+    ids = idx.table["oneuid"].to_numpy()[:5]
+    with pytest.raises(ValidationError, match="list of names"):
+        idx.restrict_to("a")
+    with pytest.raises(ValidationError, match="list of names"):
+        q.select(datasets="a")
+    with pytest.raises(ValidationError, match="list of names"):
+        q.hydrate_table(ids, datasets="a")
+    with pytest.raises(ValidationError, match="list of names"):
+        q.hydrate_table(ids, columns="z")
+
+
+def test_hydrate_columns_missing_in_some_datasets(tmp_path):
+    ta, tb = _pair_tables(2_000, 500)
+    _write(tmp_path, "a", ta)
+    write_dataset(tb.drop_columns(["mag"]), tmp_path / "b", geometry=Geometry.POINT,
+                  survey=SurveyMeta("b", "test"), loader=LoaderInfo("test", "1", {}),
+                  partition_nside=4)
+    db = Database(tmp_path)
+    db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    q = db.oneuid_query("ab")
+    ids = q.index.multi_only()["oneuid"].unique().to_numpy()[:20]
+    t = q.hydrate_table(ids, columns=["z", "mag"])
+    assert t.num_rows == 40 and t.column_names == ["z", "mag", "oneuid", "dataset"]
+    ds = np.asarray(t["dataset"].to_pylist())
+    mag = t["mag"]
+    assert mag.filter(pa.array(ds == "b")).null_count == 20
+    assert mag.filter(pa.array(ds == "a")).null_count == 0
+    with pytest.raises(ValidationError, match="none of the hydrated"):
+        q.hydrate_table(ids, columns=["z", "nope"])
+
+
+def test_hydrate_raises_before_any_yield_when_second_changed(tmp_path):
+    db = _make_db(tmp_path, 2_000, 500)
+    db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    _, tb = _pair_tables(2_000, 500, seed=7)
+    _write(tmp_path, "b", tb, overwrite=True)  # only the alphabetically second one changes
+    q = Database(tmp_path).oneuid_query("ab")
+    ids = q.index.table["oneuid"].to_numpy()[:10]
+    gen = q.hydrate(ids, columns=["z"])
+    with pytest.raises(FormatError, match="dataset b changed"):
+        next(gen)
+
+
+def test_hydrate_dataset_removed_from_database(tmp_path):
+    import shutil
+    db = _make_db(tmp_path, 2_000, 500)
+    db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    shutil.rmtree(tmp_path / "b")
+    q = Database(tmp_path).oneuid_query("ab")
+    with pytest.raises(FormatError, match="dataset b changed since ONEUID ab was built "
+                                          r"\(not present in this Database\); rebuild the index"):
+        q.hydrate_table(q.index.table["oneuid"].to_numpy()[:10], columns=["z"])
