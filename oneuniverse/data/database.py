@@ -1,7 +1,7 @@
 """Database facade over a root directory of OUF 3.0 datasets."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
@@ -15,7 +15,7 @@ _MAX_DEPTH = 2
 
 
 def _parse_utc(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.fromisoformat(s).astimezone(UTC)
 
 
 class Database:

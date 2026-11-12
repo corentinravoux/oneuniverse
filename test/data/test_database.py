@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fixtures.synthetic import write_synthetic_dataset
@@ -57,10 +57,10 @@ def test_history_and_as_of(tmp_path):
     write_synthetic_dataset(tmp_path / "ds", 20, 1, overwrite=True)
     db = Database(tmp_path)
     assert [m.validity.version for m in db.history("ds")] == [1, 2]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     sub = db.as_of(now)
     assert "ds" in sub and sub.as_of_time == now and db.as_of_time is None
-    assert "ds" not in db.as_of(datetime(2000, 1, 1, tzinfo=timezone.utc))
+    assert "ds" not in db.as_of(datetime(2000, 1, 1, tzinfo=UTC))
     with pytest.raises(ValidationError):
         db.as_of(datetime(2030, 1, 1))
 
@@ -68,7 +68,7 @@ def test_history_and_as_of(tmp_path):
 def test_as_of_excludes_when_live_postdates(tmp_path):
     write_synthetic_dataset(tmp_path / "ds", 10, 0)
     time.sleep(0.01)
-    t = datetime.now(timezone.utc)
+    t = datetime.now(UTC)
     time.sleep(0.01)
     write_synthetic_dataset(tmp_path / "ds", 20, 1, overwrite=True)
     assert "ds" not in Database(tmp_path).as_of(t)
