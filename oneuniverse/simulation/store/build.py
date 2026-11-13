@@ -11,9 +11,10 @@ import numpy as np
 import pyarrow as pa
 
 from oneuniverse._core.errors import ValidationError
-from oneuniverse._core.fs import atomic_dir
+from oneuniverse._core.fs import atomic_dir, atomic_write_json
 from oneuniverse.simulation.execution import ExecutionPlan
 from oneuniverse.simulation.manifest import (
+    LAYOUT_FILENAME,
     MANIFEST_FILENAME,
     OUFSimManifest,
     write_manifest,
@@ -22,6 +23,7 @@ from oneuniverse.simulation.specs import ProductDecl
 from oneuniverse.simulation.store.native import NativeReaderAdapter, get_adapter
 from oneuniverse.simulation.store.read import SimStore
 from oneuniverse.simulation.store.write import (
+    schema_row_bytes,
     write_catalog_product,
     write_field_product,
     write_lightcone_product,
@@ -49,8 +51,7 @@ class NativeProduct:
 def _native_batches(adapter: NativeReaderAdapter, path: Path, plan: ExecutionPlan) -> Iterator[pa.RecordBatch]:
     n = adapter.num_rows(path)
     probe = adapter.read_rows(path, 0, min(n, 1))
-    per_row = max(1, sum(max(1, f.type.bit_width // 8) for f in probe.schema))
-    step = plan.batch_for(per_row)
+    step = plan.batch_for(schema_row_bytes(probe.schema))
     for s in range(0, n, step):
         yield from adapter.read_rows(path, s, min(n, s + step)).to_batches()
 
@@ -75,6 +76,7 @@ def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProdu
     out = Path(out)
     decls: list[ProductDecl] = []
     with atomic_dir(out) as tmp:
+        atomic_write_json(tmp / LAYOUT_FILENAME, {"products": {}})
         for nat in products:
             decl = nat.decl
             for z in decl.redshifts:

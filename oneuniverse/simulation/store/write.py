@@ -44,6 +44,7 @@ from oneuniverse.simulation.manifest import (
     read_manifest,
     write_manifest,
 )
+from oneuniverse.simulation.specs import ProductDecl
 from oneuniverse.simulation.store.index import (
     CATALOG_INDEX_SCHEMA,
     FIELD_INDEX_SCHEMA,
@@ -55,11 +56,12 @@ from oneuniverse.simulation.store.native import NativeReaderAdapter
 
 INDEX_FILENAME = "_index.parquet"
 _MAX_OPEN = 256  # most ParquetWriters open at once (1024 is a common fd limit)
-# Chunk files are located through ``_index.parquet``, never by predicate pushdown,
-# so row-group statistics and the embedded arrow schema are dropped: per-file
-# metadata is what dominates small chunks.
-_PQ_OPTS = {"write_statistics": False, "store_schema": False, "use_dictionary": False,
-            "compression": "zstd"}
+# Data files keep parquet's defaults (statistics, dictionaries, embedded arrow
+# schema, so field metadata and dictionary types survive) with zstd.  Only the
+# small ``_index.parquet`` files drop that per-file metadata.
+_DATA_OPTS = {"compression": "zstd"}
+_INDEX_OPTS = {"write_statistics": False, "store_schema": False, "use_dictionary": False,
+               "compression": "zstd"}
 
 
 def ztag(z: float) -> str:
@@ -89,19 +91,24 @@ def _product_dir(store_root: Path, name: str, tag: str) -> Path:
 
 
 def _check_new(store_root: Path, name: str, tag: str) -> None:
-    if tag in _read_layout(store_root).get("products", {}).get(name, {}) \
-            or _product_dir(store_root, name, tag).exists():
+    """``FormatError`` if ``layout.json`` already lists the product (the commit point)."""
+    if tag in _read_layout(store_root).get("products", {}).get(name, {}):
         raise FormatError(f"product {name!r} at z={tag} already exists in {store_root}")
 
 
 @contextlib.contextmanager
 def _staged_product(store_root: Path, name: str, tag: str) -> Iterator[Path]:
-    """Yield an empty ``z=<tag>.tmp`` dir; rename it into place on success."""
+    """Yield an empty ``z=<tag>.tmp`` dir; rename it into place on success.
+
+    ``layout.json`` is the commit point: a product dir (or staging dir) the
+    layout does not list is an orphan of a crashed attempt and is replaced.
+    """
     _check_new(store_root, name, tag)
     final = _product_dir(store_root, name, tag)
     tmp = final.with_name(final.name + ".tmp")
-    if tmp.exists():
-        raise FormatError(f"stale staging directory {tmp}: delete it if no writer is running")
+    for orphan in (tmp, final):
+        if orphan.exists():
+            shutil.rmtree(orphan)
     tmp.mkdir(parents=True)
     try:
         yield tmp
@@ -135,22 +142,43 @@ def _groups(keys: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return order, uniq, start
 
 
-def _partition_write(batches: Iterable, key_fn: Callable[[pa.RecordBatch], np.ndarray],
-                     lo: int, hi: int, path_for: Callable[[int], Path], stage_root: Path,
-                     batch_rows: Callable[[pa.Schema], int], *,
-                     observe: Callable[[pa.RecordBatch, np.ndarray], None] | None = None,
-                     depth: int = 0) -> None:
-    """Write rows with key in ``[lo, hi)`` to ``path_for(key)``, <= ``_MAX_OPEN`` files open.
+def schema_row_bytes(schema: pa.Schema) -> int:
+    """Rough in-memory bytes per row of ``schema`` (variable-width columns count 16)."""
+    total = 0
+    for f in schema:
+        try:
+            total += max(1, f.type.bit_width // 8)
+        except ValueError:
+            total += 16
+    return max(total, 1)
 
-    Direct when the key range is small enough; otherwise rows are first staged
-    in at most ``_MAX_OPEN`` key-range buckets (parquet files in ``stage_root``)
-    and each bucket is partitioned recursively.
+
+def _direct_write(batches: Iterable, key_fn, path_for, plan: ExecutionPlan, observe) -> None:
+    """One parquet file per key; rows are buffered per key and written as full row groups.
+
+    A key is flushed when it holds a row group (``max(65_536, plan.batch_for(row
+    bytes))`` rows); when all buffers together exceed half the plan budget the
+    largest buffers are flushed first.
     """
-    n = hi - lo
+    budget = plan.memory_budget_bytes // 2
     schema: pa.Schema | None = None
+    rg = 0
+    bufs: dict[int, list[pa.Table]] = {}
+    nrows: dict[int, int] = {}
+    nbytes: dict[int, int] = {}
+    total = 0
     with contextlib.ExitStack() as stack:
         writers: dict[int, pq.ParquetWriter] = {}
-        width = 1 if n <= _MAX_OPEN else math.ceil(n / _MAX_OPEN)
+
+        def flush(k: int) -> None:
+            nonlocal total
+            table = pa.concat_tables(bufs.pop(k))
+            nrows.pop(k)
+            total -= nbytes.pop(k)
+            if k not in writers:
+                writers[k] = stack.enter_context(pq.ParquetWriter(path_for(k), schema, **_DATA_OPTS))
+            writers[k].write_table(table, row_group_size=rg)
+
         for batch in batches:
             if batch.num_rows == 0:
                 continue
@@ -160,38 +188,68 @@ def _partition_write(batches: Iterable, key_fn: Callable[[pa.RecordBatch], np.nd
             table = _as_table(batch, schema)
             if schema is None:
                 schema = table.schema
-            wkeys = keys if width == 1 else (keys - lo) // width + lo
-            order, uniq, start = _groups(wkeys)
-            sorted_table = table.take(pa.array(order))
+                rg = max(65_536, plan.batch_for(schema_row_bytes(schema)))
+            order, uniq, start = _groups(keys)
+            stops = np.append(start[1:], len(order))
+            for k, a, b in zip(uniq.tolist(), start.tolist(), stops.tolist()):
+                part = table.take(pa.array(order[a:b]))  # a copy: buffers never pin a whole batch
+                bufs.setdefault(k, []).append(part)
+                nrows[k] = nrows.get(k, 0) + part.num_rows
+                nbytes[k] = nbytes.get(k, 0) + part.nbytes
+                total += part.nbytes
+                if nrows[k] >= rg:
+                    flush(k)
+            while total > budget and bufs:
+                flush(max(nbytes, key=nbytes.__getitem__))
+        for k in list(bufs):
+            flush(k)
+
+
+def _partition_write(batches: Iterable, key_fn: Callable[[pa.RecordBatch], np.ndarray],
+                     lo: int, hi: int, path_for: Callable[[int], Path], stage_root: Path,
+                     plan: ExecutionPlan, *,
+                     observe: Callable[[pa.RecordBatch, np.ndarray], None] | None = None,
+                     depth: int = 0) -> None:
+    """Write rows with key in ``[lo, hi)`` to ``path_for(key)``, <= ``_MAX_OPEN`` files open.
+
+    Direct when the key range is small enough; otherwise rows are first staged
+    in at most ``_MAX_OPEN`` key-range buckets (parquet files in ``stage_root``)
+    and each bucket is partitioned recursively.
+    """
+    n = hi - lo
+    if n <= _MAX_OPEN:
+        _direct_write(batches, key_fn, path_for, plan, observe)
+        return
+    width = math.ceil(n / _MAX_OPEN)
+    schema: pa.Schema | None = None
+    with contextlib.ExitStack() as stack:
+        writers: dict[int, pq.ParquetWriter] = {}
+        for batch in batches:
+            if batch.num_rows == 0:
+                continue
+            keys = np.asarray(key_fn(batch))
+            if observe is not None:
+                observe(batch, keys)
+            table = _as_table(batch, schema)
+            if schema is None:
+                schema = table.schema
+            order, uniq, start = _groups((keys - lo) // width)
             stops = np.append(start[1:], len(order))
             for k, a, b in zip(uniq.tolist(), start.tolist(), stops.tolist()):
                 if k not in writers:
-                    path = path_for(k) if width == 1 else stage_root / f"s{depth}_{k - lo}.parquet"
-                    writers[k] = stack.enter_context(pq.ParquetWriter(path, schema, **_PQ_OPTS))
-                writers[k].write_table(sorted_table.slice(a, b - a))
-    if width == 1:
-        return
+                    writers[k] = stack.enter_context(
+                        pq.ParquetWriter(stage_root / f"s{depth}_{k}.parquet", schema, **_DATA_OPTS))
+                writers[k].write_table(table.take(pa.array(order[a:b])))
     for b in range(math.ceil(n / width)):
-        sub_lo, sub_hi = lo + b * width, min(hi, lo + (b + 1) * width)
         stage = stage_root / f"s{depth}_{b}.parquet"
         if not stage.exists():
             continue
         pf = pq.ParquetFile(stage)
-        rows = batch_rows(pf.schema_arrow)
-        _partition_write(pf.iter_batches(batch_size=rows), key_fn, sub_lo, sub_hi, path_for,
-                         stage_root, batch_rows, depth=depth + 1)
-        del pf
+        rows = max(1, plan.batch_for(schema_row_bytes(pf.schema_arrow)))
+        _partition_write(pf.iter_batches(batch_size=rows), key_fn, lo + b * width,
+                         min(hi, lo + (b + 1) * width), path_for, stage_root, plan, depth=depth + 1)
+        pf.close()
         stage.unlink()
-
-
-def _row_bytes(schema: pa.Schema) -> int:
-    total = 0
-    for f in schema:
-        try:
-            total += max(1, f.type.bit_width // 8)
-        except ValueError:
-            total += 16  # variable width: rough estimate
-    return max(total, 1)
 
 
 # -------------------------------------------------------------------- catalog
@@ -236,7 +294,7 @@ def write_catalog_product(store_root, name: str, z: float, batches: Iterable[pa.
         stage.mkdir()
         _partition_write(
             batches, key_fn, 0, n_chunks, lambda k: tmp / f"chunk_{k}.parquet", stage,
-            lambda s: max(1, plan.batch_for(_row_bytes(s))), observe=observe)
+            plan, observe=observe)
         shutil.rmtree(stage)
         stop = np.cumsum(counts)
         start = stop - counts
@@ -248,7 +306,7 @@ def write_catalog_product(store_root, name: str, z: float, batches: Iterable[pa.
                 pa.array(start), pa.array(stop)]
         for ax in range(3):
             cols += [pa.array(bmin[:, ax]), pa.array(bmax[:, ax])]
-        pq.write_table(pa.Table.from_arrays(cols, schema=CATALOG_INDEX_SCHEMA), tmp / INDEX_FILENAME, **_PQ_OPTS)
+        pq.write_table(pa.Table.from_arrays(cols, schema=CATALOG_INDEX_SCHEMA), tmp / INDEX_FILENAME, **_INDEX_OPTS)
     entry = {"dir": _rel_dir(name, tag), "layout": "chunks", "kind": "catalog",
              "n_chunks": n_chunks, "n_side": int(n_side), "n_rows": int(stop[-1]) if n_chunks else 0}
     _merge_layout(store_root, name, tag, entry)
@@ -300,7 +358,7 @@ def write_reference_catalog(store_root, name: str, z: float, native_path, adapte
     for ax in range(3):
         cols += [pa.array([b[0][ax] for b in bbox]), pa.array([b[1][ax] for b in bbox])]
     with _staged_product(store_root, name, tag) as tmp:
-        pq.write_table(pa.Table.from_arrays(cols, schema=CATALOG_INDEX_SCHEMA), tmp / INDEX_FILENAME, **_PQ_OPTS)
+        pq.write_table(pa.Table.from_arrays(cols, schema=CATALOG_INDEX_SCHEMA), tmp / INDEX_FILENAME, **_INDEX_OPTS)
     entry = {"dir": _rel_dir(name, tag), "layout": "reference", "kind": "catalog",
              "n_chunks": n_chunks, "n_side": int(n_side), "n_rows": int(n_rows),
              "native": rel, "adapter": adapter.format}
@@ -337,11 +395,12 @@ def _field_index(tiles: list[tuple], paths: bool) -> pa.Table:
 
 
 def write_field_product(store_root, name: str, z: float, field, *, tile_cells: int = 32,
-                        plan: ExecutionPlan | None = None) -> dict:
+                        plan: ExecutionPlan | None = None, commit: bool = True) -> dict:
     """Write a cubic grid as ``tile_<id>.npy`` files, one slice of ``field`` at a time.
 
     ``field`` may be a memmap; it is never materialised whole.  Edge tiles are
-    smaller when ``n_grid % tile_cells != 0``.  Returns the layout entry.
+    smaller when ``n_grid % tile_cells != 0``.  Returns the layout entry; with
+    ``commit=False`` the caller merges it into ``layout.json`` (the commit point).
     """
     store_root, tag = Path(store_root), ztag(z)
     n_grid = _check_cube(field.shape)
@@ -350,10 +409,11 @@ def write_field_product(store_root, name: str, z: float, field, *, tile_cells: i
         for tid, (i0, i1, j0, j1, k0, k1) in tiles:
             np.save(tmp / f"tile_{tid}.npy",
                     np.ascontiguousarray(field[i0:i1, j0:j1, k0:k1]))
-        pq.write_table(_field_index(tiles, True), tmp / INDEX_FILENAME, **_PQ_OPTS)
+        pq.write_table(_field_index(tiles, True), tmp / INDEX_FILENAME, **_INDEX_OPTS)
     entry = {"dir": _rel_dir(name, tag), "layout": "tiles", "kind": "field",
              "n_tiles": len(tiles), "n_grid": n_grid, "tile_cells": int(tile_cells)}
-    _merge_layout(store_root, name, tag, entry)
+    if commit:
+        _merge_layout(store_root, name, tag, entry)
     return entry
 
 
@@ -365,7 +425,7 @@ def write_reference_field(store_root, name: str, z: float, native_path, adapter:
     tiles = list(_tile_grid(n_grid, tile_cells))
     rel = _relative_native(Path(native_path), store_root)
     with _staged_product(store_root, name, tag) as tmp:
-        pq.write_table(_field_index(tiles, False), tmp / INDEX_FILENAME, **_PQ_OPTS)
+        pq.write_table(_field_index(tiles, False), tmp / INDEX_FILENAME, **_INDEX_OPTS)
     entry = {"dir": _rel_dir(name, tag), "layout": "reference", "kind": "field",
              "n_tiles": len(tiles), "n_grid": n_grid, "tile_cells": int(tile_cells),
              "native": rel, "adapter": adapter.format}
@@ -399,12 +459,12 @@ def write_lightcone_product(store_root, name: str, batches: Iterable[pa.RecordBa
         stage = tmp / "_stage"
         stage.mkdir()
         _partition_write(batches, key_fn, 0, n_pix, lambda k: tmp / f"pix_{k}.parquet", stage,
-                         lambda s: max(1, plan.batch_for(_row_bytes(s))), observe=observe)
+                         plan, observe=observe)
         shutil.rmtree(stage)
         pix = np.flatnonzero(counts).astype(np.int32)
         table = pa.table({"pix": pa.array(pix), "path": pa.array([f"pix_{p}.parquet" for p in pix], pa.string()),
                           "n_rows": pa.array(counts[pix])}, schema=SKY_INDEX_SCHEMA)
-        pq.write_table(table, tmp / INDEX_FILENAME, **_PQ_OPTS)
+        pq.write_table(table, tmp / INDEX_FILENAME, **_INDEX_OPTS)
     entry = {"dir": _rel_dir(name, tag), "layout": "sky", "kind": "lightcone", "n_pix": len(pix),
              "nside_part": int(nside_part), "n_rows": int(counts.sum())}
     _merge_layout(store_root, name, tag, entry)
@@ -415,12 +475,14 @@ def write_lightcone_product(store_root, name: str, batches: Iterable[pa.RecordBa
 
 def ingest_field(store_root, name: str, z: float, field, *, tile_cells: int = 32,
                  plan: ExecutionPlan | None = None) -> None:
-    """Add a field product (tiles, layout entry, manifest declaration) to an existing store.
+    """Add a field product (tiles, manifest declaration, layout entry) to an existing store.
 
-    Tiles are staged and renamed into place, then ``layout.json`` and
-    ``manifest.json`` are rewritten atomically (each file is atomic; a crash
-    between the two leaves a layout entry without declaration, which a retry
-    reports as ``FormatError``).  An existing product at ``z`` is a ``FormatError``.
+    Order: stage tiles and rename them into place, rewrite ``manifest.json``,
+    then merge the ``layout.json`` entry LAST: the layout is the commit point,
+    and :class:`SimStore` lists only products it contains.  A crash earlier
+    leaves an orphan product dir / manifest declaration, which a retry replaces;
+    an entry already in the layout is a ``FormatError``.  Concurrent ingests
+    into one store are unsupported (the manifest and layout are read-modify-write).
     """
     store_root, tag = Path(store_root), ztag(z)
     mpath = store_root / MANIFEST_FILENAME
@@ -432,10 +494,11 @@ def ingest_field(store_root, name: str, z: float, field, *, tile_cells: int = 32
     if existing is not None and (existing.kind != "field" or existing.n_grid != n_grid):
         raise FormatError(f"product {name!r} exists as {existing.kind} (n_grid={existing.n_grid}); "
                           f"cannot add a field of n_grid={n_grid}")
-    write_field_product(store_root, name, z, field, tile_cells=tile_cells, plan=plan)
-    from oneuniverse.simulation.specs import ProductDecl
+    entry = write_field_product(store_root, name, z, field, tile_cells=tile_cells, plan=plan,
+                                commit=False)
     if existing is None:
         decls.append(ProductDecl(name, "field", (float(z),), n_grid=n_grid))
-    else:
+    elif float(z) not in existing.redshifts:
         decls[decls.index(existing)] = replace(existing, redshifts=existing.redshifts + (float(z),))
     write_manifest(mpath, replace(manifest, products=tuple(decls)))
+    _merge_layout(store_root, name, tag, entry)

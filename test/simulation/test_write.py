@@ -215,14 +215,16 @@ def test_lightcone_partition(tmp_path):
     assert total == 2000
 
 
-def test_reference_projection_is_index_only(tmp_path):
-    src = make_native_sim(tmp_path / "sim")
+@pytest.mark.parametrize("n_particles", [10_000, 50_000, 200_000])
+def test_reference_projection_is_index_only(tmp_path, n_particles):
+    src = make_native_sim(tmp_path / "sim", n_particles=n_particles)
     packed = write_packed_native_fixture(src, n_side=4)
     store = build_store(tmp_path / "ref", manifest=native_manifest(src),
                         products=native_products(packed, adapter_format="packed_npy"),
                         plan=ExecutionPlan(), projection="reference", n_side=4)
-    size_ref = sum(f.stat().st_size for f in (tmp_path / "ref").rglob("*") if f.is_file())
-    size_native = sum(f.stat().st_size for f in packed.rglob("*.npy"))
+    # the particles reference product alone vs the native particle files
+    size_ref = sum(f.stat().st_size for f in (tmp_path / "ref/products/particles").rglob("*") if f.is_file())
+    size_native = sum(f.stat().st_size for f in packed.glob("particles_z*.npy"))
     assert size_ref < 0.2 * size_native
     assert store.layout["products"]["particles"]["0.000"]["layout"] == "reference"
     assert store.layout["products"]["field"]["0.000"]["layout"] == "reference"
@@ -280,3 +282,76 @@ def test_ingest_field_adds_product(tmp_path):
         ingest_field(tmp_path / "s", "delta_recon", 0.0, np.zeros((32, 32, 32), np.float32))
     ingest_field(tmp_path / "s", "delta_recon", 1.0, np.zeros((32, 32, 32), np.float32))
     assert SimStore(tmp_path / "s").redshifts("delta_recon") == (0.0, 1.0)
+
+
+def test_metadata_and_dictionary_types_survive_reencode(tmp_path):
+    fields = [pa.field("x", pa.float64(), metadata={b"unit": b"Mpc/h"}), pa.field("y", pa.float64()),
+              pa.field("z", pa.float64()), pa.field("kind", pa.dictionary(pa.int8(), pa.string()))]
+    schema = pa.schema(fields)
+
+    def gen(n_side):
+        rng = np.random.default_rng(n_side)
+        for _ in range(3):
+            kind = pa.DictionaryArray.from_arrays(pa.array(rng.integers(0, 3, 2000), pa.int8()),
+                                                  pa.array(["a", "b", "c"]))
+            yield pa.RecordBatch.from_arrays(
+                [pa.array(rng.uniform(0, 10, 2000)) for _ in range(3)] + [kind], schema=schema)
+    for n_side in (4, 8):  # 8: 512 chunks > 256, bucketed path
+        root = tmp_path / f"s{n_side}"
+        write_catalog_product(root, "p", 0.0, gen(n_side), box_size=10.0, n_side=n_side)
+        d = root / "products/p/z=0.000"
+        f = next(d.glob("chunk_*.parquet"))
+        got = pq.read_table(f).schema
+        assert got.field("kind").type == pa.dictionary(pa.int8(), pa.string())
+        assert got.field("x").metadata == {b"unit": b"Mpc/h"}
+        assert pq.read_metadata(f).row_group(0).column(0).statistics is not None
+
+
+def test_direct_path_writes_full_row_groups(tmp_path):
+    rng = np.random.default_rng(0)
+
+    def gen():
+        for _ in range(15):
+            yield pa.RecordBatch.from_pydict({c: rng.uniform(0, 100, 20_000) for c in "xyz"})
+    write_catalog_product(tmp_path / "s", "p", 0.0, gen(), box_size=100.0, n_side=4)
+    d = tmp_path / "s/products/p/z=0.000"
+    files = list(d.glob("chunk_*.parquet"))
+    assert len(files) == 64
+    assert all(pq.read_metadata(f).num_row_groups <= 1 for f in files)
+    # a tight budget forces flushes but never loses rows
+    write_catalog_product(tmp_path / "t", "p", 0.0, gen(), box_size=100.0, n_side=4,
+                          plan=ExecutionPlan(memory_budget_bytes=2 * 2**20))
+    idx = pq.read_table(tmp_path / "t/products/p/z=0.000/_index.parquet")
+    assert idx["row_stop"].to_numpy()[-1] == 300_000
+    total = sum(pq.read_metadata(f).num_rows for f in (tmp_path / "t/products/p/z=0.000").glob("chunk_*.parquet"))
+    assert total == 300_000
+
+
+def test_build_store_without_products_opens(tmp_path):
+    src = make_native_sim(tmp_path / "sim", n_particles=100)
+    store = build_store(tmp_path / "s", manifest=native_manifest(src), products=[], plan=ExecutionPlan())
+    assert store.products == () and SimStore(tmp_path / "s").layout == {"products": {}}
+
+
+@pytest.mark.parametrize("target", ["write_manifest", "_merge_layout"])
+def test_ingest_field_crash_then_retry(tmp_path, monkeypatch, target):
+    src = make_native_sim(tmp_path / "sim")
+    build_store(tmp_path / "s", manifest=native_manifest(src), products=native_products(src)[:1],
+                plan=ExecutionPlan())
+    real = getattr(W, target)
+
+    def boom(*a, **k):
+        raise OSError("injected")
+    monkeypatch.setattr(W, target, boom)
+    f = np.ones((32, 32, 32), np.float32)
+    with pytest.raises(OSError, match="injected"):
+        ingest_field(tmp_path / "s", "delta", 0.0, f, tile_cells=16)
+    st = SimStore(tmp_path / "s")
+    assert st.products == ("particles",)  # only committed products
+    monkeypatch.setattr(W, target, real)
+    ingest_field(tmp_path / "s", "delta", 0.0, f, tile_cells=16)
+    st = SimStore(tmp_path / "s")
+    assert st.products == ("particles", "delta") and st.redshifts("delta") == (0.0,)
+    assert st.manifest.product("delta").redshifts == (0.0,)
+    with pytest.raises(FormatError):
+        ingest_field(tmp_path / "s", "delta", 0.0, f)

@@ -39,7 +39,9 @@ class SimStore:
 
     @property
     def products(self) -> tuple[str, ...]:
-        return tuple(p.name for p in self.manifest.products)
+        """Committed products: declared in the manifest and listed in ``layout.json``."""
+        committed = self.layout.get("products", {})
+        return tuple(p.name for p in self.manifest.products if committed.get(p.name))
 
     def _entry(self, product: str, z: float) -> dict:
         try:
