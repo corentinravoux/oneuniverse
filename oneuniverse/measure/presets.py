@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import dataclasses
+
 import numpy as np
 
 from oneuniverse._core.errors import ValidationError
@@ -35,25 +37,42 @@ def cosmic_shear(view: DatasetView, *, z: tuple[float, float], shear_weight: She
                  tomo_edges: Sequence[float], nz_edges: Sequence[float],
                  mask: Window | None = None, regions: Regions | int = 20, n_draws: int = 20,
                  name: str = "cosmic_shear", seed: int = 0, **kw) -> MeasurementSet:
-    """One tracer "src": shear weight, e1/e2 extras, photo-z draws, tomographic n(z)."""
+    """One tracer "src": shear weight, e1/e2 extras, photo-z draws, tomographic n(z).
+
+    For a 3x2pt analysis build the lens with ``galaxy_clustering`` first and pass
+    ``regions=lens.regions`` here, so both sets share one Regions object
+    (:func:`three_by_two` raises otherwise). Rows falling outside a given
+    Regions' pixels are dropped and counted in
+    ``provenance["n_dropped_outside_regions"]``. Provenance gets nz_method
+    "photoz_stack", tomo_edges and n_draws.
+    """
     for k in ("randoms", "keep_columns"):
         if k in kw:
             raise ValidationError(f"cosmic_shear sets {k} itself; do not pass it")
     seed = int(seed)
     prod, reg = _build_pointset(
         view, z=z, weight=shear_weight, nz_edges=nz_edges, mask=mask, regions=regions,
-        randoms="none", keep_columns=[*_SHEAR_COLUMNS, *shear_weight.columns], seed=seed, **kw)
+        randoms="none", keep_columns=[*_SHEAR_COLUMNS, *sorted(shear_weight.columns)], seed=seed, **kw)
     for c in _SHEAR_COLUMNS:
         prod = prod.with_extra(c, np.asarray(prod.catalog[c].to_numpy(), np.float64))
     prod = attach_photoz(prod, view, n_draws=n_draws, seed=seed)
     prod, _ = tomographic_nz(prod, bin_edges=tomo_edges, nz_edges=nz_edges)
+    prod = dataclasses.replace(prod, provenance={
+        **prod.provenance, "nz_method": "photoz_stack",
+        "tomo_edges": [float(e) for e in tomo_edges], "n_draws": int(n_draws)})
     spec = MeasurementSpec(name, ("src",), ("xi_plus", "xi_minus"))
     return MeasurementSet({"src": prod}, spec, reg)
 
 
 def three_by_two(lens: MeasurementSet, source: MeasurementSet, *,
                  name: str = "3x2pt") -> MeasurementSet:
-    """Combine a lens and a source set (one product each, same regions)."""
+    """Combine a lens and a source set (one product each, same regions).
+
+    The second tracer must be built with ``regions=lens.regions`` (rows outside
+    the lens regions' pixels are dropped, counted in
+    ``provenance["n_dropped_outside_regions"]``); otherwise the region ids
+    disagree and construction raises ValidationError.
+    """
     if lens.regions != source.regions:
         raise ValidationError("lens and source sets must share the same regions")
     if len(lens.products) != 1 or len(source.products) != 1:

@@ -9,7 +9,7 @@ import pyarrow.compute as pc
 
 from oneuniverse._core.errors import ValidationError
 from oneuniverse.measure.atoms import Regions
-from oneuniverse.measure.product import FieldMap, Product
+from oneuniverse.measure.product import FieldMap, Product, _normalise_json
 
 _COVARIANCES = ("jackknife", "mocks", "analytic", "external")
 
@@ -39,6 +39,7 @@ class MeasurementSpec:
         if any(len(p) != 2 for p in pairs):
             raise ValidationError("each pair must name exactly two tracers")
         object.__setattr__(self, "pairs", pairs)
+        object.__setattr__(self, "notes", _normalise_json(dict(self.notes), "notes"))
         if self.covariance not in _COVARIANCES:
             raise ValidationError(f"covariance must be one of {_COVARIANCES}, got {self.covariance!r}")
 
@@ -56,6 +57,18 @@ def _region_range(table, label: str, n_regions: int, tracer: str) -> None:
         raise ValidationError(
             f"{label} of {tracer!r} has region_id in [{lo}, {hi}], "
             f"outside [0, {n_regions}) of the regions")
+
+
+def _regions_consistent(table, regions: Regions, label: str, tracer: str) -> None:
+    if table is None or table.num_rows == 0:
+        return
+    ra, dec = (np.asarray(table[c].cast("float64").to_numpy(zero_copy_only=False), np.float64)
+               for c in ("ra", "dec"))
+    rid = np.asarray(table["region_id"].to_numpy(zero_copy_only=False))
+    if not np.array_equal(regions.assign(ra, dec), rid):
+        raise ValidationError(
+            f"region_id inconsistent with regions ({label} of {tracer!r}): products must be "
+            "built on the set's Regions")
 
 
 @dataclass(frozen=True)
@@ -78,6 +91,8 @@ class MeasurementSet:
                 continue
             _region_range(p.catalog, "catalog", self.regions.n_regions, name)
             _region_range(p.randoms, "randoms", self.regions.n_regions, name)
+            _regions_consistent(p.catalog, self.regions, "catalog", name)
+            _regions_consistent(p.randoms, self.regions, "randoms", name)
 
     def summary(self) -> dict:
         prods = {}
