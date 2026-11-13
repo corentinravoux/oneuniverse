@@ -11,6 +11,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R1 | 2026-11-12 | 5bc6b38 | 376 / 4 | 28 s (`-n 6`); 86 s single-process | OUF 3.0: schema, manifest, bucketed streaming writer, DatasetView (pruning, take, stale-view guard), PDFs, eBOSS/DESI loaders, convert(). Fake 2 M DESI convert peaks 213 MiB anon RSS. Exit criterion met. |
 | R2 | 2026-11-12 | f1fefea | 459 / 4 | 40 s (`-n 6`); 140 s single-process | Versioned sidecar (crash-safe, µs version ids), pair-wise blocked cross-match (brute-force exact), ONEUID with position hydration + dataset-version guard, links with ONEUID-version guard, Database. Row-identity regression green; 2×1 M cross-match 13 s; sidecar crash test green. |
 | R3 | 2026-11-12 | e6813ff | 500 / 3 | 40 s (`-n 6`) | Weight primitives (full-name describe()), default registry, WeightedCatalog with ivar / best / mean / priority strategies; combine on 60 k rows ≈ 0.02 s. |
+| R4 | 2026-11-13 | 8565495 | 577 / 1 | 50 s (`-n 6`) | measure: atoms, Product/FieldMap/Sightline, MeasurementSet (shared-region check), build_pointset (with_position, uniform randoms truncated to the data z range, adaptive footprint), photo-z attachment by position, tomographic n(z), presets, versioned save/load. Exit criterion met. |
 
 ## Decisions taken during execution
 
@@ -82,3 +83,18 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
   contradicted its own test and was replaced.
 - **Open for R4.** `combine()` returns no positions, so a combined
   `WeightedCatalog` cannot yet feed `build_pointset(view, …)`.
+- **R4 — randoms and window.** Randoms are uniform inside window pixels,
+  follow the weighted data n(z) truncated to the requested z range, carry
+  weight 1 (do not re-apply the data weights to them), and obey the same
+  cone/patch as the data. Without a survey mask the window is a data
+  footprint at an adaptive nside (≥ 10 points per pixel), recorded in
+  provenance; pass a real mask for science. An integer `regions` request is
+  clamped to the number of masked pixels (recorded).
+- **R4 — reproducibility.** Provenance records dataset version, z, nz_edges,
+  weight, cone/patch, mask hash, random_factor, seed, ingested-randoms dataset
+  and version, package version. `attach_photoz` refuses a view of another
+  dataset version. `MeasurementSet` rejects products whose `region_id`
+  disagrees with its `Regions`.
+- **Notes for R6.** A simulation-derived `Product` must fill `source_row`,
+  `partition`, `offset`, `region_id`; box positions go in extras — catalog `z`
+  is redshift.
