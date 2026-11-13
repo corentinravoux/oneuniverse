@@ -6,9 +6,19 @@ from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
 from oneuniverse._core.geometry import Cube
 from oneuniverse.simulation.execution import ExecutionMode, ExecutionPlan
 from oneuniverse.simulation.manifest import (
-    OUFSIM_FORMAT_VERSION, OUFSimManifest, read_manifest, write_manifest)
+    OUFSIM_FORMAT_VERSION,
+    OUFSimManifest,
+    read_manifest,
+    write_manifest,
+)
 from oneuniverse.simulation.specs import (
-    CosmologySpec, ProductDecl, ProvenanceSpec, RegionSpec, SimulationRequest, UnitFrameSpec)
+    CosmologySpec,
+    ProductDecl,
+    ProvenanceSpec,
+    RegionSpec,
+    SimulationRequest,
+    UnitFrameSpec,
+)
 
 
 def _manifest(**kw):
@@ -67,8 +77,8 @@ def test_region_outer_and_request_validation():
 
 
 def test_spec_validation_and_round_trips():
-    for bad in (dict(h=0), dict(omega_b=0.4), dict(sigma8=-1), dict(n_s=0)):
-        kw = dict(h=0.67, omega_m=0.31, omega_b=0.049, sigma8=0.81, n_s=0.965) | bad
+    for bad in ({"h": 0}, {"omega_b": 0.4}, {"sigma8": -1}, {"n_s": 0}):
+        kw = {"h": 0.67, "omega_m": 0.31, "omega_b": 0.049, "sigma8": 0.81, "n_s": 0.965} | bad
         with pytest.raises(ValidationError):
             CosmologySpec(**kw)
     c = CosmologySpec(0.67, 0.31, 0.049, 0.81, 0.965, w0=-0.9, wa=0.1)
@@ -97,3 +107,14 @@ def test_execution_plan_batch_and_mpi_guard():
     with pytest.raises(ValidationError):
         ExecutionPlan(memory_budget_bytes=0)
     assert not hasattr(ExecutionMode, "GPU")
+
+
+def test_corrupt_values_raise_format_error(tmp_path):
+    for key, bad in (("products", 5), ("box_size", "wide")):
+        d = _manifest().to_dict()
+        d[key] = bad
+        (tmp_path / "x.json").write_text(json.dumps(d))
+        with pytest.raises(FormatError, match="invalid manifest"):
+            read_manifest(tmp_path / "x.json")
+        with pytest.raises(FormatError):
+            OUFSimManifest.from_dict(d)

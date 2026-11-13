@@ -10,7 +10,13 @@ from typing import Any
 from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
 from oneuniverse._core.fs import atomic_write_json
 from oneuniverse.simulation.specs import (
-    CosmologySpec, ProductDecl, ProvenanceSpec, UnitFrameSpec, _plain, _segment)
+    CosmologySpec,
+    ProductDecl,
+    ProvenanceSpec,
+    UnitFrameSpec,
+    _plain,
+    _segment,
+)
 
 OUFSIM_FORMAT_VERSION = "1.0.0"
 MANIFEST_FILENAME = "manifest.json"
@@ -90,7 +96,7 @@ class OUFSimManifest:
                 ProvenanceSpec.from_dict(d["provenance"]),
                 tuple(ProductDecl.from_dict(p) for p in d["products"]),
                 d["native"], d["created_utc"], d.get("parent"), d.get("lineage", {}))
-        except ValidationError as exc:
+        except (ValueError, TypeError) as exc:  # ValidationError is a ValueError
             raise FormatError(f"invalid manifest: {exc}") from exc
 
 
