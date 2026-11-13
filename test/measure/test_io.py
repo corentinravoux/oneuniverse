@@ -38,7 +38,7 @@ def _ms_all_kinds(view):
                      mask=np.ones(12 * nside ** 2), nside=nside, provenance={"src": "test"})
     lya = build_sightlines(sv, z=(2.0, 2.5), regions=reg)
     spec = MeasurementSpec("all", ("gal", "kappa", "lya"), ("pk", "cl"), pairs=(("gal", "kappa"),),
-                           notes={"a": 1})
+                           notes={"a": 1, "t": (1, 2)})
     return MeasurementSet({"gal": gal, "kappa": kappa, "lya": lya}, spec, reg)
 
 
@@ -116,3 +116,16 @@ def test_load_rejects_missing_file_and_corrupt_json(view, tmp_path):
     assert e.value.__cause__ is not None
     with pytest.raises(FormatError):
         load(tmp_path / "nope")
+
+
+def test_failed_overwrite_leaves_previous_tree_intact(view, tmp_path):
+    ms = _ms_all_kinds(view); save(ms, tmp_path / "ms")
+    before = sorted(str(p.relative_to(tmp_path)) for p in (tmp_path / "ms").rglob("*"))
+    ms.products["gal"].extras["bad"] = {"a": 1}      # the dict is mutable; bypasses validation
+    with pytest.raises(TypeError):
+        save(ms, tmp_path / "ms", overwrite=True)
+    assert not (tmp_path / "ms.tmp").exists()
+    assert sorted(str(p.relative_to(tmp_path)) for p in (tmp_path / "ms").rglob("*")) == before
+    del ms.products["gal"].extras["bad"]
+    assert load(tmp_path / "ms").spec == ms.spec
+    assert isinstance(ms.spec.notes["t"], list)

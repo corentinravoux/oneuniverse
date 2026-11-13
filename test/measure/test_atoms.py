@@ -53,3 +53,24 @@ def test_regions_coarser_nside():
     r = Regions.from_window(w, 4, nside=8)
     assert r.nside == 8 and len(r.pixel_region) == 12 * 64
     with pytest.raises(ValidationError): Regions.from_window(w, 4, nside=64)
+
+
+def test_atom_arrays_read_only():
+    import pytest
+    from oneuniverse.measure.atoms import Nz, Regions, Window
+    nz = Nz([0, 1, 2], [1.0, 2.0], "spec_hist")
+    w = Window.from_mask(np.ones(12 * 4 ** 2), nside=4)
+    w2 = Window(4, True, np.ones(192), "mask", {"s": np.ones(192, np.int32)})
+    r = Regions(4, True, 1, np.zeros(192, np.int32), "t")
+    for a in (nz.edges, nz.counts, w.mask, w2.systematics["s"], r.pixel_region):
+        with pytest.raises(ValueError):
+            a[0] = 5
+    assert w2.systematics["s"].dtype == np.float64
+
+
+def test_window_systematics_must_be_numeric():
+    import pytest
+    from oneuniverse._core.errors import ValidationError
+    from oneuniverse.measure.atoms import Window
+    with pytest.raises(ValidationError, match="numeric"):
+        Window(4, True, np.ones(192), "mask", {"s": ["a"] * 192})

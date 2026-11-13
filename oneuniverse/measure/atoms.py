@@ -53,6 +53,8 @@ class Nz:
             bins = tuple(int(b) for b in bins)
             if counts.ndim != 2 or len(bins) != counts.shape[0]:
                 raise ValidationError("Nz bins must label the rows of 2-D counts")
+        edges.setflags(write=False)
+        counts.setflags(write=False)
         _set(self, "edges", edges)
         _set(self, "counts", counts)
         _set(self, "bins", bins)
@@ -105,10 +107,15 @@ class Window:
             raise ValidationError(f"Window source must be 'mask' or 'footprint', got {self.source!r}")
         systematics = {}
         for k, v in dict(self.systematics).items():
-            a = np.array(v)
+            try:
+                a = np.array(v, dtype=np.float64)
+            except (TypeError, ValueError) as e:
+                raise ValidationError(f"systematic {k!r} must be numeric: {e}") from e
             if a.shape != (npix,):
                 raise ValidationError(f"systematic {k!r} must have length {npix}, got shape {a.shape}")
+            a.setflags(write=False)
             systematics[str(k)] = a
+        mask.setflags(write=False)
         _set(self, "nest", bool(self.nest))
         _set(self, "mask", mask)
         _set(self, "systematics", systematics)
@@ -156,6 +163,7 @@ class Regions:
                 f"pixel_region must have length {12 * self.nside ** 2}, got shape {pr.shape}")
         if self.n_regions < 1 or (pr.size and pr.max() >= self.n_regions) or (pr.size and pr.min() < -1):
             raise ValidationError("pixel_region values must lie in [-1, n_regions)")
+        pr.setflags(write=False)
         _set(self, "nest", bool(self.nest))
         _set(self, "n_regions", int(self.n_regions))
         _set(self, "pixel_region", pr)

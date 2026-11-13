@@ -23,6 +23,7 @@ CATALOG_CORE = ("ra", "dec", "z", "weight", "region_id", "source_row", "partitio
 RANDOMS_CORE = ("ra", "dec", "z", "weight", "region_id")
 FORBIDDEN_COLUMNS = frozenset({"comoving_distance", "r_comoving", "dist_mpc", "dist_mpc_h", "chi"})
 _FLOAT_COLS = ("ra", "dec", "z", "weight")
+_PER_OBJECT_EXTRAS = ("z_draws", "z_pdf_mean", "z_pdf_std", "tomo_bin", "e1", "e2")
 _INT_COLS = ("region_id", "source_row", "partition", "offset")
 
 
@@ -60,9 +61,10 @@ def _normalise_json(value, what: str):
 class Product:
     """Catalog + randoms + window + Nz + extras + provenance.
 
-    extras: name -> ndarray or pa.Table. No length check is made: per-object
-    arrays conventionally have first dimension == catalog rows, but global
-    arrays (e.g. a per-bin vector) are allowed; the producer documents which.
+    extras: name -> ndarray (stored read-only) or pa.Table. The known per-object
+    keys z_draws, z_pdf_mean, z_pdf_std, tomo_bin, e1, e2 must have leading
+    dimension == catalog rows; other arrays (e.g. a per-bin vector) are not
+    length-checked.
     provenance is normalised to JSON-native types.
     """
     catalog: pa.Table
@@ -91,12 +93,23 @@ class Product:
             if k in FORBIDDEN_COLUMNS:
                 raise ValidationError(f"extras key {k!r} is a cosmology-dependent quantity")
             if isinstance(v, np.ndarray):
-                extras[k] = v.copy()
+                v = v.copy()
+                v.setflags(write=False)
+                extras[k] = v
             elif isinstance(v, pa.Table):
+                for bad in sorted(FORBIDDEN_COLUMNS & set(v.column_names)):
+                    raise ValidationError(
+                        f"extras[{k!r}] column {bad!r} is a cosmology-dependent quantity")
                 extras[k] = v
             else:
                 raise TypeError(
                     f"extras[{k!r}] must be a numpy array or pyarrow Table, got {type(v).__name__}")
+            if k in _PER_OBJECT_EXTRAS:
+                length = v.shape[0] if isinstance(v, np.ndarray) and v.ndim else None
+                if length != self.catalog.num_rows:
+                    raise ValidationError(
+                        f"extras[{k!r}] must have leading dimension == catalog rows "
+                        f"({self.catalog.num_rows}), got {getattr(v, 'shape', None)}")
         object.__setattr__(self, "extras", extras)
         object.__setattr__(self, "provenance", _normalise_json(dict(self.provenance), "provenance"))
 
@@ -130,6 +143,7 @@ class FieldMap(Product):
             a = np.array(getattr(self, name), dtype=np.float64)
             if a.shape != (npix,):
                 raise ValidationError(f"{name} must have length {npix}, got shape {a.shape}")
+            a.setflags(write=False)
             object.__setattr__(self, name, a)
         object.__setattr__(self, "nest", bool(self.nest))
 

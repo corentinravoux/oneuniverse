@@ -99,3 +99,30 @@ def test_measurement_set_rejects_null_region_id():
     r = Regions(1, True, 1, np.zeros(12, np.int32), "x")
     with pytest.raises(ValidationError, match="null"):
         MeasurementSet({"g": Product(cat)}, MeasurementSpec("m", ("g",), ("pk",)), r)
+
+
+def _cat3(n=3):
+    import pyarrow as pa
+    return pa.table({"ra": np.zeros(n), "dec": np.zeros(n), "z": np.full(n, .5), "weight": np.ones(n),
+                     "region_id": np.zeros(n, np.int32), "source_row": np.arange(n),
+                     "partition": np.zeros(n, np.int32), "offset": np.arange(n)})
+
+
+def test_extras_forbidden_table_column_and_leading_dim():
+    import pyarrow as pa
+    with pytest.raises(ValidationError):
+        Product(_cat3(), extras={"t": pa.table({"chi": [1.0]})})
+    for k in ("z_draws", "z_pdf_mean", "z_pdf_std", "tomo_bin", "e1", "e2"):
+        with pytest.raises(ValidationError, match="leading dimension"):
+            Product(_cat3(3), extras={k: np.zeros(4)})
+    Product(_cat3(3), extras={"z_draws": np.zeros((3, 2)), "other": np.zeros(9)})
+
+
+def test_extras_and_fieldmap_read_only():
+    p = Product(_cat3(), extras={"vec": np.arange(3.0)})
+    with pytest.raises(ValueError):
+        p.extras["vec"][0] = 1
+    fm = FieldMap(_cat3(0), values=np.zeros(192), mask=np.ones(192), nside=4)
+    for a in (fm.values, fm.mask):
+        with pytest.raises(ValueError):
+            a[0] = 1
