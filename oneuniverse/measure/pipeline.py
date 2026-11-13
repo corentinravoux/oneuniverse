@@ -7,7 +7,8 @@ Nothing here depends on a cosmology.
 """
 from __future__ import annotations
 
-import functools
+import dataclasses
+import hashlib
 from collections.abc import Sequence
 from typing import Literal
 
@@ -17,6 +18,7 @@ import pyarrow as pa
 
 from oneuniverse._core.errors import FormatError, ValidationError
 from oneuniverse._core.healpix import cone_pixels, patch_pixels, radec_to_pix
+import oneuniverse
 from oneuniverse.combine.weights import QualityMaskWeight, Weight
 from oneuniverse.data.schema import Geometry
 from oneuniverse.data.view import DatasetView
@@ -143,13 +145,16 @@ def _uniform_in_pixels(nside: int, pix: np.ndarray, rng) -> tuple[np.ndarray, np
 
 
 def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: int,
-                     cone=None, patch=None) -> pa.Table:
+                     cone=None, patch=None, z: tuple[float, float] | None = None) -> pa.Table:
     """Exactly *n* random points following the window and the (1-D) n(z).
 
     Pixels are drawn with probability proportional to the mask; the position is
     a uniform point inside a uniformly chosen NEST child at nside*8 (rejection
     in a cap around the child centre); z comes from the inverse CDF of
-    ``nz.normalised()`` (uniform inside each bin); weight 1. Points outside the
+    ``nz.normalised()`` (uniform inside each bin); weight 1. With *z* = (z0, z1)
+    the n(z) is truncated to [z0, z1] and renormalised first (piecewise-constant
+    density, partial bins kept in proportion to their width), so no random lies
+    outside the data range. Points outside the
     optional exact *cone* / *patch* or outside every region are rejected and
     redrawn until exactly *n* remain. Deterministic for a seed.
     """
@@ -166,9 +171,14 @@ def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: 
         raise _empty("window")
     cdf_pix = np.cumsum(mask)
     cdf_pix /= cdf_pix[-1]
-    cdf_z = np.cumsum(nzn.counts)
+    lo, hi = nzn.edges[:-1].copy(), nzn.edges[1:].copy()
+    if z is not None:
+        lo, hi = np.maximum(lo, float(z[0])), np.minimum(hi, float(z[1]))
+    mass = nzn.counts / np.diff(nzn.edges) * np.maximum(hi - lo, 0.0)
+    if not mass.sum() > 0:
+        raise ValidationError("the n(z) has no mass inside the requested z range")
+    cdf_z = np.cumsum(mass)
     cdf_z /= cdf_z[-1]
-    edges = nzn.edges
     fine = window.nside * 8
     rng = np.random.default_rng(seed)
     chunks, have = [], 0
@@ -180,13 +190,13 @@ def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: 
         child = pix * 64 + rng.integers(0, 64, need)
         ra, dec = _uniform_in_pixels(fine, child, rng)
         u = rng.random(need)
-        b = np.minimum(np.searchsorted(cdf_z, u, side="right"), len(edges) - 2)
+        b = np.minimum(np.searchsorted(cdf_z, u, side="right"), len(lo) - 1)
         lo_cdf = np.where(b > 0, cdf_z[np.maximum(b - 1, 0)], 0.0)
         frac = (u - lo_cdf) / np.maximum(cdf_z[b] - lo_cdf, 1e-300)
-        z = edges[b] + np.clip(frac, 0.0, 1.0) * (edges[b + 1] - edges[b])
+        zz = lo[b] + np.clip(frac, 0.0, 1.0) * (hi[b] - lo[b])
         rid = regions.assign(ra, dec)
         ok = (rid >= 0) & _in_selection(ra, dec, cone, patch)
-        chunks.append((ra[ok], dec[ok], z[ok], rid[ok]))
+        chunks.append((ra[ok], dec[ok], zz[ok], rid[ok]))
         have += int(ok.sum())
         drawn += need
         rate = max(have / drawn, 1e-3)
@@ -194,23 +204,23 @@ def generate_randoms(window: Window, nz: Nz, regions: Regions, *, n: int, seed: 
             break
     else:
         raise ValidationError("could not draw enough randoms inside the regions")
-    ra, dec, z, rid = (np.concatenate([c[i] for c in chunks])[:n] for i in range(4))
-    return pa.table({"ra": ra, "dec": dec, "z": z, "weight": np.ones(n),
+    ra, dec, zr, rid = (np.concatenate([c[i] for c in chunks])[:n] for i in range(4))
+    return pa.table({"ra": ra, "dec": dec, "z": zr, "weight": np.ones(n),
                      "region_id": rid.astype(np.int32)}).select(list(RANDOMS_CORE))
 
 
 def randoms_from_view(view: DatasetView, *, z: tuple[float, float], window: Window,
                       regions: Regions, n_max: int | None = None, cone=None,
-                      patch=None) -> pa.Table:
+                      patch=None, seed: int = 0) -> pa.Table:
     """Randoms ingested from a view: rows in *z* and inside *window*.
 
     Region ids are assigned from *regions* (rows outside are dropped); the
     ``weight`` column is used when present, else 1. *n_max* subsamples
-    deterministically (fixed seed, row order kept). Optional exact *cone* /
+    deterministically (``default_rng(seed)``, row order kept). Optional exact *cone* /
     *patch* cut the randoms too. No positions are carried.
     """
     cols = ["ra", "dec", "z"] + (["weight"] if "weight" in view.columns else [])
-    t = view.table(columns=cols, z=z)
+    t = view.table(columns=cols, z=z, cone=cone, patch=patch)
     if t.num_rows == 0:
         raise _empty("selecting the randoms")
     ra, dec, zz = (_f64(t, c) for c in ("ra", "dec", "z"))
@@ -222,7 +232,7 @@ def randoms_from_view(view: DatasetView, *, z: tuple[float, float], window: Wind
     if len(ra) == 0:
         raise _empty("applying the window to the randoms")
     if n_max is not None and len(ra) > int(n_max):
-        sel = np.sort(np.random.default_rng(0).choice(len(ra), int(n_max), replace=False))
+        sel = np.sort(np.random.default_rng(int(seed)).choice(len(ra), int(n_max), replace=False))
         ra, dec, zz, w, rid = ra[sel], dec[sel], zz[sel], w[sel], rid[sel]
     return pa.table({"ra": ra, "dec": dec, "z": zz, "weight": w,
                      "region_id": rid.astype(np.int32)}).select(list(RANDOMS_CORE))
@@ -269,6 +279,11 @@ def _build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight
         raise ValidationError(f"randoms must be 'generate', 'none' or a DatasetView, got {randoms!r}")
     if randoms == "generate" and int(random_factor) < 1:
         raise ValidationError("random_factor must be >= 1")
+    ne = np.asarray(nz_edges, np.float64)
+    Nz(ne, np.zeros(max(len(ne) - 1, 1)) if ne.ndim == 1 else np.zeros(1), "spec_hist")
+    if not (ne[0] <= float(z[0]) and ne[-1] >= float(z[1])):
+        raise ValidationError(
+            f"nz_edges [{ne[0]}, {ne[-1]}] must cover z = ({z[0]}, {z[1]})")
     qual = None
     if quality is not None:
         qcol, qop, qthr = quality
@@ -295,6 +310,7 @@ def _build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight
     ra, dec = _f64(t, "ra"), _f64(t, "dec")
     reg = _regions_arg(window, regions, seed)
     rid = reg.assign(ra, dec)
+    n_dropped = int((rid < 0).sum())
     t = _filter(t, rid >= 0)
     if t.num_rows == 0:
         raise _empty("region assignment")
@@ -310,13 +326,13 @@ def _build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight
     nz = Nz(nz_edges, counts, "spec_hist")
     if randoms == "generate":
         rnd = generate_randoms(window, nz, reg, n=int(random_factor) * catalog.num_rows, seed=seed,
-                               cone=cone, patch=patch)
+                               cone=cone, patch=patch, z=z)
         rsrc = "generated"
     elif randoms == "none":
         rnd, rsrc = None, "none"
     else:
         rnd = randoms_from_view(randoms, z=z, window=window, regions=reg, cone=cone, patch=patch,
-                                n_max=int(random_factor) * catalog.num_rows)
+                                n_max=int(random_factor) * catalog.num_rows, seed=seed)
         rsrc = "ingested"
     prov = {
         "dataset": view.manifest.survey.name, "version": list(view.version),
@@ -326,13 +342,50 @@ def _build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight
         "n": catalog.num_rows, "seed": int(seed), "n_regions": reg.n_regions,
         "quality": list(quality) if quality is not None else None,
         "keep_columns": keep_columns, **winfo,
+        "cone": dataclasses.asdict(cone) if cone is not None else None,
+        "patch": dataclasses.asdict(patch) if patch is not None else None,
+        "random_factor": int(random_factor),
+        "nz_edges": [float(e) for e in ne],
+        "mask": ({"nside": mask.nside, "nest": mask.nest,
+                  "sha256": hashlib.sha256(np.ascontiguousarray(mask.mask).tobytes()).hexdigest()}
+                 if mask is not None else None),
+        "oneuniverse_version": oneuniverse.__version__,
+        "randoms_nz": "weighted",
+        "n_dropped_outside_regions": n_dropped,
     }
+    if isinstance(randoms, DatasetView):
+        prov["randoms_dataset"] = randoms.manifest.survey.name
+        prov["randoms_version"] = list(randoms.version)
     return Product(catalog=catalog, randoms=rnd, window=window, nz=nz, provenance=prov), reg
 
 
-@functools.wraps(_build_pointset)
-def build_pointset(*args, **kwargs) -> Product:
-    return _build_pointset(*args, **kwargs)[0]
+def build_pointset(view: DatasetView, *, z: tuple[float, float], weight: Weight | None = None,
+                  nz_edges: Sequence[float], mask: Window | None = None,
+                  regions: Regions | int = 20,
+                  randoms: Literal["generate", "none"] | DatasetView = "generate",
+                  random_factor: int = 10, keep_columns: Sequence[str] = (),
+                  quality: tuple[str, str, float] | None = None, cone=None, patch=None,
+                  seed: int = 0) -> Product:
+    """Build a point-set Product from an OUF view (select, clean, weight, window,
+    regions, n(z), randoms, provenance).
+
+    *nz_edges* must cover *z* (``nz_edges[0] <= z[0]`` and ``nz_edges[-1] >=
+    z[1]``), else ValidationError. The n(z) is the weighted histogram of the
+    data on *nz_edges*; generated randoms follow that weighted n(z) truncated to
+    *z* and carry weight 1, so do not re-apply the same weights to the randoms.
+    Without *mask* the window is a footprint fallback; an int *regions* builds
+    k-means jackknife regions (capped at nside 64). Rows falling outside a given
+    Regions' pixels are dropped and counted in
+    ``provenance["n_dropped_outside_regions"]``. The provenance records the
+    selection (cone, patch, z, quality), weights, mask hash, nz_edges, randoms
+    settings, seed and the oneuniverse version, enough to rebuild the product.
+
+    Returns the Product (see ``_build_pointset`` for the full step list).
+    """
+    return _build_pointset(view, z=z, weight=weight, nz_edges=nz_edges, mask=mask,
+                           regions=regions, randoms=randoms, random_factor=random_factor,
+                           keep_columns=keep_columns, quality=quality, cone=cone, patch=patch,
+                           seed=seed)[0]
 
 
 def build_sightlines(view: DatasetView, *, z: tuple[float, float],

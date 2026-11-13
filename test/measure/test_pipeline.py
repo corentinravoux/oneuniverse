@@ -12,7 +12,7 @@ from oneuniverse.data import DatasetView
 from oneuniverse.measure.atoms import Nz, Regions, Window
 from oneuniverse.measure.pipeline import (build_pointset, build_sightlines, generate_randoms,
                                           randoms_from_view)
-from oneuniverse.measure.product import CATALOG_CORE, Sightline
+from oneuniverse.measure.product import CATALOG_CORE, Product, Sightline
 
 
 @pytest.fixture(scope="module")
@@ -165,3 +165,55 @@ def test_ingested_randoms_capped_at_factor(view):
     assert prod.randoms.num_rows == prod.n
     small = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), randoms=view, random_factor=1, quality=("quality", ">=", 2))
     assert small.randoms.num_rows == small.n < prod.n
+
+
+def test_randoms_z_truncated_to_data_range_coarse_bin(view):
+    prod = build_pointset(view, z=(0.3, 1.5), nz_edges=[0.0, 3.0], regions=8, seed=3)
+    zr = prod.randoms["z"].to_numpy()
+    assert zr.min() >= 0.3 and zr.max() <= 1.5
+    assert ks_2samp(prod.catalog["z"].to_numpy(), zr).pvalue > 1e-3
+
+
+def test_randoms_z_generic_grid(view):
+    prod = build_pointset(view, z=(0.8, 2.1), nz_edges=np.arange(0, 3.01, 0.25), regions=8, seed=3)
+    zr = prod.randoms["z"].to_numpy()
+    assert zr.min() >= 0.8 and zr.max() <= 2.1
+
+
+def test_nz_edges_must_cover_z(view):
+    with pytest.raises(ValidationError, match="cover"):
+        build_pointset(view, z=(0.3, 1.5), nz_edges=[0.4, 3.0])
+    with pytest.raises(ValidationError, match="cover"):
+        build_pointset(view, z=(0.3, 1.5), nz_edges=[0.0, 1.4])
+
+
+def test_provenance_reproducible_fields(view, tmp_path):
+    import oneuniverse
+    from oneuniverse._core.geometry import Cone
+    m = np.zeros(12 * 64**2, np.float32); m[radec_to_pix(64, np.array([130.0]), np.array([10.0]))[0]] = 1.0
+    cone = Cone(130.0, 10.0, 5.0)
+    prod = build_pointset(view, z=(0.1, 1.5), nz_edges=np.linspace(0.1, 1.5, 5),
+                          mask=Window.from_mask(m, nside=64), cone=cone, regions=1, random_factor=3)
+    pv = prod.provenance
+    assert pv["cone"] == {"ra": 130.0, "dec": 10.0, "radius": 5.0} and pv["patch"] is None
+    assert pv["random_factor"] == 3 and pv["nz_edges"] == list(np.linspace(0.1, 1.5, 5))
+    assert pv["mask"]["nside"] == 64 and len(pv["mask"]["sha256"]) == 64
+    assert pv["oneuniverse_version"] == oneuniverse.__version__ and pv["randoms_nz"] == "weighted"
+    assert pv["n_dropped_outside_regions"] == 0
+    plain = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), regions=4)
+    assert plain.provenance["mask"] is None and plain.provenance["cone"] is None
+
+
+def test_provenance_ingested_randoms(view, tmp_path):
+    p = tmp_path / "rnd"
+    write_synthetic_dataset(p, 5000, 1, ra_range=(100, 160), dec_range=(-10, 30))
+    rv = DatasetView.from_path(p)
+    prod = build_pointset(view, z=(0.3, 1.0), nz_edges=np.linspace(0.3, 1.0, 8), regions=4, randoms=rv)
+    assert prod.provenance["randoms_dataset"] == rv.manifest.survey.name
+    assert prod.provenance["randoms_version"] == list(rv.version)
+
+
+def test_build_pointset_own_docstring():
+    import inspect
+    assert build_pointset.__doc__ and "nz_edges" in build_pointset.__doc__
+    assert inspect.signature(build_pointset).return_annotation in (Product, "Product")
