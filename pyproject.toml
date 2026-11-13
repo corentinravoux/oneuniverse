@@ -34,8 +34,6 @@ dev = [
     "matplotlib>=3.8",
     "duckdb>=1.0",
     "ruff",
-    # old simulation/ still imports yaml until R5 Task 1
-    "pyyaml>=6.0",
 ]
 docs = [
     "mkdocs-material>=9.5",
