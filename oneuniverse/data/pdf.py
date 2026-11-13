@@ -1,352 +1,280 @@
-"""Probabilistic-redshift support for OUF 2.1.
+"""Photo-z probability densities stored as a manifest extension.
 
-Defines:
+Three representations of ``p(z)`` per object, all stored in one list column
+(default ``z_pdf``):
 
-* :class:`PdfParameterisation` — enum of supported PDF representations
-  (``interp`` / ``quant`` / ``mixmod``). Mirrors the ``qp`` package
-  (Malz & Marshall 2018, arXiv:1806.00014) but stays pure-numpy so
-  ``qp`` remains an optional dependency.
-* :class:`PdfSpec` — dataclass stored in ``Manifest.pdf_spec``; single
-  source of truth for how to reconstruct a PDF from on-disk columns.
-* :class:`ProbabilisticRedshift` — vectorised reader returning moments,
-  CDF, PPF, samples.
+* ``interp``: ``p(z)`` sampled on a shared, strictly increasing ``grid``
+  (fixed-size list of ``len(grid)`` float32);
+* ``quant``: the redshift quantiles at shared ``quant_levels`` in (0, 1)
+  (fixed-size list of ``len(quant_levels)`` float32);
+* ``sample``: a ragged list of posterior draws per object.
+
+The manifest carries ``extensions["pdf"] = {"version": 1, **spec.to_dict()}``.
+Everything is vectorised over rows.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Literal, Sequence
 
 import numpy as np
-import pandas as pd
+import pyarrow as pa
 
-# np.trapz was removed in NumPy 2.5; np.trapezoid exists from NumPy 2.0.
-_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+from oneuniverse._core.errors import SchemaError, ValidationError
 
-
-class PdfParameterisation(str, Enum):
-    INTERP = "interp"
-    QUANT = "quant"
-    MIXMOD = "mixmod"
-    SAMPLE = "sample"   # Phase 18 — variable-length per-row z-draws.
-    HIST = "hist"       # Phase 18 — per-row bin heights on shared edges.
+_KINDS = ("interp", "sample", "quant")
 
 
-_KNOWN = {p.value for p in PdfParameterisation}
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PdfSpec:
-    """How to reconstruct a probabilistic redshift PDF from on-disk columns.
+    """How the photo-z PDF is stored. ``n_components`` is the per-row width
+    (``None`` for the ragged ``sample`` kind)."""
 
-    Parameters
-    ----------
-    parameterisation
-        One of ``"interp"``, ``"quant"``, ``"mixmod"``.
-    n_components
-        Fixed length of every PDF array in this dataset (grid points for
-        interp, quantiles for quant, mixture components for mixmod).
-    grid
-        For ``interp``: the common z grid (length ``n_components``).
-        For ``mixmod``: ignored. For ``quant``: ignored — use
-        ``quant_levels`` instead.
-    grid_kind
-        ``"z"`` for redshift grid, ``"quantile"`` for quantile levels,
-        ``"component"`` for mixture indices.
-    quant_levels
-        For ``quant``: quantile levels in [0, 1] (length ``n_components``).
-    """
-
-    parameterisation: str
-    n_components: int
-    grid: Optional[List[float]]
-    grid_kind: str
-    quant_levels: Optional[List[float]] = None
-    hist_edges: Optional[List[float]] = None
-    value_column: str = "z_pdf_values"
-    sigma_column: str = "z_pdf_sigma"
-    weights_column: str = "z_pdf_weights"
-    grid_mask: Optional[List[bool]] = None
-    axis_labels: tuple = ("z",)
-    extra: Dict[str, Any] = field(default_factory=dict)
+    kind: Literal["interp", "sample", "quant"]
+    grid: tuple[float, ...] | None = None
+    quant_levels: tuple[float, ...] | None = None
+    value_column: str = "z_pdf"
 
     def __post_init__(self) -> None:
-        if self.parameterisation not in _KNOWN:
-            raise ValueError(
-                f"unknown PDF parameterisation {self.parameterisation!r}; "
-                f"allowed: {sorted(_KNOWN)}"
-            )
-        if self.n_components <= 0:
-            raise ValueError("n_components must be > 0")
-        if self.parameterisation == "interp" and not self.grid:
-            raise ValueError("interp parameterisation requires a non-empty grid")
-        if self.parameterisation == "quant" and not self.quant_levels:
-            raise ValueError("quant parameterisation requires quant_levels")
-        if self.parameterisation == "hist" and not self.hist_edges:
-            raise ValueError(
-                "hist parameterisation requires hist_edges of length "
-                "n_components+1"
-            )
-        if (
-            self.parameterisation == "hist"
-            and self.hist_edges is not None
-            and len(self.hist_edges) != self.n_components + 1
-        ):
-            raise ValueError(
-                f"hist_edges length {len(self.hist_edges)} must be "
-                f"n_components+1 ({self.n_components + 1})"
-            )
-        # Normalise sequences to plain Python floats so JSON round-trips
-        # (np.float32 / np.float64 are equality-noisy after str↔float).
-        if self.grid is not None:
-            object.__setattr__(self, "grid", [float(x) for x in self.grid])
-        if self.quant_levels is not None:
-            object.__setattr__(
-                self, "quant_levels", [float(x) for x in self.quant_levels],
-            )
-        if self.hist_edges is not None:
-            object.__setattr__(
-                self, "hist_edges", [float(x) for x in self.hist_edges],
-            )
-        if self.grid_mask is not None:
-            object.__setattr__(
-                self, "grid_mask", [bool(x) for x in self.grid_mask],
-            )
+        if self.kind not in _KINDS:
+            raise ValidationError(f"pdf kind must be one of {_KINDS}, got {self.kind!r}")
+        grid = None if self.grid is None else tuple(float(g) for g in self.grid)
+        lev = None if self.quant_levels is None else tuple(float(q) for q in self.quant_levels)
+        object.__setattr__(self, "grid", grid)
+        object.__setattr__(self, "quant_levels", lev)
+        if self.kind == "interp":
+            if grid is None or len(grid) < 2 or not np.all(np.diff(grid) > 0):
+                raise ValidationError(
+                    "interp pdf needs a grid of >= 2 strictly increasing values")
+        elif self.kind == "quant":
+            if (lev is None or len(lev) < 2 or not np.all(np.diff(lev) > 0)
+                    or lev[0] <= 0.0 or lev[-1] >= 1.0):
+                raise ValidationError(
+                    "quant pdf needs >= 2 strictly increasing quant_levels inside (0, 1)")
+        if not self.value_column:
+            raise ValidationError("value_column must be a non-empty string")
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "parameterisation": self.parameterisation,
-            "n_components": int(self.n_components),
-            "grid": [float(x) for x in self.grid] if self.grid is not None else None,
-            "grid_kind": self.grid_kind,
-            "quant_levels": (
-                [float(x) for x in self.quant_levels]
-                if self.quant_levels is not None else None
-            ),
-            "hist_edges": (
-                [float(x) for x in self.hist_edges]
-                if self.hist_edges is not None else None
-            ),
-            "value_column": self.value_column,
-            "sigma_column": self.sigma_column,
-            "weights_column": self.weights_column,
-            "grid_mask": (
-                [bool(x) for x in self.grid_mask]
-                if self.grid_mask is not None else None
-            ),
-            "axis_labels": list(self.axis_labels),
-            "extra": dict(self.extra),
-        }
+    @property
+    def n_components(self) -> int | None:
+        if self.kind == "interp":
+            return len(self.grid)
+        if self.kind == "quant":
+            return len(self.quant_levels)
+        return None
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind,
+                "grid": None if self.grid is None else list(self.grid),
+                "quant_levels": None if self.quant_levels is None else list(self.quant_levels),
+                "value_column": self.value_column}
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "PdfSpec":
-        return cls(
-            parameterisation=d["parameterisation"],
-            n_components=int(d["n_components"]),
-            grid=list(d["grid"]) if d.get("grid") is not None else None,
-            grid_kind=d["grid_kind"],
-            quant_levels=(
-                list(d["quant_levels"]) if d.get("quant_levels") is not None else None
-            ),
-            hist_edges=(
-                list(d["hist_edges"]) if d.get("hist_edges") is not None else None
-            ),
-            value_column=d.get("value_column", "z_pdf_values"),
-            sigma_column=d.get("sigma_column", "z_pdf_sigma"),
-            weights_column=d.get("weights_column", "z_pdf_weights"),
-            grid_mask=(
-                list(d["grid_mask"]) if d.get("grid_mask") is not None else None
-            ),
-            axis_labels=tuple(d.get("axis_labels", ("z",))),
-            extra=dict(d.get("extra", {})),
-        )
+    def from_dict(cls, d: dict) -> PdfSpec:
+        try:
+            return cls(kind=d["kind"],
+                       grid=None if d.get("grid") is None else tuple(d["grid"]),
+                       quant_levels=(None if d.get("quant_levels") is None
+                                     else tuple(d["quant_levels"])),
+                       value_column=d.get("value_column", "z_pdf"))
+        except KeyError as e:
+            raise ValidationError(f"pdf spec is missing key {e}") from e
 
 
 class ProbabilisticRedshift:
-    """Vectorised PDF accessor bound to a :class:`PdfSpec`.
+    """Per-object photo-z PDFs with vectorised summaries and sampling."""
 
-    Supports all three parameterisations:
-
-    * ``interp``: ``values`` are ``p(z)`` sampled on the common ``grid``.
-    * ``quant``: ``values`` are ``z(q)`` at the common ``quant_levels``;
-      pass ``grid=None`` (it is reconstructed from the spec).
-    * ``mixmod``: build via :meth:`from_mixmod` with ``mu``, ``sigma``,
-      ``w`` arrays of shape ``(n_rows, n_components)``.
-    """
-
-    def __init__(
-        self,
-        spec: PdfSpec,
-        values: np.ndarray,
-        grid,
-    ) -> None:
+    def __init__(self, spec: PdfSpec, values) -> None:
         self.spec = spec
-        self._mixmod = None
-
-        if spec.parameterisation == "interp":
-            if values.ndim != 2:
-                raise ValueError(f"values must be 2D, got shape {values.shape}")
-            if grid is None:
-                raise ValueError("interp requires a grid")
-            if values.shape[1] != len(grid):
-                raise ValueError(
-                    f"values second axis ({values.shape[1]}) must match "
-                    f"grid length ({len(grid)})"
-                )
-            self.values = np.asarray(values, dtype=np.float64)
-            self.grid = np.asarray(grid, dtype=np.float64)
-        elif spec.parameterisation == "quant":
-            if spec.quant_levels is None:
-                raise ValueError("quant requires PdfSpec.quant_levels")
-            self.values = np.asarray(values, dtype=np.float64)
-            self.grid = np.asarray(spec.quant_levels, dtype=np.float64)
-        elif spec.parameterisation == "mixmod":
-            # Caller should use from_mixmod; this branch only handles the
-            # rare direct-construction case for serialisation paths.
-            self.values = np.asarray(values, dtype=np.float64)
-            self.grid = np.arange(spec.n_components, dtype=np.float64)
-        elif spec.parameterisation == "sample":
-            # Ragged: object-dtype array of per-row 1-D float64 arrays.
-            self.values = values
-            self.grid = None
-        elif spec.parameterisation == "hist":
-            if spec.hist_edges is None:
-                raise ValueError("hist parameterisation requires hist_edges")
-            self.values = np.asarray(values, dtype=np.float64)
-            edges = np.asarray(spec.hist_edges, dtype=np.float64)
-            self.grid = 0.5 * (edges[:-1] + edges[1:])  # bin centres
-            self._edges = edges
+        if spec.kind == "sample":
+            if isinstance(values, np.ndarray) and values.ndim == 2:
+                values = list(values)
+            rows = [np.asarray(v, dtype=np.float64).ravel() for v in values]
+            self._counts = np.array([r.size for r in rows], np.int64)
+            self._offsets = np.concatenate([[0], np.cumsum(self._counts)])
+            self._flat = np.concatenate(rows) if rows else np.empty(0)
+            self._n = len(rows)
+            self._values = None
         else:
-            raise ValueError(
-                f"unsupported parameterisation {spec.parameterisation!r}"
-            )
-
-    @classmethod
-    def from_dataframe(
-        cls, df: pd.DataFrame, spec: PdfSpec,
-    ) -> "ProbabilisticRedshift":
-        if spec.parameterisation == "mixmod":
-            mu = np.stack(df[spec.value_column].to_numpy())
-            sigma = np.stack(df[spec.sigma_column].to_numpy())
-            w = np.stack(df[spec.weights_column].to_numpy())
-            return cls.from_mixmod(spec, mu, sigma, w)
-        raw = df[spec.value_column].to_numpy()
-        if spec.parameterisation == "sample":
-            ragged = np.empty(len(raw), dtype=object)
-            for i, r in enumerate(raw):
-                ragged[i] = np.asarray(r, dtype=np.float64)
-            return cls(spec, ragged, grid=None)
-        values = np.stack([np.asarray(r, dtype=np.float64) for r in raw])
-        if spec.parameterisation == "interp":
-            if spec.grid is None:
-                raise ValueError("interp PdfSpec.grid must be set")
-            return cls(spec, values, np.asarray(spec.grid, dtype=np.float64))
-        return cls(spec, values, grid=None)
-
-    @classmethod
-    def from_mixmod(
-        cls, spec: PdfSpec, mu: np.ndarray, sigma: np.ndarray, w: np.ndarray,
-    ) -> "ProbabilisticRedshift":
-        if spec.parameterisation != "mixmod":
-            raise ValueError("from_mixmod requires parameterisation='mixmod'")
-        obj = cls.__new__(cls)
-        obj.spec = spec
-        obj._mixmod = (
-            np.asarray(mu, dtype=np.float64),
-            np.asarray(sigma, dtype=np.float64),
-            np.asarray(w, dtype=np.float64),
-        )
-        obj.values = obj._mixmod[0]
-        obj.grid = np.arange(spec.n_components, dtype=np.float64)
-        return obj
+            arr = np.asarray(values, dtype=np.float64)
+            if arr.ndim != 2 or arr.shape[1] != spec.n_components:
+                raise ValidationError(
+                    f"{spec.kind} values must have shape (n, {spec.n_components}), "
+                    f"got {arr.shape}")
+            self._values = arr
+            self._n = arr.shape[0]
+            self._cdf = None
 
     def __len__(self) -> int:
-        return self.values.shape[0]
+        return self._n
 
-    # ── Moments ────────────────────────────────────────────────────────
+    # ---- construction -------------------------------------------------
+    @classmethod
+    def from_table(cls, table: pa.Table, spec: PdfSpec) -> ProbabilisticRedshift:
+        name = spec.value_column
+        if name not in table.schema.names:
+            raise SchemaError(f"pdf column {name!r} not in table")
+        col = table[name]
+        arr = col.combine_chunks() if isinstance(col, pa.ChunkedArray) else col
+        if not (pa.types.is_list(arr.type) or pa.types.is_large_list(arr.type)
+                or pa.types.is_fixed_size_list(arr.type)):
+            raise SchemaError(f"pdf column {name!r} must be a list type, got {arr.type}")
+        if arr.null_count:
+            raise SchemaError(f"pdf column {name!r} has null rows")
+        n = len(arr)
+        if spec.kind == "sample":
+            if pa.types.is_fixed_size_list(arr.type):
+                w = arr.type.list_size
+                return cls(spec, arr.flatten().to_numpy(zero_copy_only=False).reshape(n, w))
+            off = arr.offsets.to_numpy()
+            flat = arr.flatten().to_numpy(zero_copy_only=False)
+            off = off - off[0]
+            obj = cls.__new__(cls)
+            obj.spec = spec
+            obj._flat = flat.astype(np.float64, copy=False)
+            obj._offsets = off.astype(np.int64)
+            obj._counts = np.diff(obj._offsets)
+            obj._n = n
+            obj._values = None
+            return obj
+        k = spec.n_components
+        flat = arr.flatten().to_numpy(zero_copy_only=False)
+        if flat.size != n * k or (not pa.types.is_fixed_size_list(arr.type)
+                                  and np.any(np.diff(arr.offsets.to_numpy()) != k)):
+            raise SchemaError(f"pdf column {name!r} rows must all have {k} components")
+        return cls(spec, flat.reshape(n, k))
 
+    # ---- interp helpers ----------------------------------------------
+    def _need(self, *kinds: str, op: str) -> None:
+        if self.spec.kind not in kinds:
+            raise NotImplementedError(
+                f"{op}() is not available for pdf kind {self.spec.kind!r} "
+                f"(supported: {', '.join(kinds)})")
+
+    def _grid(self) -> np.ndarray:
+        return np.asarray(self.spec.grid, np.float64)
+
+    def _norm_cdf(self) -> np.ndarray:
+        """Row-normalised cumulative trapezoid, shape (n, ng); NaN rows if p integrates to <= 0."""
+        if self._cdf is None:
+            g, p = self._grid(), self._values
+            seg = 0.5 * (p[:, 1:] + p[:, :-1]) * np.diff(g)[None]
+            c = np.concatenate([np.zeros((self._n, 1)), np.cumsum(seg, axis=1)], axis=1)
+            tot = c[:, -1:]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                c = np.where(tot > 0, c / np.where(tot > 0, tot, 1.0), np.nan)
+            c = np.clip(c, 0.0, 1.0)
+            c[:, -1] = np.where(np.isnan(c[:, -1]), np.nan, 1.0)
+            self._cdf = c
+        return self._cdf
+
+    def _moments(self) -> tuple[np.ndarray, np.ndarray]:
+        g, p = self._grid(), self._values
+        w = np.diff(g)[None]
+        tot = np.sum(0.5 * (p[:, 1:] + p[:, :-1]) * w, axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            m1 = np.sum(0.5 * (p[:, 1:] * g[1:] + p[:, :-1] * g[:-1]) * w, axis=1) / tot
+            m2 = np.sum(0.5 * (p[:, 1:] * g[1:] ** 2 + p[:, :-1] * g[:-1] ** 2) * w,
+                        axis=1) / tot
+        return m1, np.sqrt(np.maximum(m2 - m1 ** 2, 0.0))
+
+    def _sample_moments(self) -> tuple[np.ndarray, np.ndarray]:
+        c = self._counts
+        cs = np.concatenate([[0.0], np.cumsum(self._flat)])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean = (cs[self._offsets[1:]] - cs[self._offsets[:-1]]) / c
+            dev2 = (self._flat - np.repeat(mean, c)) ** 2
+            cs2 = np.concatenate([[0.0], np.cumsum(dev2)])
+            std = np.sqrt((cs2[self._offsets[1:]] - cs2[self._offsets[:-1]]) / c)
+        return mean, std
+
+    def _quant_moments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Mean/std over u in [lev0, levN] of the piecewise-linear quantile function
+        (exact integrals per linear segment); tails beyond the levels are excluded."""
+        lev, q = np.asarray(self.spec.quant_levels, np.float64), self._values
+        du = np.diff(lev)[None]
+        a, b = q[:, :-1], q[:, 1:]
+        span = lev[-1] - lev[0]
+        m1 = np.sum(0.5 * (a + b) * du, axis=1) / span
+        m2 = np.sum((a * a + a * b + b * b) / 3.0 * du, axis=1) / span
+        return m1, np.sqrt(np.maximum(m2 - m1 ** 2, 0.0))
+
+    # ---- summaries ----------------------------------------------------
     def mean(self) -> np.ndarray:
-        if self.spec.parameterisation == "interp":
-            dz = self.grid[1] - self.grid[0]
-            return (self.values * self.grid[None, :]).sum(axis=1) * dz
-        if self.spec.parameterisation == "quant":
-            return _trapezoid(self.values, self.grid, axis=1)
-        if self.spec.parameterisation == "sample":
-            return np.array(
-                [float(np.mean(v)) for v in self.values], dtype=np.float64,
-            )
-        if self.spec.parameterisation == "hist":
-            weights = self.values
-            tot = weights.sum(axis=1, keepdims=True)
-            tot = np.where(tot == 0.0, 1.0, tot)
-            return (weights * self.grid[None, :]).sum(axis=1) / tot.squeeze(-1)
-        mu, _sigma, w = self._mixmod
-        return (w * mu).sum(axis=1)
+        """Mean redshift. For ``quant`` it is the central-mass estimate: tails beyond
+        the stored levels are excluded (integral of the piecewise-linear quantile
+        function over [lev0, levN], normalised by levN - lev0)."""
+        self._need("interp", "sample", "quant", op="mean")
+        if self.spec.kind == "quant":
+            return self._quant_moments()[0]
+        return self._moments()[0] if self.spec.kind == "interp" else self._sample_moments()[0]
 
     def std(self) -> np.ndarray:
-        if self.spec.parameterisation == "interp":
-            dz = self.grid[1] - self.grid[0]
-            m = self.mean()
-            var = (
-                self.values * (self.grid[None, :] - m[:, None]) ** 2
-            ).sum(axis=1) * dz
-            return np.sqrt(np.maximum(var, 0.0))
-        if self.spec.parameterisation == "quant":
-            m = self.mean()
-            var = _trapezoid((self.values - m[:, None]) ** 2, self.grid, axis=1)
-            return np.sqrt(np.maximum(var, 0.0))
-        mu, sigma, w = self._mixmod
-        m = self.mean()
-        second = (w * (mu ** 2 + sigma ** 2)).sum(axis=1)
-        return np.sqrt(np.maximum(second - m ** 2, 0.0))
+        """Standard deviation; for ``quant`` a truncated-tail estimate (see ``mean``)."""
+        self._need("interp", "sample", "quant", op="std")
+        if self.spec.kind == "quant":
+            return self._quant_moments()[1]
+        return self._moments()[1] if self.spec.kind == "interp" else self._sample_moments()[1]
 
-    # ── CDF / PPF / sampling ───────────────────────────────────────────
+    def cdf(self, z) -> np.ndarray:
+        """CDF at ``z`` (scalar or one value per row), linearly interpolated (interp only)."""
+        self._need("interp", op="cdf")
+        g, c = self._grid(), self._norm_cdf()
+        zz = np.broadcast_to(np.asarray(z, np.float64), (self._n,))
+        i = np.clip(np.searchsorted(g, zz), 1, g.size - 1)
+        w = np.clip((zz - g[i - 1]) / (g[i] - g[i - 1]), 0.0, 1.0)
+        c0 = np.take_along_axis(c, (i - 1)[:, None], 1)[:, 0]
+        c1 = np.take_along_axis(c, i[:, None], 1)[:, 0]
+        return c0 + w * (c1 - c0)
 
-    def cdf(self) -> np.ndarray:
-        if self.spec.parameterisation == "interp":
-            dz = self.grid[1] - self.grid[0]
-            c = np.cumsum(self.values, axis=1) * dz
-            c /= np.maximum(c[:, -1:], 1e-300)
-            return c
-        raise NotImplementedError(
-            "cdf() is only defined for 'interp'; use ppf for 'quant' or "
-            "sample for 'mixmod'."
-        )
+    def _ppf2d(self, q: np.ndarray) -> np.ndarray:
+        """Quantile function for q of shape (n, k), values clamped to the stored range."""
+        n, k = q.shape
+        if self.spec.kind == "quant":
+            lev = np.asarray(self.spec.quant_levels, np.float64)
+            i = np.clip(np.searchsorted(lev, q), 1, lev.size - 1)
+            w = np.clip((q - lev[i - 1]) / (lev[i] - lev[i - 1]), 0.0, 1.0)
+            v0 = np.take_along_axis(self._values, i - 1, 1)
+            v1 = np.take_along_axis(self._values, i, 1)
+            return v0 + w * (v1 - v0)
+        g, c = self._grid(), self._norm_cdf()
+        ng = g.size
+        rows = np.arange(n)[:, None]
+        # Row-offset trick: rows of c are in [0, 1], so flat + 2*row is globally sorted.
+        flat = (c + 2.0 * rows).ravel()
+        idx = np.searchsorted(flat, q + 2.0 * rows) - rows * ng
+        i = np.clip(idx, 1, ng - 1)
+        c0 = np.take_along_axis(c, i - 1, 1)
+        c1 = np.take_along_axis(c, i, 1)
+        dc = c1 - c0
+        with np.errstate(invalid="ignore", divide="ignore"):
+            w = np.where(dc > 0, (q - c0) / np.where(dc > 0, dc, 1.0), 0.0)
+        w = np.clip(w, 0.0, 1.0)
+        z0, z1 = g[i - 1], g[i]
+        out = z0 + w * (z1 - z0)
+        return np.where(np.isnan(c[:, :1]), np.nan, out)
 
     def ppf(self, q) -> np.ndarray:
-        q = np.atleast_1d(np.asarray(q, dtype=np.float64))
-        if self.spec.parameterisation == "interp":
-            c = self.cdf()
-            out = np.empty((c.shape[0], q.size), dtype=np.float64)
-            for i in range(c.shape[0]):
-                out[i] = np.interp(q, c[i], self.grid)
-            return out[:, 0] if q.size == 1 else out
-        if self.spec.parameterisation == "quant":
-            out = np.empty((self.values.shape[0], q.size), dtype=np.float64)
-            for i in range(self.values.shape[0]):
-                out[i] = np.interp(q, self.grid, self.values[i])
-            return out[:, 0] if q.size == 1 else out
-        raise NotImplementedError("mixmod.ppf not implemented")
+        """Quantile at level ``q`` (scalar or one level per row); interp and quant only.
+        For ``quant``, levels outside [lev0, levN] are clamped to the outer stored values."""
+        self._need("interp", "quant", op="ppf")
+        qq = np.broadcast_to(np.asarray(q, np.float64), (self._n,))
+        return self._ppf2d(np.ascontiguousarray(qq)[:, None])[:, 0]
 
-    def sample(self, n_per: int, seed=None) -> np.ndarray:
+    def sample(self, n_per: int, seed: int) -> np.ndarray:
+        """``n_per`` draws per row, float64 of shape (n, n_per), deterministic for ``seed``.
+        For ``quant``, u ~ U(lev0, levN) so no mass piles up at the edge values (tails excluded)."""
+        if n_per < 1:
+            raise ValidationError("n_per must be >= 1")
         rng = np.random.default_rng(seed)
-        if self.spec.parameterisation == "interp":
-            q = rng.uniform(0.0, 1.0, size=(len(self), n_per))
-            c = self.cdf()
-            out = np.empty_like(q)
-            for i in range(len(self)):
-                out[i] = np.interp(q[i], c[i], self.grid)
-            return out
-        if self.spec.parameterisation == "quant":
-            q = rng.uniform(0.0, 1.0, size=(self.values.shape[0], n_per))
-            out = np.empty_like(q)
-            for i in range(self.values.shape[0]):
-                out[i] = np.interp(q[i], self.grid, self.values[i])
-            return out
-        mu, sigma, w = self._mixmod
-        n_rows, K = mu.shape
-        out = np.empty((n_rows, n_per), dtype=np.float64)
-        for i in range(n_rows):
-            comp = rng.choice(K, size=n_per, p=w[i])
-            out[i] = rng.normal(mu[i, comp], sigma[i, comp])
-        return out
+        if self.spec.kind == "sample":
+            u = rng.random((self._n, n_per))
+            c = self._counts[:, None]
+            pick = np.minimum((u * c).astype(np.int64), np.maximum(c - 1, 0))
+            idx = np.minimum(self._offsets[:-1, None] + pick, max(self._flat.size - 1, 0))
+            out = self._flat[idx] if self._flat.size else np.full((self._n, n_per), np.nan)
+            return np.where(c > 0, out, np.nan)
+        u = rng.random((self._n, n_per))
+        if self.spec.kind == "quant":
+            lo, hi = self.spec.quant_levels[0], self.spec.quant_levels[-1]
+            u = lo + (hi - lo) * u
+        return self._ppf2d(u)

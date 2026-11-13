@@ -1,170 +1,117 @@
-"""The joint-analysis bundle handed to Pillar 2. Cosmology-free."""
+"""MeasurementSet: named products, a spec and shared jackknife regions."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict
+from dataclasses import dataclass, field
+from typing import Literal
 
-from oneuniverse.measure.dataproduct import DataProduct
-from oneuniverse.measure.metadata import ProductMetadata
-from oneuniverse.measure.spec import MeasurementSpec
+import numpy as np
+import pyarrow.compute as pc
+
+from oneuniverse._core.errors import ValidationError
+from oneuniverse.measure.atoms import Regions
+from oneuniverse.measure.product import FieldMap, Product, _normalise_json
+
+_COVARIANCES = ("jackknife", "mocks", "analytic", "external")
 
 
-@dataclass
+def _names(value, what: str) -> tuple[str, ...]:
+    if isinstance(value, str) or not hasattr(value, "__iter__"):
+        raise ValidationError(f"{what} must be a sequence of names, not {type(value).__name__}")
+    out = tuple(value)
+    if not all(isinstance(v, str) for v in out):
+        raise ValidationError(f"{what} must contain only strings")
+    return out
+
+
+@dataclass(frozen=True)
+class MeasurementSpec:
+    name: str
+    tracers: tuple[str, ...]
+    statistics: tuple[str, ...]
+    pairs: tuple[tuple[str, str], ...] = ()
+    covariance: Literal["jackknife", "mocks", "analytic", "external"] = "jackknife"
+    notes: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        object.__setattr__(self, "tracers", _names(self.tracers, "tracers"))
+        object.__setattr__(self, "statistics", _names(self.statistics, "statistics"))
+        pairs = tuple(_names(p, "pair") for p in self.pairs)
+        if any(len(p) != 2 for p in pairs):
+            raise ValidationError("each pair must name exactly two tracers")
+        object.__setattr__(self, "pairs", pairs)
+        object.__setattr__(self, "notes", _normalise_json(dict(self.notes), "notes"))
+        if self.covariance not in _COVARIANCES:
+            raise ValidationError(f"covariance must be one of {_COVARIANCES}, got {self.covariance!r}")
+
+
+def _region_range(table, label: str, n_regions: int, tracer: str) -> None:
+    if table is None or table.num_rows == 0:
+        return
+    col = table.column("region_id")
+    if col.null_count:
+        raise ValidationError(
+            f"{label} of {tracer!r} has {col.null_count} null region_id value(s)")
+    mm = pc.min_max(col)
+    lo, hi = mm["min"].as_py(), mm["max"].as_py()
+    if lo < 0 or hi >= n_regions:
+        raise ValidationError(
+            f"{label} of {tracer!r} has region_id in [{lo}, {hi}], "
+            f"outside [0, {n_regions}) of the regions")
+
+
+def _regions_consistent(table, regions: Regions, label: str, tracer: str) -> None:
+    if table is None or table.num_rows == 0:
+        return
+    ra, dec = (np.asarray(table[c].cast("float64").to_numpy(zero_copy_only=False), np.float64)
+               for c in ("ra", "dec"))
+    rid = np.asarray(table["region_id"].to_numpy(zero_copy_only=False))
+    if not np.array_equal(regions.assign(ra, dec), rid):
+        raise ValidationError(
+            f"region_id inconsistent with regions ({label} of {tracer!r}): products must be "
+            "built on the set's Regions")
+
+
+@dataclass(frozen=True)
 class MeasurementSet:
-    products: Dict[str, DataProduct]
+    products: dict[str, Product]
     spec: MeasurementSpec
-    metadata: ProductMetadata
+    regions: Regions
 
-    def summary(self) -> Dict[str, Any]:
-        """A structured, cosmology-free description of the set + its products.
-
-        For downstream inspection: which atoms each product carries, the
-        measurement spec, and the shared region scheme. Carries no cosmology.
-        """
-        prods: Dict[str, Any] = {}
+    def __post_init__(self):
+        object.__setattr__(self, "products", dict(self.products))
+        if self.spec.tracers != tuple(self.products):
+            raise ValidationError(
+                f"spec tracers {self.spec.tracers} do not match product names {tuple(self.products)}")
+        for a, b in self.spec.pairs:
+            for t in (a, b):
+                if t not in self.products:
+                    raise ValidationError(f"spec pairs name unknown tracer {t!r} in ({a!r}, {b!r})")
         for name, p in self.products.items():
-            entry: Dict[str, Any] = {
+            if isinstance(p, FieldMap):
+                continue
+            _region_range(p.catalog, "catalog", self.regions.n_regions, name)
+            _region_range(p.randoms, "randoms", self.regions.n_regions, name)
+            _regions_consistent(p.catalog, self.regions, "catalog", name)
+            _regions_consistent(p.randoms, self.regions, "randoms", name)
+
+    def summary(self) -> dict:
+        prods = {}
+        for name, p in self.products.items():
+            prods[name] = {
                 "kind": p.kind,
-                "dataset_ids": list(p.provenance.dataset_ids),
-                "randoms_source": p.provenance.randoms_source,
-                "links": [lk.role for lk in (p.links or [])],
-                "has_covariance": p.covariance is not None,
+                "n": int(p.n),
+                "n_randoms": 0 if p.randoms is None else int(p.randoms.num_rows),
+                "has_window": p.window is not None,
+                "has_nz": p.nz is not None,
+                "extras": sorted(p.extras),
             }
-            if p.kind == "pointset":
-                cat = p.catalog
-                win = p.window
-                entry.update(
-                    n=int(len(cat)) if cat is not None else 0,
-                    columns=list(cat.columns) if cat is not None else [],
-                    has_randoms=p.randoms is not None,
-                    has_nz=p.nz is not None,
-                    has_window=win is not None,
-                    has_photoz=p.photoz is not None,
-                    has_named_weights=p.weights is not None,
-                    has_dndz_external=p.dndz_external is not None,
-                    n_tomo=(len(p.nz) if isinstance(p.nz, dict) else None),
-                    window_systematics=(list(win.systematics)
-                                        if win is not None and win.systematics
-                                        else []),
-                )
-            elif p.kind == "sightline":
-                entry.update(n_sightlines=int(p.n_sightlines),
-                             has_continuum=p.continuum is not None)
-            elif p.kind == "fieldmap":
-                entry.update(nside=int(p.nside), npix=int(p.npix),
-                             covered_pixels=int(p.mask.sum()),
-                             has_beam=p.beam is not None,
-                             has_interloper=p.interloper is not None,
-                             has_distance_extras=p.distance_extras is not None,
-                             is_cube=p.axes is not None)
-            prods[name] = entry
-        ps = self.spec.pair_statistics
         return {
-            "n_products": len(self.products),
-            "spec": {"statistic": self.spec.statistic,
-                     "estimator_family": self.spec.estimator_family,
-                     "pairs": [list(pair) for pair in self.spec.pairs],
-                     # JSON-safe: tuple pair keys -> "a×b" strings
-                     "pair_statistics": (
-                         {f"{a}×{b}": v for (a, b), v in ps.items()}
-                         if ps else None)},
-            "region_nside": self.metadata.nside_region,
-            "frame": self.metadata.frame,
-            "cosmology_free": True,
+            "name": self.spec.name,
+            "tracers": list(self.spec.tracers),
+            "statistics": list(self.spec.statistics),
+            "pairs": [list(p) for p in self.spec.pairs],
+            "covariance": self.spec.covariance,
             "products": prods,
+            "regions": {"nside": int(self.regions.nside), "nest": bool(self.regions.nest),
+                        "n_regions": int(self.regions.n_regions), "method": self.regions.method},
         }
-
-    def __repr__(self) -> str:
-        kinds = ", ".join(f"{n}:{p.kind}" for n, p in self.products.items())
-        return (f"MeasurementSet({self.spec.estimator_family}/"
-                f"{self.spec.statistic}; {kinds})")
-
-    # -- on-disk handoff form (the P1->P2 boundary across processes) -------
-    def to_dir(self, path):
-        """Persist to a self-describing directory (parquet + npy + JSON)."""
-        from oneuniverse.measure.io import save_measurement_set
-        return save_measurement_set(self, path)
-
-    @classmethod
-    def from_dir(cls, path) -> "MeasurementSet":
-        """Reconstruct a MeasurementSet written by :meth:`to_dir`."""
-        from oneuniverse.measure.io import load_measurement_set
-        return load_measurement_set(path)
-
-    def to_sql(self, path):
-        """Export to a SQLite file (the SQL face of the P1→P2 handoff).
-
-        Tables: ``measurement_sets`` (spec + JSON summary), and per PointSet
-        product ``catalog_<name>`` / ``randoms_<name>`` with all scalar
-        columns (weights included). Sightline/FieldMap products contribute
-        their summary row only — bulk arrays stay in :meth:`to_dir` form.
-        """
-        import json
-        import sqlite3
-        from pathlib import Path as _P
-        path = _P(path)
-        con = sqlite3.connect(path)
-        try:
-            con.execute(
-                "CREATE TABLE IF NOT EXISTS measurement_sets ("
-                " estimator_family TEXT, statistic TEXT,"
-                " region_nside INTEGER, summary_json TEXT)")
-            con.execute(
-                "INSERT INTO measurement_sets VALUES (?,?,?,?)",
-                (self.spec.estimator_family, self.spec.statistic,
-                 self.metadata.nside_region, json.dumps(self.summary())))
-            for name, p in self.products.items():
-                cat = getattr(p, "catalog", None)
-                if cat is not None:
-                    scalars = [c for c in cat.columns
-                               if cat[c].dtype.kind in "ifbuO"
-                               and not isinstance(cat[c].iloc[0],
-                                                  (list, tuple))]
-                    cat[scalars].to_sql(f"catalog_{name}", con,
-                                        if_exists="replace", index=False)
-                rnd = getattr(p, "randoms", None)
-                if rnd is not None:
-                    rnd.to_sql(f"randoms_{name}", con, if_exists="replace",
-                               index=False)
-            con.commit()
-        finally:
-            con.close()
-        return path
-
-    #: catalog column names that imply a cosmology was applied (z->distance).
-    #: Their presence violates the cosmology-free contract.
-    _FORBIDDEN_COLUMNS = frozenset({
-        "comoving_distance", "r_comoving", "comoving_dist", "d_comoving",
-        "dist_mpc_h", "chi", "chi_mpc", "distance_mpc", "luminosity_distance",
-        "angular_diameter_distance",
-    })
-
-    def check_invariants(self, *, _inject_cosmology: bool = False) -> None:
-        if _inject_cosmology or hasattr(self.metadata, "cosmology"):
-            raise ValueError(
-                "MeasurementSet must be cosmology-free (no cosmology in "
-                "metadata); cosmology enters at the Pillar-2 estimator call")
-        nside = self.metadata.nside_region
-        for name, p in self.products.items():
-            n = len(p.region_map)
-            catalog = getattr(p, "catalog", None)
-            if catalog is not None:
-                # the load-bearing rule, enforced on *contents*: no
-                # cosmology-derived column may have leaked into the catalog.
-                leaked = self._FORBIDDEN_COLUMNS & {c.lower()
-                                                    for c in catalog.columns}
-                if leaked:
-                    raise ValueError(
-                        f"product {name!r}: cosmology-derived column(s) "
-                        f"{sorted(leaked)} present — the MeasurementSet must be "
-                        f"cosmology-free (z->distance happens in Pillar 2)")
-            if catalog is not None and len(catalog) != n:
-                raise ValueError(
-                    f"product {name!r}: region_map length {n} != catalog "
-                    f"length {len(catalog)}")
-            # Sky maps (FieldMap) are not per-object jackknifed: empty
-            # region_map exempts them from the shared-NSIDE invariant.
-            if n > 0 and p.metadata.nside_region != nside:
-                raise ValueError(
-                    f"product {name!r}: region NSIDE {p.metadata.nside_region}"
-                    f" != set NSIDE {nside} (shared region_map invariant)")

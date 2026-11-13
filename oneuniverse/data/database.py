@@ -1,692 +1,192 @@
-"""
-oneuniverse.data.database
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Dynamic survey database built from a folder tree.
-
-Given a root directory whose subdirectories contain ``oneuniverse/manifest.json``
-files (the canonical OUF layout), :class:`OneuniverseDatabase` walks the tree,
-reads each manifest, and *dynamically* builds a :class:`BaseSurveyLoader`
-subclass per discovered dataset.
-
-This makes the package adapt to any directory architecture of the form::
-
-    <root>/<arbitrary>/<nesting>/<survey>/oneuniverse/manifest.json
-
-The survey name is derived from the relative path (path components joined
-with ``_``) and the survey type from the first path component, but both can
-be overridden with a user-supplied ``name_from_path`` callable.
-
-Example
--------
->>> db = OneuniverseDatabase.from_root("/data/oneuniverse_dataset")
->>> db.list()
-{'spectroscopic_eboss_qso': 'eBOSS QSO (point, 919,000 rows)'}
->>> loader = db.get_loader("spectroscopic_eboss_qso")
->>> df = loader.load()
-"""
-
+"""Database facade over a root directory of OUF 3.0 datasets."""
 from __future__ import annotations
 
-import datetime as dt
-import json
-import logging
-from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-import pandas as pd
+from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
+from oneuniverse._core.fs import is_staging
+from oneuniverse.data.manifest import MANIFEST_FILENAME, Manifest, read_manifest
+from oneuniverse.data.sidecar import VersionedSidecar
+from oneuniverse.data.view import DatasetView
 
-from oneuniverse.data._base_loader import BaseSurveyLoader, SurveyConfig
-from oneuniverse.data._dataset_entry import DatasetEntry
-from oneuniverse.data._registry import _REGISTRY, register
-from oneuniverse.data.converter import (
-    get_manifest,
-    is_converted,
-    read_oneuniverse_parquet,
-)
-from oneuniverse.data.format_spec import (
-    MANIFEST_FILENAME,
-    ONEUNIVERSE_SUBDIR,
-    DataGeometry,
-)
-from oneuniverse.data.dataset_view import DatasetView
-from oneuniverse.data.manifest import Manifest
-from oneuniverse.data.validity import DatasetValidity
-
-if TYPE_CHECKING:
-    from oneuniverse.data.oneuid import OneuidQuery
-
-logger = logging.getLogger(__name__)
+_HISTORY = "_history"
+_MAX_DEPTH = 2
 
 
-# ── Default naming ───────────────────────────────────────────────────────
+def _parse_utc(s: str) -> datetime:
+    return datetime.fromisoformat(s).astimezone(UTC)
 
 
-def _default_name_from_path(relpath: Path) -> Tuple[str, str]:
-    """Derive ``(survey_name, survey_type)`` from a path relative to the root.
+class Database:
+    """Datasets found under *root*.
 
-    - ``survey_name`` = path parts joined by ``_`` (lowercased)
-    - ``survey_type`` = first path part, or ``"unknown"`` for flat layouts
-    """
-    parts = [p.lower() for p in relpath.parts]
-    if not parts:
-        return "root", "unknown"
-    name = "_".join(parts)
-    survey_type = parts[0] if len(parts) > 1 else "unknown"
-    return name, survey_type
-
-
-# ── Dynamic loader factory ───────────────────────────────────────────────
-
-
-def _make_loader_class(
-    name: str,
-    config: SurveyConfig,
-    data_path: Path,
-) -> type:
-    """Build a :class:`BaseSurveyLoader` subclass bound to a concrete path.
-
-    The subclass' ``_load_raw`` reads the Parquet partitions directly from
-    *data_path*.  ``BaseSurveyLoader.load()`` auto-detects the ``oneuniverse/``
-    subdirectory and uses the fast Parquet reader, but we still provide
-    ``_load_raw`` as a fallback (and to satisfy the ABC contract).
+    Discovery walks *root* to depth 2: a directory holding ``manifest.json`` is a
+    dataset (not descended into); names starting with ``_`` and ``<x>.tmp`` /
+    ``<x>.old`` staging directories are skipped. The dataset name is its relative
+    path with ``/`` replaced by ``__``; two datasets mapping to the same name
+    (``a/b`` and ``a__b``) are a collision: FormatError when strict, else both are
+    excluded and recorded in :attr:`errors`. Symlinked directories are not followed. With ``strict=False`` datasets whose
+    manifest cannot be read are skipped and recorded in :attr:`errors`.
+    ``as_of_time`` is the restriction time given to :meth:`as_of`, else ``None``.
     """
 
-    cls_name = "".join(part.capitalize() for part in name.split("_")) + "Loader"
-
-    def _load_raw(self, data_path=None, **kwargs) -> pd.DataFrame:
-        path = Path(data_path) if data_path is not None else self._bound_path
-        return read_oneuniverse_parquet(path)
-
-    attrs = {
-        "config": config,
-        "_bound_path": data_path,
-        "_load_raw": _load_raw,
-        "__doc__": f"Dynamically generated loader for '{name}' at {data_path}.",
-        "__module__": __name__,
-    }
-
-    # Override `load()` to honor the bound path without requiring the global
-    # data root to be configured.
-    base_load = BaseSurveyLoader.load
-
-    def load(self, *args, **kwargs):
-        kwargs.setdefault("data_path", self._bound_path)
-        return base_load(self, *args, **kwargs)
-
-    attrs["load"] = load
-
-    return type(cls_name, (BaseSurveyLoader,), attrs)
-
-
-# ── Validity helpers ─────────────────────────────────────────────────────
-
-
-def _apply_supersessions(all_entries: Dict[str, "DatasetEntry"]) -> None:
-    """Close out superseded entries by copying manifests with patched
-    validity. Works on *all_entries* in place; does not mutate on-disk
-    manifests."""
-    for new in list(all_entries.values()):
-        v = new.manifest.validity
-        if v is None or not v.supersedes:
-            continue
-        for prior_name in v.supersedes:
-            prior = all_entries.get(prior_name)
-            if prior is None or prior.manifest.validity is None:
-                continue
-            if prior.manifest.validity.valid_to_utc is not None:
-                continue
-            closed = prior.manifest.validity.closed_at(v.valid_from_utc)
-            new_manifest = replace(prior.manifest, validity=closed)
-            all_entries[prior_name] = replace(prior, manifest=new_manifest)
-
-
-def _warn_on_mixed_validity(all_entries: Dict[str, "DatasetEntry"]) -> None:
-    """Log a WARNING for entries under the same survey-root with
-    overlapping validity windows and no ``supersedes`` link between
-    them."""
-    by_parent: Dict[Path, List[Tuple[str, "DatasetEntry"]]] = {}
-    for name, e in all_entries.items():
-        if e.manifest.validity is None:
-            continue
-        by_parent.setdefault(e.path.parent, []).append((name, e))
-
-    for parent, bucket in by_parent.items():
-        if len(bucket) < 2:
-            continue
-        for i, (n_i, e_i) in enumerate(bucket):
-            v_i = e_i.manifest.validity
-            for n_j, e_j in bucket[i + 1:]:
-                v_j = e_j.manifest.validity
-                if n_i in v_j.supersedes or n_j in v_i.supersedes:
-                    continue
-                if _windows_overlap(v_i, v_j):
-                    logger.warning(
-                        "OneuniverseDatabase: overlapping validity under %s: "
-                        "%s (%s..%s) and %s (%s..%s); no supersedes link",
-                        parent, n_i, v_i.valid_from_utc, v_i.valid_to_utc,
-                        n_j, v_j.valid_from_utc, v_j.valid_to_utc,
-                    )
-
-
-def _is_relative_to(child: Path, parent: Path) -> bool:
-    try:
-        child.relative_to(parent)
-        return True
-    except ValueError:
-        return False
-
-
-def _windows_overlap(a: DatasetValidity, b: DatasetValidity) -> bool:
-    a0 = dt.datetime.fromisoformat(a.valid_from_utc)
-    a1 = (dt.datetime.fromisoformat(a.valid_to_utc)
-          if a.valid_to_utc is not None else None)
-    b0 = dt.datetime.fromisoformat(b.valid_from_utc)
-    b1 = (dt.datetime.fromisoformat(b.valid_to_utc)
-          if b.valid_to_utc is not None else None)
-    if a1 is not None and a1 <= b0:
-        return False
-    if b1 is not None and b1 <= a0:
-        return False
-    return True
-
-
-# ── Database class ───────────────────────────────────────────────────────
-
-
-class OneuniverseDatabase:
-    """Dynamic registry of OUF datasets discovered under a root directory.
-
-    Parameters
-    ----------
-    root : str or Path
-        Root of the dataset tree to scan.
-    name_from_path : callable, optional
-        ``(relpath: Path) -> (name, survey_type)``.  Defaults to joining
-        path parts with ``_`` and using the first component as the type.
-    max_depth : int, optional
-        Maximum directory depth to search (default: 6).
-    register_global : bool
-        If True, also register each discovered loader in the package-wide
-        registry so it becomes available via :func:`load_catalog`.
-        Names already registered by hand-coded loaders are skipped.
-    """
-
-    def __init__(
-        self,
-        root: Union[str, Path],
-        name_from_path: Optional[Callable[[Path], Tuple[str, str]]] = None,
-        max_depth: int = 6,
-        register_global: bool = False,
-        data_root: Optional[Union[str, Path]] = None,
-    ) -> None:
-        self.root = Path(root).expanduser().resolve()
-        if not self.root.is_dir():
-            raise FileNotFoundError(f"Root directory does not exist: {self.root}")
-        from oneuniverse.data._config import env_data_root
-        self.data_root: Optional[Path] = (
-            Path(data_root).expanduser().resolve() if data_root is not None
-            else env_data_root()
-        )
-        self._name_from_path = name_from_path or _default_name_from_path
-        self._max_depth = max_depth
-        self._register_global = register_global
-        self._entries: Dict[str, DatasetEntry] = {}
-        self._all_entries: Dict[str, DatasetEntry] = {}
-        self.scan()
-
-    # ── Construction helpers ─────────────────────────────────────────────
-
-    @classmethod
-    def from_root(cls, root: Union[str, Path], **kwargs) -> "OneuniverseDatabase":
-        """Shortcut for ``OneuniverseDatabase(root, **kwargs)``."""
-        return cls(root, **kwargs)
-
-    @classmethod
-    def from_config(cls, config_path: Union[str, Path], **kwargs) -> "OneuniverseDatabase":
-        """Build a database from an INI config file.
-
-        See :mod:`oneuniverse.data.config_loader` for the file format.
-        """
-        from oneuniverse.data.config_loader import build_from_config
-        return build_from_config(config_path, **kwargs)
-
-    @classmethod
-    def build(
-        cls,
-        raw_root: Union[str, Path],
-        database_root: Union[str, Path],
-        overwrite: bool = False,
-        skip_existing: bool = True,
-        **kwargs,
-    ) -> "OneuniverseDatabase":
-        """Convert every registered survey whose raw file lives under *raw_root*
-        into the oneuniverse format under *database_root*, mirroring the raw
-        tree, then return a :class:`OneuniverseDatabase` bound to
-        *database_root*.
-
-        Parameters
-        ----------
-        raw_root : path
-            Root directory containing the native survey files. Each registered
-            loader is checked by looking for
-            ``raw_root / config.data_subpath / config.data_filename``.
-        database_root : path
-            Where to write the converted OUF tree. Structure mirrors
-            *raw_root*: ``database_root / <data_subpath> / oneuniverse/``.
-        overwrite : bool
-            If True, re-convert datasets whose output already exists.
-        skip_existing : bool
-            If True (default), skip datasets whose output already exists
-            (ignored when ``overwrite=True``).
-        **kwargs
-            Forwarded to :class:`OneuniverseDatabase` (e.g. ``name_from_path``).
-        """
-        from oneuniverse.data._registry import _REGISTRY
-
-        raw_root = Path(raw_root).expanduser().resolve()
-        database_root = Path(database_root).expanduser().resolve()
-        if not raw_root.is_dir():
-            raise FileNotFoundError(f"Raw root does not exist: {raw_root}")
-        database_root.mkdir(parents=True, exist_ok=True)
-
-        from oneuniverse.data.converter import convert_survey  # local import
-
-        n_converted = n_skipped = 0
-        for name, loader_cls in sorted(_REGISTRY.items()):
-            cfg = loader_cls.config
-            if not cfg.data_filename:
-                logger.debug("Skipping %s: no data_filename (in-memory loader)", name)
-                continue
-            subpath = cfg.data_subpath or f"{cfg.survey_type}/{cfg.name}"
-            raw_file = raw_root / subpath / cfg.data_filename
-            if not raw_file.exists():
-                logger.debug("Skipping %s: no raw file at %s", name, raw_file)
-                continue
-
-            out_base = database_root / subpath
-            out_dir = out_base / ONEUNIVERSE_SUBDIR
-            if out_dir.exists() and not overwrite:
-                if skip_existing:
-                    logger.info("Already converted, skipping: %s", name)
-                    n_skipped += 1
-                    continue
-
-            logger.info("Converting %s  →  %s", name, out_dir)
-            convert_survey(
-                survey_name=name,
-                data_root=raw_root,
-                output_dir=out_base,
-                overwrite=overwrite,
-            )
-            n_converted += 1
-
-        logger.info(
-            "OneuniverseDatabase.build: %d converted, %d skipped",
-            n_converted,
-            n_skipped,
-        )
-        return cls(database_root, **kwargs)
-
-    # ── Scanning ─────────────────────────────────────────────────────────
-
-    def scan(self, *, strict: bool = False) -> None:
-        """Walk :attr:`root` and (re)build the in-memory registry.
-
-        By default a dataset that fails to parse is logged and skipped so one
-        corrupt directory never bricks the database. Pass ``strict=True`` (e.g.
-        in CI) to re-raise the first such failure instead of warning.
-        """
-        self._entries.clear()
-        self._all_entries.clear()
-
-        for manifest_path in self._find_manifests():
-            survey_dir = manifest_path.parent.parent  # …/<survey_dir>/oneuniverse/manifest.json
-            relpath = survey_dir.relative_to(self.root)
-            try:
-                name, survey_type = self._name_from_path(relpath)
-            except Exception as exc:
-                if strict:
-                    raise
-                logger.warning("name_from_path failed for %s: %s", relpath, exc)
-                continue
-
-            try:
-                manifest = get_manifest(survey_dir)
-            except Exception as exc:
-                if strict:
-                    raise
-                logger.warning("Skipping %s: cannot read manifest (%s)", relpath, exc)
-                continue
-
-            config = self._config_from_manifest(
-                name=name,
-                survey_type=survey_type,
-                relpath=relpath,
-                manifest=manifest,
-            )
-            loader_cls = _make_loader_class(name, config, survey_dir)
-            self._all_entries[name] = DatasetEntry(
-                loader=loader_cls,
-                manifest=manifest,
-                path=survey_dir,
-            )
-
-            if self._register_global and name not in _REGISTRY:
-                try:
-                    register(loader_cls)
-                except ValueError:
-                    pass
-
-        _apply_supersessions(self._all_entries)
-        _warn_on_mixed_validity(self._all_entries)
-
-        self._entries = {
-            name: e
-            for name, e in self._all_entries.items()
-            if e.manifest.validity is None or e.manifest.validity.is_current()
-        }
-
-        logger.info(
-            "OneuniverseDatabase: discovered %d dataset(s) (%d currently valid) under %s",
-            len(self._all_entries),
-            len(self._entries),
-            self.root,
-        )
-
-    def _find_manifests(self) -> List[Path]:
-        """Return all ``oneuniverse/manifest.json`` files under root, bounded
-        by ``max_depth``."""
-        found: List[Path] = []
-        root_depth = len(self.root.parts)
-
-        def walk(d: Path):
-            if len(d.parts) - root_depth > self._max_depth:
-                return
-            try:
-                entries = list(d.iterdir())
-            except (PermissionError, OSError):
-                return
-            # If this dir is itself an `oneuniverse/` dir, record its manifest.
-            if d.name == ONEUNIVERSE_SUBDIR:
-                mf = d / MANIFEST_FILENAME
-                if mf.is_file():
-                    found.append(mf)
-                return  # do not descend further
-            for entry in entries:
-                if entry.is_dir():
-                    walk(entry)
-
-        walk(self.root)
-        return sorted(found)
+    def __init__(self, root, *, as_of: datetime | None = None, strict: bool = True) -> None:
+        self.root = Path(root)
+        self.strict = strict
+        self.errors: dict[str, str] = {}
+        self.as_of_time = self._check_when(as_of) if as_of is not None else None
+        self._paths: dict[str, Path] = {}
+        self._manifests: dict[str, Manifest] = {}
+        self._discover()
 
     @staticmethod
-    def _config_from_manifest(
-        name: str,
-        survey_type: str,
-        relpath: Path,
-        manifest: Manifest,
-    ) -> SurveyConfig:
-        """Build a :class:`SurveyConfig` from a typed :class:`Manifest`."""
-        geometry = manifest.geometry.value
-        n_rows = manifest.n_rows
-        survey_name_m = manifest.survey_name or name
-        survey_type_m = manifest.survey_type or survey_type
-        description = (
-            f"{survey_name_m} ({geometry}, {n_rows:,} rows)"
-            if n_rows
-            else f"{survey_name_m} ({geometry})"
-        )
-        return SurveyConfig(
-            name=name,
-            survey_type=survey_type_m,
-            description=description,
-            data_subpath=str(relpath),
-            data_format="parquet",
-            n_objects_approx=n_rows,
-        )
+    def _check_when(when: datetime) -> datetime:
+        if not isinstance(when, datetime) or when.tzinfo is None:
+            raise ValidationError(f"as_of needs a timezone-aware datetime, got {when!r}")
+        return when
 
-    # ── Public API ───────────────────────────────────────────────────────
+    def _candidates(self):
+        def walk(d: Path, depth: int):
+            try:
+                entries = sorted(p for p in d.iterdir() if p.is_dir())
+            except OSError as e:
+                raise FormatError(f"cannot list {d}: {e}") from e
+            for p in entries:
+                if p.name.startswith("_") or is_staging(p) or p.is_symlink():
+                    continue
+                if (p / MANIFEST_FILENAME).is_file():
+                    yield p
+                elif depth < _MAX_DEPTH:
+                    yield from walk(p, depth + 1)
+        if not self.root.is_dir():
+            raise NotFoundError(f"database root {self.root} is not a directory")
+        yield from walk(self.root, 1)
 
-    def list(self, survey_type: Optional[str] = None) -> Dict[str, str]:
-        """Return ``{name: description}`` for discovered datasets."""
-        out = {}
-        for n, entry in sorted(self._entries.items()):
-            cfg = entry.loader.config
-            if survey_type is not None and cfg.survey_type != survey_type:
+    def _discover(self) -> None:
+        groups: dict[str, list[Path]] = {}
+        for p in self._candidates():
+            groups.setdefault("__".join(p.relative_to(self.root).parts), []).append(p)
+        found: dict[str, tuple[Path, Manifest]] = {}
+        for name, paths in groups.items():
+            problems: list[str] = []
+            m = None
+            err: Exception | None = None
+            for p in paths:
+                try:
+                    m = read_manifest(p / MANIFEST_FILENAME)
+                except (FormatError, OSError, KeyError, ValueError) as e:
+                    err = e
+                    problems.append(f"dataset {p}: unreadable manifest: {e}")
+            clash = len(paths) > 1
+            if clash:
+                problems.insert(0, f"dataset name {name!r} is ambiguous: "
+                                + ", ".join(str(q) for q in paths))
+            if problems:
+                if self.strict:
+                    raise FormatError("; ".join(problems)) from err
+                self.errors[name] = "; ".join(problems)
                 continue
-            out[n] = cfg.description
-        return out
+            found[name] = (paths[0], m)
+        when = self.as_of_time
+        for name in sorted(found):
+            p, m = found[name]
+            if when is not None and _parse_utc(m.validity.valid_from) > when:
+                continue
+            self._paths[name], self._manifests[name] = p, m
 
-    def types(self) -> List[str]:
-        return sorted({e.loader.config.survey_type for e in self._entries.values()})
+    # ------------------------------------------------------------- mapping
+    def names(self) -> list[str]:
+        return sorted(self._paths)
 
-    def __contains__(self, name: str) -> bool:
-        return name in self._entries
-
-    def __len__(self) -> int:
-        return len(self._entries)
+    def __contains__(self, name: object) -> bool:
+        return name in self._paths
 
     def __iter__(self):
-        return iter(self._entries)
+        return iter(self.names())
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def _need(self, name: str) -> None:
+        if name not in self._paths:
+            raise NotFoundError(f"no dataset {name!r} in {self.root}; available: {self.names()}")
+
+    def path(self, name: str) -> Path:
+        self._need(name)
+        return self._paths[name]
+
+    def manifest(self, name: str) -> Manifest:
+        self._need(name)
+        return self._manifests[name]
 
     def __getitem__(self, name: str) -> DatasetView:
-        return self.view(name)
+        """A fresh view each call (views carry a stale-guard, so none is cached)."""
+        return DatasetView.from_path(self.path(name))
 
-    def entry(self, name: str) -> DatasetEntry:
-        """Return the full :class:`DatasetEntry` for *name*."""
-        if name not in self._entries:
-            available = ", ".join(sorted(self._entries)) or "(none)"
-            raise KeyError(f"Unknown dataset '{name}'. Available: {available}")
-        return self._entries[name]
+    # ------------------------------------------------------------- history
+    def history(self, name: str) -> list[Manifest]:
+        """Archived manifests plus the live one, oldest first."""
+        p = self.path(name)
+        hist = p / _HISTORY
+        out = [self._manifests[name]]
+        if hist.is_dir():
+            out += [read_manifest(f) for f in sorted(hist.glob("*.manifest.json"))]
+        return sorted(out, key=lambda m: _parse_utc(m.created_utc))
 
-    def view(self, name: str) -> DatasetView:
-        """Return a lazy :class:`DatasetView` for *name*."""
-        entry = self.entry(name)
-        ou_dir = entry.path / ONEUNIVERSE_SUBDIR
-        return DatasetView(ou_dir=ou_dir, manifest=entry.manifest)
+    def as_of(self, when: datetime) -> Database:
+        """New Database restricted to datasets that existed at *when*.
 
-    def get_loader(self, name: str) -> BaseSurveyLoader:
-        """Instantiate the dynamic loader for *name* (legacy path)."""
-        return self.entry(name).loader()
-
-    def get_manifest(self, name: str) -> Manifest:
-        return self.entry(name).manifest
-
-    def get_path(self, name: str) -> Path:
-        return self.entry(name).path
-
-    def get_config(self, name: str) -> SurveyConfig:
-        return self.entry(name).loader.config
-
-    def load(self, name: str, **kwargs) -> pd.DataFrame:
-        """Shortcut: instantiate loader and call ``.load(**kwargs)``."""
-        return self.get_loader(name).load(**kwargs)
-
-    # ── Bitemporal access ────────────────────────────────────────────────
-
-    def as_of(self, when: dt.datetime) -> "OneuniverseDatabase":
-        """Return a sibling database view containing only entries whose
-        :class:`DatasetValidity` was valid at *when* (tz-aware).
-
-        The returned object shares root, data_root, and loader classes;
-        only ``_entries`` is filtered.
+        Inclusion/exclusion only: a dataset is kept when its **live** manifest was
+        created at or before *when* (``validity.valid_from <= when``). A dataset
+        whose live version postdates *when* is excluded even if an archived version
+        existed then, because the data of old versions is not kept.
         """
-        if when.tzinfo is None:
-            raise ValueError(
-                "OneuniverseDatabase.as_of: timestamp must be timezone-aware"
-            )
-        filtered = {
-            name: e
-            for name, e in self._all_entries.items()
-            if e.manifest.validity is not None
-            and e.manifest.validity.contains(when)
-        }
-        clone = self.__class__.__new__(self.__class__)
-        clone.root = self.root
-        clone.data_root = self.data_root
-        clone._name_from_path = self._name_from_path
-        clone._max_depth = self._max_depth
-        clone._register_global = False
-        clone._all_entries = dict(self._all_entries)
-        clone._entries = filtered
-        return clone
+        return Database(self.root, as_of=self._check_when(when), strict=self.strict)
 
-    def versions_of_root(self, survey_root: str) -> List[DatasetEntry]:
-        """Return every entry (including superseded) whose path lives
-        under ``survey_root`` (a subpath under the database root), sorted
-        by ``validity.valid_from_utc``. Entries without a validity block
-        sort first.
-        """
-        root = (self.root / survey_root).resolve()
-        matching = [
-            e for e in self._all_entries.values()
-            if _is_relative_to(Path(e.path).resolve(), root)
-        ]
+    # ------------------------------------------------------------- oneuid
+    def build_oneuid(self, datasets, *, rules, name: str = "default"):
+        from oneuniverse.data.oneuid import build_oneuid
+        return build_oneuid(self, datasets, rules=rules, name=name)
 
-        def _key(e: DatasetEntry):
-            v = e.manifest.validity
-            if v is None:
-                return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-            return dt.datetime.fromisoformat(v.valid_from_utc)
+    def load_oneuid(self, name: str = "default", *, as_of=None):
+        """Load ONEUID index *name*; *as_of* defaults to this Database's ``as_of_time``."""
+        from oneuniverse.data.oneuid import load_oneuid
+        return load_oneuid(self, name, as_of=as_of if as_of is not None else self.as_of_time)
 
-        return sorted(matching, key=_key)
+    def list_oneuids(self) -> list[str]:
+        return VersionedSidecar.names(self.root, "oneuid")
 
-    # ── ONEUID — universal cross-survey identifier ───────────────────────
-
-    def build_oneuid(
-        self,
-        sky_tol_arcsec: Optional[float] = None,
-        dz_tol: Optional[float] = None,
-        *,
-        datasets: Optional[Sequence[str]] = None,
-        rules=None,
-        name: str = "default",
-        persist: bool = True,
-    ):
-        """Build the ONEUID index across every discovered dataset.
-
-        Returns the :class:`oneuniverse.data.oneuid.OneuidIndex` and, by
-        default, persists it to ``{root}/_oneuid/<name>.parquet``.
-
-        Pass ``rules=CrossMatchRules(...)`` for the full policy; the
-        ``sky_tol_arcsec`` / ``dz_tol`` args are kept for back-compat.
-        """
-        from oneuniverse.data.oneuid import build_oneuid_index
-        return build_oneuid_index(
-            self,
-            datasets=datasets, rules=rules, name=name, persist=persist,
-            sky_tol_arcsec=sky_tol_arcsec, dz_tol=dz_tol,
-        )
-
-    def load_oneuid(
-        self, name: str = "default",
-        *, as_of: Optional[dt.datetime] = None,
-    ):
-        """Load a previously persisted ONEUID index by *name*.
-
-        With ``as_of`` (tz-aware), return the archived version whose
-        :class:`DatasetValidity` contains that timestamp.
-        """
-        from oneuniverse.data.oneuid import load_oneuid_index
-        return load_oneuid_index(self, name=name, as_of=as_of)
-
-    def list_oneuids(self, *, include_archived: bool = False) -> List[str]:
-        """Return the names of persisted ONEUID indices.
-
-        With ``include_archived=True``, also return archived versions
-        named ``{name}__{YYYYmmddTHHMMSSZ}``.
-        """
-        from oneuniverse.data.oneuid import list_oneuids
-        return list_oneuids(self, include_archived=include_archived)
-
-    def build_subobject_links(
-        self,
-        *,
-        rules,
-        parent_datasets: Sequence[str],
-        child_datasets: Sequence[str],
-        name: str = "default",
-        oneuid_name: str = "default",
-    ) -> int:
-        from oneuniverse.data.subobject import (
-            build_subobject_links as _build,
-        )
-        return _build(
-            self, rules=rules,
-            parent_datasets=parent_datasets,
-            child_datasets=child_datasets,
-            name=name, oneuid_name=oneuid_name,
-        )
-
-    def chain_subobjects(
-        self,
-        starts: Sequence[int],
-        relations: Sequence[str],
-        *,
-        as_of: Optional[dt.datetime] = None,
-    ) -> list:
-        """Walk a sequence of named sub-object link sidecars in order.
-
-        Returns the sorted union of leaf-level oneuids reachable from
-        ``starts`` after following all ``relations`` in order. Each
-        relation name is loaded via :meth:`load_subobject_links` and
-        its ``.table`` handed to
-        :func:`oneuniverse.data.chain.chain_subobjects_tables`.
-        """
-        from oneuniverse.data.chain import chain_subobjects_tables
-        link_tables = [
-            self.load_subobject_links(name=r, as_of=as_of).table
-            for r in relations
-        ]
-        return chain_subobjects_tables(starts, link_tables)
-
-    def load_subobject_links(
-        self,
-        name: str = "default",
-        *,
-        as_of: Optional[dt.datetime] = None,
-    ):
-        from oneuniverse.data.subobject import (
-            load_subobject_links as _load,
-        )
-        return _load(Path(self.root), name=name, as_of=as_of)
-
-    def list_subobject_link_sets(
-        self, *, include_archived: bool = False,
-    ) -> List[str]:
-        from oneuniverse.data.subobject import (
-            list_subobject_link_sets as _list,
-        )
-        return _list(Path(self.root), include_archived=include_archived)
-
-    def oneuid_query(self, index=None, *, name: str = "default") -> "OneuidQuery":
-        """Return a tiered :class:`OneuidQuery` over the ONEUID index.
-
-        Pass *index* to reuse an in-memory :class:`OneuidIndex`; otherwise
-        the persisted sidecar *name* is loaded from disk.
-        """
+    def oneuid_query(self, name: str = "default", *, as_of=None):
+        """Query object for index *name* (``as_of`` defaults to ``as_of_time`` when set)."""
         from oneuniverse.data.oneuid import OneuidQuery
-        return OneuidQuery(self, index=index, name=name)
+        return OneuidQuery(self.load_oneuid(name, as_of=as_of), self)
 
-    def summary(self) -> str:
-        """Human-readable summary of all discovered datasets."""
-        if not self._entries:
-            return f"OneuniverseDatabase @ {self.root}\n  (no datasets found)"
-        lines = [
-            f"OneuniverseDatabase @ {self.root}",
-            f"  {len(self._entries)} dataset(s):",
-        ]
-        for name in sorted(self._entries):
-            e = self._entries[name]
-            cfg = e.loader.config
-            mf = e.manifest
-            lines.append(
-                f"  - {name:40s}  [{cfg.survey_type:15s}] "
-                f"{mf.geometry.value:9s} "
-                f"n_rows={mf.n_rows:>10,}"
-            )
-        return "\n".join(lines)
+    # ------------------------------------------------------------- links
+    def build_links(self, *, parents, children, rules, name: str = "default",
+                    oneuid_name: str = "default", allow_self_merged: bool = False):
+        from oneuniverse.data.links import build_links
+        return build_links(self, parents=parents, children=children, rules=rules, name=name,
+                           oneuid_name=oneuid_name, allow_self_merged=allow_self_merged)
 
-    def __repr__(self) -> str:
-        return f"<OneuniverseDatabase root={self.root} n_datasets={len(self._entries)}>"
+    def load_links(self, name: str = "default", *, as_of=None):
+        """Load link set *name*; *as_of* defaults to this Database's ``as_of_time``."""
+        from oneuniverse.data.links import load_links
+        return load_links(self, name, as_of=as_of if as_of is not None else self.as_of_time)
+
+    def list_links(self) -> list[str]:
+        return VersionedSidecar.names(self.root, "links")
+
+    def chain(self, starts, names, *, as_of=None):
+        from oneuniverse.data.links import chain
+        return chain(self, starts, names, as_of=as_of if as_of is not None else self.as_of_time)
+
+    # ------------------------------------------------------------- summary
+    def summary(self) -> dict:
+        datasets = {}
+        for n, m in self._manifests.items():
+            datasets[n] = {"n_rows": int(m.n_rows), "geometry": m.geometry.value,
+                           "kind": m.survey.kind, "version": int(m.validity.version)}
+        return {"datasets": dict(sorted(datasets.items())),
+                "oneuids": VersionedSidecar.names(self.root, "oneuid"),
+                "links": VersionedSidecar.names(self.root, "links")}

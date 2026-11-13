@@ -9,40 +9,31 @@ description = "Unified galaxy survey catalog package for low-redshift cosmology"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [
     {name = "Corentin Ravoux", email = "corentin.ravoux.research@gmail.com"},
 ]
 
 dependencies = [
-    "numpy>=1.22",
-    "pandas>=1.5",
-    "astropy>=5.0",
-    "pyarrow>=12.0",
+    "numpy>=1.26",
+    "pyarrow>=15.0",
+    "pandas>=2.1",
     "healpy>=1.16",
-    "pyyaml>=6.0",
-    # cross-match graph (sparse), KD-tree neighbour search
-    "scipy>=1.9",
+    "scipy>=1.11",
+    "astropy>=6.0",
 ]
 
 [project.optional-dependencies]
-fits = ["fitsio>=1.1"]
-all = [
-    "fitsio>=1.1",
-    "pyarrow>=12.0",
-    "healpy>=1.16",
-    "matplotlib>=3.5",
-]
+fits = ["fitsio>=1.2"]
+sql = ["duckdb>=1.0"]
+mpi = ["mpi4py>=3.1"]
 dev = [
-    "pytest>=7.0",
+    "pytest>=8",
+    "pytest-xdist>=3",
     "pytest-cov",
-    "pytest-xdist>=3.0",
-    "fitsio>=1.1",
-    "pyarrow>=12.0",
-    "healpy>=1.16",
-    "matplotlib>=3.5",
-    # Phase 21: multi-order MOC HEALPix support for GW skymap ingest.
-    "mocpy>=0.13",
+    "matplotlib>=3.8",
+    "duckdb>=1.0",
+    "ruff",
 ]
 docs = [
     "mkdocs-material>=9.5",
@@ -72,14 +63,5 @@ include = ["oneuniverse*"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
-addopts = "-v --tb=short"
-
-[tool.bumpversion]
-current_version = "0.2.0"
-commit = true
-tag = true
-tag_name = "v{new_version}"
-message = "Bump version: {current_version} → {new_version}"
-
-[[tool.bumpversion.files]]
-filename = "oneuniverse/__init__.py"
+addopts = "-q -m 'not slow'"
+markers = ["slow: ensemble / physics tests, run nightly"]

@@ -1,707 +1,364 @@
-"""
-oneuniverse.data.oneuid
-~~~~~~~~~~~~~~~~~~~~~~~
-**ONEUID** — the unified object identifier of the oneuniverse database.
+"""ONEUID: cross-survey identity index with position-based hydration.
 
-A ONEUID labels a single astrophysical object across all surveys. Two
-catalog rows share the same ONEUID iff they pass the cross-match rules
-(sky separation + optional Δz + rule-based reject list). Singletons get
-their own ONEUID.
-
-Named, versioned indices
-------------------------
-Indices are persisted at::
-
-    {database_root}/_oneuid/<name>.parquet
-    {database_root}/_oneuid/<name>.manifest.json
-
-so multiple indices (e.g. ``default``, ``spec_only``, ``desi_only``) can
-coexist. The manifest JSON records the datasets used, the
-:class:`CrossMatchRules` used (including its hash), and basic stats.
-
-Schema (one row per (dataset, original-row) pair):
-
-    oneuid       int64    universal id, contiguous from 0
-    dataset      string   dataset name as registered in the database
-    row_index    int64    row index in the converted Parquet stack
-    ra           float64  degrees, ICRS
-    dec          float64  degrees, ICRS
-    z            float64  redshift used for the Δz cut (NaN if absent)
-    z_type       string   per-row ztype (spec/phot/pv/none) — audit column
-    survey_type  string   dataset's ``manifest.survey_type`` — audit column
-
-Legacy layout
--------------
-The single-file layout ``{root}/_oneuid_index.parquet`` remains readable
-for back-compat. It has no audit columns; they come back as ``"none"`` /
-``"unknown"``. Full removal is deferred to Phase 6.
+An index maps every member row of the chosen datasets to an ``oneuid`` (the
+connected component of the pair-wise cross-match graph). Each index row stores
+the member's *position* in its dataset -- ``(partition, offset)`` -- next to
+``source_row``, so hydration reads exactly the rows the index points at. The
+index records the ``DatasetView.version`` of every dataset it was built from;
+hydrating after a dataset was rewritten raises ``FormatError`` instead of
+returning another version's rows.
 """
 from __future__ import annotations
 
-import datetime as dt_mod
-import json
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Union
+from collections.abc import Iterator, Sequence
 
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from oneuniverse.data.converter import read_oneuniverse_parquet
-from oneuniverse.data.oneuid_crossmatch import cross_match_surveys
-from oneuniverse.data.oneuid_rules import CrossMatchRules
-from oneuniverse.data.selection import (
-    Cone,
-    Selection,
-    Shell,
-    SkyPatch,
-    apply_selections,
+from oneuniverse._core.errors import (
+    FormatError,
+    NotFoundError,
+    SchemaError,
+    ValidationError,
 )
-from oneuniverse.data.validity import DatasetValidity
+from oneuniverse._core.geometry import Cone, SkyPatch, ZRange
+from oneuniverse.data._names import name_list
+from oneuniverse.data.crossmatch import CrossMatchRules, components, match_pair
+from oneuniverse.data.sidecar import VersionedSidecar
 
-logger = logging.getLogger(__name__)
+__all__ = ["ONEUID_SCHEMA", "OneuidIndex", "OneuidQuery", "build_oneuid", "load_oneuid"]
+
+ONEUID_SCHEMA = pa.schema([
+    ("oneuid", pa.int64()),
+    ("dataset", pa.dictionary(pa.int16(), pa.string())),
+    ("source_row", pa.int64()),
+    ("partition", pa.int32()),
+    ("offset", pa.int64()),
+    ("ra", pa.float64()),
+    ("dec", pa.float64()),
+    ("z", pa.float64()),
+    ("z_type", pa.dictionary(pa.int8(), pa.string())),
+])
+
+_KIND = "oneuid"
 
 
-ONEUID_DIR = "_oneuid"
-ONEUID_MANIFEST_FORMAT_VERSION = 1
+def check_dataset_version(db, index, name: str):
+    """Return the view of *name*; FormatError if it changed since *index* was built."""
+    recorded = index.meta["dataset_versions"].get(name)
+    if name not in db:
+        raise FormatError(
+            f"dataset {name} changed since ONEUID {index.name} was built "
+            f"(not present in this Database); rebuild the index")
+    view = db[name]
+    if recorded is None or list(view.version) != list(recorded):
+        raise FormatError(
+            f"dataset {name} changed since ONEUID {index.name} was built; rebuild the index")
+    return view
 
 
-# ── Path helpers ─────────────────────────────────────────────────────────
+def check_writable(db, what: str) -> None:
+    if getattr(db, "as_of_time", None) is not None:
+        raise ValidationError(
+            f"cannot {what}: read-only: this Database is pinned to {db.as_of_time.isoformat()}")
+_MATCH_COLUMNS = ["ra", "dec", "z", "z_type", "source_row", "hpix32"]
 
 
-def _index_path(root: Path, name: str) -> Path:
-    return root / ONEUID_DIR / f"{name}.parquet"
+def _dict(strings: pa.Array | pa.ChunkedArray, index_type: pa.DataType) -> pa.Array:
+    if isinstance(strings, pa.ChunkedArray):
+        strings = strings.combine_chunks()
+    enc = strings.dictionary_encode()
+    return pa.DictionaryArray.from_arrays(enc.indices.cast(index_type), enc.dictionary)
 
 
-def _index_manifest_path(root: Path, name: str) -> Path:
-    return root / ONEUID_DIR / f"{name}.manifest.json"
+def _load_dataset(view, name: str) -> pa.Table:
+    """ra/dec/z/z_type/source_row/hpix32 of all rows, plus partition and offset."""
+    pieces = []
+    for part, tab in view.iter_partitions(columns=_MATCH_COLUMNS):
+        n = tab.num_rows
+        zt = tab["z_type"]
+        if pa.types.is_dictionary(zt.type):
+            zt = zt.cast(pa.string())
+        tab = tab.set_column(tab.schema.get_field_index("z_type"), "z_type", zt)
+        tab = tab.append_column("partition", pa.array(np.full(n, part, np.int32)))
+        tab = tab.append_column("offset", pa.array(np.arange(n, dtype=np.int64)))
+        pieces.append(tab)
+    if not pieces:
+        raise ValidationError(f"dataset {name!r} has no rows to index")
+    return pa.concat_tables(pieces).combine_chunks()
 
 
-# ── Data class ───────────────────────────────────────────────────────────
+def build_oneuid(db, datasets: Sequence[str], *, rules: CrossMatchRules,
+                 name: str = "default", block_nside: int = 8) -> OneuidIndex:
+    """Cross-match *datasets* pair-wise and publish the ONEUID index *name*.
+
+    Identity is per dataset: one int16 code per dataset is the "survey" given
+    to :func:`components`, so what ``allow_same_survey_merge=False`` forbids is
+    two members of the same *dataset* sharing an oneuid. A dataset is never
+    matched against itself. Datasets are used in sorted name order.
+
+    Memory: ra, dec, z, z_type, source_row, hpix32 and positions of **all** rows
+    of the chosen datasets are held in memory at once. Measured build-only cost
+    is about 200 bytes per row above the pre-build RSS (2 x 1M rows: +392 MB);
+    the whole slow test, including data generation, peaks at 0.97 GB.
+    """
+    check_writable(db, "build_oneuid")
+    names = sorted(set(name_list(datasets, "datasets")))
+    if not names:
+        raise ValidationError("build_oneuid needs at least one dataset")
+    if len(names) > 32767:
+        raise ValidationError("too many datasets")
+    views = [db[n] for n in names]  # NotFoundError for unknown names
+    sep_pairs = rules.separate_pairs()
+    unknown = sorted({d for pr in sep_pairs for d in pr} - set(names))
+    if unknown:
+        raise ValidationError(
+            f"separate names datasets {unknown} that are not among the build's datasets {names}")
+    separated = {(names.index(a), names.index(b)) for a, b in sep_pairs}
+    separated |= {(j, i) for i, j in separated}
+    versions = {n: list(v.version) for n, v in zip(names, views)}
+    tables = [_load_dataset(v, n) for v, n in zip(views, names)]
+    sizes = [t.num_rows for t in tables]
+    off = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64)
+    total = int(off[-1])
+    L, R, S = [], [], []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            if (i, j) in separated:
+                continue
+            p = match_pair(tables[i], tables[j], rules, block_nside=block_nside)
+            L.append(p.left + off[i])
+            R.append(p.right + off[j])
+            S.append(p.sep_arcsec)
+    left = np.concatenate(L) if L else np.empty(0, np.int64)
+    right = np.concatenate(R) if R else np.empty(0, np.int64)
+    sep = np.concatenate(S) if S else np.empty(0, np.float64)
+    dcode = np.repeat(np.arange(len(names), dtype=np.int16), sizes)
+    forbid = None
+    if separated:
+        forbid = np.zeros(len(names), np.int64)
+        for i, j in separated:
+            forbid[i] |= np.int64(1) << np.int64(j)
+    label = components(total, left, right, sep, survey_of=dcode,
+                       allow_same_survey_merge=rules.allow_same_survey_merge, forbid=forbid)
+    del left, right, sep
+    full = pa.concat_tables(tables).combine_chunks()
+    del tables
+    src = full["source_row"].to_numpy()
+    order = np.lexsort((src, dcode, label))
+    ord_pa = pa.array(order)
+    ds_dict = pa.array(names, pa.string())
+    table = pa.table({
+        "oneuid": pa.array(label[order].astype(np.int64)),
+        "dataset": pa.DictionaryArray.from_arrays(pa.array(dcode[order]), ds_dict),
+        "source_row": pa.array(src[order].astype(np.int64)),
+        "partition": full["partition"].take(ord_pa),
+        "offset": full["offset"].take(ord_pa),
+        "ra": full["ra"].take(ord_pa),
+        "dec": full["dec"].take(ord_pa),
+        "z": full["z"].take(ord_pa),
+        "z_type": _dict(full["z_type"].take(ord_pa), pa.int8()),
+    }, schema=ONEUID_SCHEMA)
+    del full, order, ord_pa
+    n_objects = int(label.max()) + 1 if total else 0
+    counts = np.bincount(label, minlength=n_objects)
+    meta = {
+        "rules": rules.to_dict(), "rules_hash": rules.hash(), "datasets": names,
+        "dataset_versions": versions, "n_objects": n_objects,
+        "n_multi": int((counts >= 2).sum()), "block_nside": int(block_nside),
+    }
+    VersionedSidecar(db.root, _KIND, name).write(table, meta)
+    return load_oneuid(db, name)
 
 
-@dataclass
+def load_oneuid(db, name: str = "default", *, as_of=None) -> OneuidIndex:
+    """Load ONEUID index *name* (the version live at *as_of* if given)."""
+    table, meta = VersionedSidecar(db.root, _KIND, name).load(as_of=as_of)
+    return OneuidIndex(table, meta, name)
+
+
 class OneuidIndex:
-    """In-memory representation of a ONEUID index.
+    """An ONEUID table (``ONEUID_SCHEMA``, sorted by oneuid, dataset, source_row) + meta."""
 
-    Attributes
-    ----------
-    table : DataFrame
-        Long-format index — see module docstring.
-    n_unique : int
-        Number of distinct ONEUIDs.
-    n_multi : int
-        Number of ONEUIDs observed in ≥ 2 datasets.
-    name : str
-        Identifier of this index (``"default"``, ``"spec_only"``, …).
-    rules : CrossMatchRules or None
-        The cross-match policy used to build this index.
-    """
-    table: pd.DataFrame
-    n_unique: int
-    n_multi: int
-    name: str = "default"
-    rules: Optional[CrossMatchRules] = None
-    validity: Optional[DatasetValidity] = None
-
-    # ── Back-compat shims (derived from rules) ──────────────────────
+    def __init__(self, table: pa.Table, meta: dict, name: str) -> None:
+        self.table = table
+        self.meta = meta
+        self.name = name
 
     @property
-    def sky_tol_arcsec(self) -> float:
-        return self.rules.sky_tol_arcsec if self.rules is not None else float("nan")
+    def datasets(self) -> list[str]:
+        return list(self.meta["datasets"])
 
     @property
-    def dz_tol(self) -> Optional[float]:
-        return self.rules.dz_tol_default if self.rules is not None else None
+    def rules(self) -> CrossMatchRules:
+        return CrossMatchRules.from_dict(self.meta["rules"])
 
-    # ── Lookup API ──────────────────────────────────────────────────
+    @property
+    def n_objects(self) -> int:
+        return int(self.meta["n_objects"])
 
-    def datasets(self) -> List[str]:
-        return sorted(self.table["dataset"].unique().tolist())
+    @property
+    def n_multi(self) -> int:
+        return int(self.meta["n_multi"])
 
-    def of(self, oneuid: int) -> pd.DataFrame:
-        """All concurrences for one universal object."""
-        return self.table[self.table["oneuid"] == oneuid].reset_index(drop=True)
+    def multi_only(self) -> pa.Table:
+        """Index rows of oneuids with at least two members."""
+        ids = self.table["oneuid"].to_numpy()
+        u, c = np.unique(ids, return_counts=True)
+        return self.table.filter(pa.array(np.isin(ids, u[c >= 2])))
 
-    def lookup(self, dataset: str, row_index: int) -> int:
-        """Return the ONEUID for a (dataset, row) pair."""
-        m = (self.table["dataset"] == dataset) & (self.table["row_index"] == row_index)
-        if not m.any():
-            raise KeyError(f"({dataset!r}, row_index={row_index}) not in index")
-        return int(self.table.loc[m, "oneuid"].iloc[0])
+    def of(self, oneuid: int) -> pa.Table:
+        """Index rows of one oneuid."""
+        return self.table.filter(pc.equal(self.table["oneuid"], pa.scalar(int(oneuid), pa.int64())))
 
-    def multi_only(self) -> pd.DataFrame:
-        """Subset of the index for objects seen by ≥ 2 datasets."""
-        counts = self.table.groupby("oneuid")["dataset"].nunique()
-        keep = counts[counts > 1].index
-        return self.table[self.table["oneuid"].isin(keep)].reset_index(drop=True)
-
-    # ── Dataset subsetting ──────────────────────────────────────────
-
-    def restrict_to(self, datasets: Sequence[str]) -> "OneuidIndex":
-        """Return a new index restricted to rows from *datasets*.
-
-        ONEUIDs are re-indexed to a contiguous ``0..n_unique-1`` range.
-        """
-        sub = self.table[self.table["dataset"].isin(list(datasets))].copy()
-        if sub.empty:
-            empty = sub.reset_index(drop=True)
-            return OneuidIndex(
-                table=empty, n_unique=0, n_multi=0,
-                name=f"{self.name}.restricted", rules=self.rules,
-            )
-        _, inv = np.unique(sub["oneuid"].to_numpy(), return_inverse=True)
-        sub["oneuid"] = inv.astype(np.int64)
-        counts = sub.groupby("oneuid")["dataset"].nunique()
-        n_multi = int((counts > 1).sum())
-        return OneuidIndex(
-            table=sub.reset_index(drop=True),
-            n_unique=int(inv.max()) + 1,
-            n_multi=n_multi,
-            name=f"{self.name}.restricted",
-            rules=self.rules,
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"<OneuidIndex name={self.name!r} n_rows={len(self.table)} "
-            f"n_unique={self.n_unique} n_multi={self.n_multi}>"
-        )
-
-
-# ── Build / load / persist ───────────────────────────────────────────────
-
-
-def build_oneuid_index(
-    database,
-    *,
-    datasets: Optional[Sequence[str]] = None,
-    rules: Optional[CrossMatchRules] = None,
-    name: str = "default",
-    persist: bool = True,
-    # Legacy kwargs (kept for back-compat — pre-Phase-4 callers)
-    sky_tol_arcsec: Optional[float] = None,
-    dz_tol: Optional[float] = None,
-) -> OneuidIndex:
-    """Build a ONEUID index for *database*.
-
-    Parameters
-    ----------
-    database
-        :class:`OneuniverseDatabase` instance.
-    datasets
-        Restrict the build to this subset of dataset names. ``None``
-        means every dataset in *database*.
-    rules
-        Cross-match policy. If ``None``, either
-        :class:`CrossMatchRules`\\ () defaults are used, or — for
-        back-compat — the ``sky_tol_arcsec``/``dz_tol`` kwargs are
-        translated into a policy.
-    name
-        Identifier for this index. Controls the on-disk layout.
-    persist
-        Write the index + manifest to ``{root}/_oneuid/<name>.*``.
-    sky_tol_arcsec, dz_tol
-        Back-compat only. Ignored when *rules* is provided.
-    """
-    rules = _resolve_rules(rules, sky_tol_arcsec, dz_tol)
-
-    # Dataset selection.
-    all_names = list(database)
-    if datasets is None:
-        selected = all_names
-    else:
-        missing = set(datasets) - set(all_names)
+    def restrict_to(self, datasets: Sequence[str]) -> OneuidIndex:
+        """Keep only rows of *datasets*; oneuid values are unchanged."""
+        keep = sorted(set(name_list(datasets, "datasets")))
+        missing = [d for d in keep if d not in self.meta["datasets"]]
         if missing:
-            raise KeyError(f"Unknown dataset(s): {sorted(missing)}")
-        selected = list(datasets)
-
-    # Load only the cross-match columns + audit columns from each dataset.
-    catalogs: Dict[str, pd.DataFrame] = {}
-    survey_ztype: Dict[str, str] = {}
-    survey_type_map: Dict[str, str] = {}
-    for ds in selected:
-        path = database.get_path(ds)
-        manifest = database.get_manifest(ds)
-        survey_type_map[ds] = manifest.survey_type or "unknown"
-        available = {c.name for c in manifest.schema}
-        wanted = [c for c in ("ra", "dec", "z", "z_type") if c in available]
-        try:
-            df = read_oneuniverse_parquet(path, columns=wanted)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("ONEUID: skipping %s — cannot read (%s)", ds, exc)
-            continue
-        catalogs[ds] = df
-        logger.info("ONEUID: loaded %s (%d rows)", ds, len(df))
-
-    if not catalogs:
-        raise RuntimeError("ONEUID: no datasets in selection have ra/dec columns")
-
-    res = cross_match_surveys(catalogs, rules, survey_ztype=survey_ztype or None)
-
-    # Rename to the ONEUID schema + attach audit columns.
-    table = res.table.rename(columns={
-        "universal_id": "oneuid", "survey": "dataset",
-    }).copy()
-    table["survey_type"] = table["dataset"].map(survey_type_map).fillna("unknown")
-    # Ensure audit columns exist even if cross_match omitted them.
-    if "z_type" not in table.columns:
-        table["z_type"] = "none"
-    table = table[[
-        "oneuid", "dataset", "row_index", "ra", "dec", "z",
-        "z_type", "survey_type",
-    ]]
-    table = table.sort_values(["oneuid", "dataset"]).reset_index(drop=True)
-
-    # Phase 6: compact dtypes. `dataset` and `survey_type` are low-cardinality
-    # strings — categorical saves memory on wide tables and speeds up groupby.
-    # `row_index` fits in int32 unless a single dataset has >2.1 B rows.
-    table["dataset"] = pd.Categorical(table["dataset"])
-    table["survey_type"] = pd.Categorical(table["survey_type"])
-    table["z_type"] = pd.Categorical(table["z_type"])
-    if len(table) and int(table["row_index"].max()) < np.iinfo(np.int32).max:
-        table["row_index"] = table["row_index"].astype(np.int32)
-
-    index = OneuidIndex(
-        table=table,
-        n_unique=res.n_groups,
-        n_multi=res.n_multi,
-        name=name,
-        rules=rules,
-        validity=DatasetValidity(
-            valid_from_utc=datetime.now(timezone.utc).isoformat(),
-        ),
-    )
-
-    if persist:
-        _archive_previous(database.root, name)
-        _write_index(index, database.root)
-        logger.info(
-            "ONEUID: wrote %s", _index_path(database.root, name),
-        )
-
-    return index
-
-
-def load_oneuid_index(
-    database,
-    name: str = "default",
-    *,
-    as_of: Optional[dt_mod.datetime] = None,
-) -> OneuidIndex:
-    """Load a previously persisted ONEUID index.
-
-    With ``as_of=None`` (default), returns the currently-valid index.
-    With a timezone-aware ``as_of``, walks the live + archived manifests
-    and returns the index whose :class:`DatasetValidity` contains
-    ``as_of``.
-    """
-    root = database.root
-    if as_of is None:
-        new_path = _index_path(root, name)
-        if new_path.is_file():
-            return _read_index(root, name)
-        raise FileNotFoundError(
-            f"No ONEUID index '{name}' at {new_path}. "
-            f"Run database.build_oneuid(name={name!r})."
-        )
-
-    if as_of.tzinfo is None:
-        raise ValueError("load_oneuid_index: as_of must be tz-aware")
-
-    candidates: List[Path] = []
-    live = _index_manifest_path(root, name)
-    if live.is_file():
-        candidates.append(live)
-    archive_dir = root / ONEUID_DIR
-    if archive_dir.is_dir():
-        candidates.extend(
-            sorted(archive_dir.glob(f"{name}__*.manifest.json"))
-        )
-
-    for man in candidates:
-        with open(man) as fh:
-            raw = json.load(fh)
-        v_raw = raw.get("validity")
-        if v_raw is None:
-            continue
-        v = DatasetValidity.from_dict(v_raw)
-        if v.contains(as_of):
-            return _read_index_at(root, man, raw)
-
-    raise FileNotFoundError(
-        f"load_oneuid_index: no version of {name!r} valid at {as_of}"
-    )
-
-
-def list_oneuids(database, *, include_archived: bool = False) -> List[str]:
-    """Return the names of persisted ONEUID indices under *database*.
-
-    With ``include_archived=True``, also includes archived versions named
-    ``{name}__{YYYYmmddTHHMMSSZ}``.
-    """
-    d = database.root / ONEUID_DIR
-    if not d.is_dir():
-        return []
-    live = sorted(
-        p.stem for p in d.glob("*.parquet") if "__" not in p.stem
-    )
-    if not include_archived:
-        return live
-    archived = sorted(
-        p.stem for p in d.glob("*__*.parquet")
-    )
-    return live + archived
-
-
-# ── Internal — I/O ───────────────────────────────────────────────────────
-
-
-def _resolve_rules(
-    rules: Optional[CrossMatchRules],
-    sky_tol_arcsec: Optional[float],
-    dz_tol: Optional[float],
-) -> CrossMatchRules:
-    if rules is not None:
-        return rules
-    kwargs = {}
-    if sky_tol_arcsec is not None:
-        kwargs["sky_tol_arcsec"] = sky_tol_arcsec
-    if dz_tol is not None or sky_tol_arcsec is not None:
-        # When the caller used legacy kwargs, honour their dz_tol (None ok).
-        kwargs["dz_tol_default"] = dz_tol
-    return CrossMatchRules(**kwargs) if kwargs else CrossMatchRules()
-
-
-def _archive_previous(root: Path, name: str) -> None:
-    """If a live index named *name* exists, rename its parquet + manifest
-    with a timestamp suffix and close its validity window."""
-    idx_path = _index_path(root, name)
-    man_path = _index_manifest_path(root, name)
-    if not (idx_path.exists() and man_path.exists()):
-        return
-    now = datetime.now(timezone.utc)
-    ts_suffix = now.strftime("%Y%m%dT%H%M%SZ")
-    archived_name = f"{name}__{ts_suffix}"
-    archived_idx = root / ONEUID_DIR / f"{archived_name}.parquet"
-    archived_man = root / ONEUID_DIR / f"{archived_name}.manifest.json"
-    idx_path.rename(archived_idx)
-    with open(man_path) as fh:
-        raw = json.load(fh)
-    v = raw.get("validity")
-    if v is not None and v.get("valid_to_utc") is None:
-        v["valid_to_utc"] = now.isoformat()
-        raw["validity"] = v
-    man_path.unlink()
-    with open(archived_man, "w") as fh:
-        json.dump(raw, fh, indent=2, sort_keys=True)
-
-
-def _write_index(index: OneuidIndex, root: Path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    out_dir = root / ONEUID_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    pq.write_table(
-        pa.Table.from_pandas(index.table, preserve_index=False),
-        _index_path(root, index.name),
-        compression="zstd",
-    )
-
-    # Sidecar manifest.
-    rules = index.rules or CrossMatchRules()
-    validity = index.validity or DatasetValidity(
-        valid_from_utc=datetime.now(timezone.utc).isoformat(),
-    )
-    manifest = {
-        "format_version": ONEUID_MANIFEST_FORMAT_VERSION,
-        "name": index.name,
-        "created_utc": datetime.now(timezone.utc).isoformat(),
-        "datasets": index.datasets(),
-        "n_unique": int(index.n_unique),
-        "n_multi": int(index.n_multi),
-        "n_rows": int(len(index.table)),
-        "rules": {
-            "hash": rules.hash(),
-            "sky_tol_arcsec": rules.sky_tol_arcsec,
-            "dz_tol_default": rules.dz_tol_default,
-            "dz_tol_by_ztype": [
-                [list(k), v] for k, v in rules.dz_tol_by_ztype.items()
-            ],
-            "reject_ztype": [list(k) for k in rules.reject_ztype],
-        },
-        "validity": validity.to_dict(),
-    }
-    with open(_index_manifest_path(root, index.name), "w") as fh:
-        json.dump(manifest, fh, indent=2, sort_keys=True)
-
-
-def _read_index(root: Path, name: str) -> OneuidIndex:
-    manifest_path = _index_manifest_path(root, name)
-    meta: dict = {}
-    if manifest_path.is_file():
-        with open(manifest_path) as fh:
-            meta = json.load(fh)
-    return _read_index_at(root, manifest_path, meta, parquet_name=name)
-
-
-def _read_index_at(
-    root: Path, manifest_path: Path, meta: dict,
-    parquet_name: Optional[str] = None,
-) -> OneuidIndex:
-    """Read an index given its manifest path and parsed metadata.
-
-    *parquet_name* overrides the parquet stem used for the table file;
-    otherwise the stem is derived from *manifest_path* by dropping
-    ``.manifest.json``.
-    """
-    import pyarrow.parquet as pq
-
-    if parquet_name is None:
-        stem = manifest_path.name
-        if stem.endswith(".manifest.json"):
-            stem = stem[: -len(".manifest.json")]
-        parquet_name = stem
-    parquet_path = manifest_path.parent / f"{parquet_name}.parquet"
-    table = pq.read_table(parquet_path).to_pandas()
-    rules = _rules_from_manifest(meta.get("rules", {}))
-    name = meta.get("name", parquet_name)
-    v_raw = meta.get("validity")
-    validity = DatasetValidity.from_dict(v_raw) if v_raw is not None else None
-    n_unique = int(meta.get(
-        "n_unique", (table["oneuid"].max() + 1) if len(table) else 0,
-    ))
-    n_multi = int(meta.get(
-        "n_multi",
-        int((table.groupby("oneuid")["dataset"].nunique() > 1).sum())
-        if len(table) else 0,
-    ))
-    return OneuidIndex(
-        table=table, n_unique=n_unique, n_multi=n_multi,
-        name=name, rules=rules, validity=validity,
-    )
-
-
-def _rules_from_manifest(d: dict) -> CrossMatchRules:
-    pairs = {
-        tuple(k): float(v)
-        for k, v in (d.get("dz_tol_by_ztype") or [])
-    }
-    rejects = frozenset(tuple(p) for p in (d.get("reject_ztype") or []))
-    return CrossMatchRules(
-        sky_tol_arcsec=float(d.get("sky_tol_arcsec", 1.0)),
-        dz_tol_default=d.get("dz_tol_default"),
-        dz_tol_by_ztype=pairs,
-        reject_ztype=rejects,
-    )
-
-
-# ── Tiered query API ─────────────────────────────────────────────────────
+            raise ValidationError(f"datasets {missing} not in index {self.name!r}")
+        ds = self.table["dataset"].combine_chunks().cast(pa.string())
+        t = self.table.filter(pc.is_in(ds, pa.array(keep, pa.string())))
+        ids = t["oneuid"].to_numpy()
+        _, c = np.unique(ids, return_counts=True)
+        meta = dict(self.meta)
+        meta.update(
+            datasets=keep, n_objects=len(c), n_multi=int((c >= 2).sum()),
+            dataset_versions={d: self.meta["dataset_versions"][d] for d in keep})
+        return OneuidIndex(t, meta, self.name)
 
 
 class OneuidQuery:
-    """Tiered, selector-based query API over the ONEUID index.
+    """Selection and hydration of the objects of an :class:`OneuidIndex`."""
 
-    Selectors → ``ndarray[int64]`` of ONEUIDs:
-      :meth:`from_id`, :meth:`from_ids`, :meth:`from_foreign_ids`,
-      :meth:`from_cone`, :meth:`from_shell`, :meth:`from_skypatch`,
-      :meth:`from_selection`.
+    def __init__(self, index: OneuidIndex, db) -> None:
+        self.index = index
+        self.db = db
 
-    Hydration levels → ``DataFrame``:
-      :meth:`index_for` (level 0), :meth:`partial_for` (level 1),
-      :meth:`full_for` (level 2).
-    """
+    def _ds_names(self) -> np.ndarray:
+        d = self.index.table["dataset"].combine_chunks()
+        return np.asarray(d.dictionary.to_pylist(), dtype=object)[
+            d.indices.to_numpy(zero_copy_only=False)]
 
-    def __init__(
-        self, database, index: Optional[OneuidIndex] = None, *,
-        name: str = "default",
-    ) -> None:
-        self.database = database
-        self.index: OneuidIndex = (
-            index if index is not None
-            else load_oneuid_index(database, name=name)
-        )
-        self._uid_arr = self.index.table["oneuid"].to_numpy()
-        self._ds_arr = self.index.table["dataset"].to_numpy()
-        self._row_arr = self.index.table["row_index"].to_numpy()
-        self._ra = self.index.table["ra"].to_numpy()
-        self._dec = self.index.table["dec"].to_numpy()
-        self._z = self.index.table["z"].to_numpy()
-
-    # ── Selectors ────────────────────────────────────────────────────────
-
-    def from_id(self, oneuid: int) -> np.ndarray:
-        if not (self._uid_arr == int(oneuid)).any():
-            raise KeyError(f"ONEUID {oneuid} not in index")
-        return np.array([int(oneuid)], dtype=np.int64)
-
-    def from_ids(self, oneuids: Iterable[int]) -> np.ndarray:
-        uids = np.unique(np.asarray(list(oneuids), dtype=np.int64))
-        present = np.isin(uids, self._uid_arr)
-        return uids[present]
-
-    def from_foreign_ids(
-        self, dataset: str, row_indices: Iterable[int],
-    ) -> np.ndarray:
-        rows = np.asarray(list(row_indices), dtype=np.int64)
-        mask = (self._ds_arr == dataset) & np.isin(self._row_arr, rows)
-        return np.unique(self._uid_arr[mask]).astype(np.int64)
-
-    def from_cone(self, ra: float, dec: float, radius: float) -> np.ndarray:
-        return self.from_selection(Cone(ra=ra, dec=dec, radius=radius))
-
-    def from_shell(self, z_min: float, z_max: float) -> np.ndarray:
-        return self.from_selection(Shell(z_min=z_min, z_max=z_max))
-
-    def from_skypatch(
-        self, ra_min: float, ra_max: float, dec_min: float, dec_max: float,
-    ) -> np.ndarray:
-        return self.from_selection(SkyPatch(
-            ra_min=ra_min, ra_max=ra_max,
-            dec_min=dec_min, dec_max=dec_max,
-        ))
-
-    def from_selection(
-        self, selection: Union[Selection, Sequence[Selection]],
-    ) -> np.ndarray:
-        mask = apply_selections(self._ra, self._dec, self._z, selection)
-        return np.unique(self._uid_arr[mask]).astype(np.int64)
-
-    # ── Hydration levels ─────────────────────────────────────────────────
-
-    def index_for(self, oneuids: Iterable[int]) -> pd.DataFrame:
-        uids = np.asarray(list(oneuids), dtype=np.int64)
-        mask = np.isin(self._uid_arr, uids)
-        return self.index.table[mask].reset_index(drop=True)
-
-    def iter_partial(
-        self,
-        oneuids: Iterable[int],
-        columns: Optional[Sequence[str]] = None,
-        datasets: Optional[Sequence[str]] = None,
-        batch_size: Optional[int] = None,
-    ) -> Iterator[pd.DataFrame]:
-        """Stream hydrated rows batch-by-batch.
-
-        Yields one :class:`pandas.DataFrame` per batch of up to
-        ``batch_size`` ONEUIDs. Peak memory is proportional to
-        ``batch_size``, not to ``len(oneuids)``. ``batch_size=None``
-        yields a single batch covering every requested ONEUID.
-        """
-        uids = np.asarray(list(oneuids), dtype=np.int64)
-        if uids.size == 0:
-            return
-        if batch_size is not None and batch_size <= 0:
-            raise ValueError("batch_size must be positive or None")
-        step = batch_size if batch_size is not None else uids.size
-        for start in range(0, uids.size, step):
-            chunk = uids[start:start + step]
-            sub = self.index.table[np.isin(self._uid_arr, chunk)]
-            yield self._hydrate_batch(sub, columns, datasets)
-
-    def partial_for(
-        self,
-        oneuids: Iterable[int],
-        columns: Optional[Sequence[str]] = None,
-        datasets: Optional[Sequence[str]] = None,
-    ) -> pd.DataFrame:
-        uids = np.asarray(list(oneuids), dtype=np.int64)
-        pieces = list(
-            self.iter_partial(uids, columns=columns, datasets=datasets)
-        )
-        if not pieces:
-            extra = list(columns) if columns is not None else []
-            return pd.DataFrame(columns=[
-                "oneuid", "dataset", "row_index", "ra", "dec", "z", *extra,
-            ])
-        return pd.concat(pieces, ignore_index=True)
-
-    def full_for(
-        self, oneuids: Iterable[int],
-        datasets: Optional[Sequence[str]] = None,
-    ) -> pd.DataFrame:
-        return self.partial_for(oneuids, columns=None, datasets=datasets)
-
-    # ── Internals ──────────────────────────────────────────────────────
-
-    def _hydrate_batch(
-        self,
-        sub: pd.DataFrame,
-        columns: Optional[Sequence[str]],
-        datasets: Optional[Sequence[str]],
-    ) -> pd.DataFrame:
-        """Hydrate the ``(dataset, row_index)`` pairs in *sub* into one
-        frame via :meth:`DatasetView.scan` with an
-        ``_original_row_index`` pushdown filter.
-        """
+    def select(self, *, cone: Cone | None = None, patch: SkyPatch | None = None, z=None,
+               datasets: Sequence[str] | None = None) -> np.ndarray:
+        """Unique oneuids (sorted int64) with at least one member row matching every filter."""
+        t = self.index.table
+        mask = np.ones(t.num_rows, bool)
+        if cone is not None or patch is not None:
+            ra, dec = t["ra"].to_numpy(), t["dec"].to_numpy()
+            if cone is not None:
+                mask &= cone.contains(ra, dec)
+            if patch is not None:
+                mask &= patch.contains(ra, dec)
+        if z is not None:
+            if not isinstance(z, ZRange):
+                try:
+                    lo, hi = z
+                    lo, hi = float(lo), float(hi)
+                except (TypeError, ValueError) as e:
+                    raise ValidationError(f"z must be a ZRange or (lo, hi), got {z!r}") from e
+                if not lo <= hi:
+                    raise ValidationError(f"z requires lo <= hi, got ({lo}, {hi})")
+                zz = t["z"].to_numpy()
+                mask &= (zz >= lo) & (zz <= hi)
+            else:
+                mask &= z.contains(t["z"].to_numpy())
         if datasets is not None:
-            sub = sub[sub["dataset"].isin(list(datasets))]
-        if sub.empty:
-            extra = list(columns) if columns is not None else []
-            return pd.DataFrame(columns=[
-                "oneuid", "dataset", "row_index", "ra", "dec", "z", *extra,
-            ])
+            datasets = name_list(datasets, "datasets")
+            unknown = [d for d in datasets if d not in self.index.datasets]
+            if unknown:
+                raise NotFoundError(f"datasets {unknown} not in ONEUID {self.index.name!r}")
+            mask &= np.isin(self._ds_names(), list(datasets))
+        return np.unique(t["oneuid"].to_numpy()[mask]).astype(np.int64)
 
-        col_arg = list(columns) if columns is not None else None
-        pieces: List[pd.DataFrame] = []
-        for ds_name, grp in sub.groupby("dataset", sort=False, observed=False):
-            view = self.database[ds_name]
-            available = set(view.columns)
-            want: Optional[List[str]] = None
-            if col_arg is not None:
-                want = [c for c in col_arg if c in available]
-                if "_original_row_index" not in want:
-                    want = want + ["_original_row_index"]
-            rows = grp["row_index"].to_numpy()
-            expr = pc.field("_original_row_index").isin(
-                pa.array(rows, type=pa.int64()),
-            )
-            tbl = view.scan(columns=want, filter=expr)
-            part = tbl.to_pandas()
-            if "_original_row_index" in part.columns:
-                part = (
-                    part.set_index("_original_row_index")
-                    .reindex(rows)
-                    .reset_index()
-                )
-                # Drop only if we added _original_row_index internally
-                # (caller didn't explicitly request it).
-                added_internally = (
-                    col_arg is not None
-                    and "_original_row_index" not in col_arg
-                )
-                if added_internally:
-                    part = part.drop(columns=["_original_row_index"])
-            part = part.drop(
-                columns=[c for c in ("ra", "dec", "z") if c in part.columns],
-                errors="ignore",
-            )
-            if col_arg is not None:
-                for c in col_arg:
-                    if c not in part.columns and c not in ("ra", "dec", "z"):
-                        part[c] = np.nan
-            part.insert(0, "oneuid", grp["oneuid"].to_numpy())
-            part.insert(1, "dataset", ds_name)
-            part.insert(2, "row_index", grp["row_index"].to_numpy())
-            part.insert(3, "ra", grp["ra"].to_numpy())
-            part.insert(4, "dec", grp["dec"].to_numpy())
-            part.insert(5, "z", grp["z"].to_numpy())
-            pieces.append(part)
+    def rows(self, oneuids) -> pa.Table:
+        """Index rows of *oneuids* (unknown ids ignored), sorted by oneuid then dataset."""
+        ids = np.asarray(oneuids, dtype=np.int64).ravel()
+        t = self.index.table
+        return t.filter(pa.array(np.isin(t["oneuid"].to_numpy(), ids)))
 
-        return pd.concat(pieces, ignore_index=True)
+    def hydrate(self, oneuids, *, columns=None, datasets: Sequence[str] | None = None,
+                batch_size: int = 100_000) -> Iterator[pa.Table]:
+        """Yield the dataset rows of *oneuids*, per dataset and per batch.
 
-    def concurrences(self, oneuid: int) -> pd.DataFrame:
-        return self.index_for([oneuid])
+        Each batch holds ``columns`` (all dataset columns if None) plus
+        ``oneuid`` (int64) and ``dataset`` (string); rows are ordered by
+        ``(oneuid, source_row)`` within a dataset. Raises FormatError if a
+        dataset changed since the index was built.
+        """
+        if batch_size < 1:
+            raise ValidationError("batch_size must be >= 1")
+        if columns is not None:
+            columns = name_list(columns, "columns")
+            if {"oneuid", "dataset"} & set(columns):
+                raise ValidationError("columns must not include 'oneuid' or 'dataset'")
+        rows = self.rows(oneuids)
+        ds_col = rows["dataset"].combine_chunks()
+        ds_all = np.asarray(ds_col.dictionary.to_pylist(), dtype=object)[
+            ds_col.indices.to_numpy(zero_copy_only=False)]
+        wanted = sorted(set(self.index.datasets if datasets is None
+                            else name_list(datasets, "datasets")))
+        unknown = [d for d in wanted if d not in self.index.datasets]
+        if unknown:
+            raise NotFoundError(f"datasets {unknown} not in ONEUID {self.index.name!r}")
+        oid = rows["oneuid"].to_numpy()
+        part = rows["partition"].to_numpy()
+        off = rows["offset"].to_numpy()
+        views = {}
+        for name in wanted:
+            if (ds_all == name).any():
+                views[name] = check_dataset_version(self.db, self.index, name)
+        ctypes: dict[str, pa.DataType] = {}
+        if columns is not None and views:
+            for view in views.values():
+                for c in columns:
+                    if c in view.schema.names:
+                        ctypes.setdefault(c, view.schema.field(c).type)
+            absent = [c for c in columns if c not in ctypes]
+            if absent:
+                raise ValidationError(
+                    f"columns {absent} are in none of the hydrated datasets {sorted(views)}")
+        for name, view in views.items():
+            sel = np.flatnonzero(ds_all == name)
+            for s in range(0, sel.size, batch_size):
+                ix = sel[s:s + batch_size]
+                if columns is None:
+                    t = view.take(part[ix], off[ix])
+                else:
+                    have = [c for c in columns if c in view.schema.names]
+                    t = view.take(part[ix], off[ix], columns=have)
+                    for c in columns:
+                        if c not in have:
+                            t = t.append_column(c, pa.nulls(len(ix), ctypes[c]))
+                    t = t.select(columns)
+                t = t.append_column("oneuid", pa.array(oid[ix], pa.int64()))
+                t = t.append_column("dataset", pa.array([name] * len(ix), pa.string()))
+                yield t
 
-    def __repr__(self) -> str:
-        return (
-            f"<OneuidQuery index={self.index.name!r} "
-            f"n_unique={self.index.n_unique} "
-            f"n_multi={self.index.n_multi} datasets={self.index.datasets()}>"
-        )
+    def hydrate_table(self, oneuids, *, columns=None,
+                      datasets: Sequence[str] | None = None) -> pa.Table:
+        """All batches of :meth:`hydrate` concatenated (schemas promoted across datasets)."""
+        batches = list(self.hydrate(oneuids, columns=columns, datasets=datasets))
+        if not batches:
+            wanted = sorted(set(self.index.datasets if datasets is None else datasets))
+            fields: dict[str, pa.Field] = {}
+            for name in wanted:
+                schema = self.db[name].schema
+                for c in (schema.names if columns is None else columns):
+                    if c in schema.names:
+                        fields.setdefault(c, schema.field(c))
+            if columns is not None:
+                fields = {c: fields[c] for c in columns if c in fields}
+            fields["oneuid"] = pa.field("oneuid", pa.int64())
+            fields["dataset"] = pa.field("dataset", pa.string())
+            return pa.schema(list(fields.values())).empty_table()
+        try:
+            return pa.concat_tables(batches, promote_options="permissive")
+        except (pa.ArrowTypeError, pa.ArrowInvalid) as exc:
+            cols = sorted({f.name for b in batches for f in b.schema
+                           if len({str(b2.schema.field(f.name).type) for b2 in batches
+                                   if f.name in b2.schema.names}) > 1})
+            raise SchemaError(
+                f"cannot unify column types across datasets for columns {cols}: {exc}") from exc
