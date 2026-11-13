@@ -106,7 +106,7 @@ def native_products(path, *, adapter_format: str | None = None) -> list[NativePr
                       lambda z, s=part_src: _npy_batches(s[float(z)])),
         NativeProduct(ProductDecl("halos", "halos", zs, halo_cols), "catalog", halo_src, None,
                       lambda z, s=halo_src: _parquet_batches(s[float(z)])),
-        NativeProduct(ProductDecl("density", "field", zs, n_grid=cfg["n_grid"]), "field",
+        NativeProduct(ProductDecl("field", "field", zs, n_grid=cfg["n_grid"]), "field",
                       {z: path / f"field_z{t}.npy" for z, t in tags.items()}),
         NativeProduct(ProductDecl("lightcone", "lightcone", (0.0,), lc_cols), "lightcone",
                       {0.0: lc_file}, None, lambda z: _parquet_batches(lc_file)),

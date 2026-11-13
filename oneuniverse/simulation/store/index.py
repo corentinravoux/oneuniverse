@@ -77,9 +77,11 @@ def split_periodic(cube: Cube, box_size: float) -> list[Cube]:
     box = _check_box(box_size, 1, "n_side")
     spans = []
     for axis, (lo, hi) in enumerate(zip(cube.lo, cube.hi)):
-        if hi - lo > box:
+        if hi - lo > box * (1 + 1e-12):
             raise ValidationError(
                 f"cube side {hi - lo} on axis {axis} exceeds box_size {box}")
+        if hi - lo > box:  # within rounding tolerance: clamp to one full box
+            hi = lo + box
         shift = np.mod(lo, box) - lo
         if shift == 0.0:
             a, b = lo, hi

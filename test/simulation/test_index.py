@@ -148,3 +148,12 @@ def test_packed_fixture(tmp_path):
     prods = native_products(q, adapter_format="packed_npy")
     assert {x.decl.kind: x.adapter_format for x in prods}["particles"] == "packed_npy"
     assert {x.decl.kind: x.adapter_format for x in prods}["halos"] is None
+
+
+def test_split_periodic_full_box_tolerance():
+    c = Cube((0.1, 0.1, 0.1), (0.1 + 100.0,) * 3)
+    parts = split_periodic(c, 100.0)
+    assert sum(p.volume for p in parts) == pytest.approx(1e6)
+    assert all(0 <= p.lo[0] and p.hi[0] <= 100.0 for p in parts)
+    with pytest.raises(ValidationError):
+        split_periodic(Cube((0, 0, 0), (100.001, 1, 1)), 100.0)
