@@ -12,6 +12,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from oneuniverse.simulation.converter import SimConverter, register
 from oneuniverse.simulation.manifest import OUFSIM_FORMAT_VERSION, OUFSimManifest
 from oneuniverse.simulation.specs import (
     CosmologySpec,
@@ -137,3 +138,20 @@ def write_packed_native_fixture(src, *, n_side: int) -> Path:
         "box_size": cfg["box_size"], "n_side": n_side, "redshifts": cfg["redshifts"],
         "chunks": chunks}))
     return dst
+
+
+@register
+class FixtureConverter(SimConverter):
+    """Converter for the random fixture simulations (marker: ``config.json``)."""
+
+    code = "fixture"
+
+    @classmethod
+    def detect(cls, path) -> bool:
+        return (Path(path) / "config.json").is_file()
+
+    def manifest(self, path) -> OUFSimManifest:
+        return native_manifest(path)
+
+    def products(self, path) -> list[NativeProduct]:
+        return native_products(path)
