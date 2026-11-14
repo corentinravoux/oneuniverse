@@ -49,8 +49,9 @@ def test_simdatabase_scan_request_dispatch(tmp_path):
             and "field" in child.products)
     db2 = SimDatabase(tmp_path / "db").scan()
     assert db2.requests()[0].status == "ingested" and db2.lineage().num_rows == 1
-    assert list(db2.stores()) == ["parent", req.child]
-    got = db2.store(db2.requests()[0].child).read_field_box("field", 0.0, Cube((0, 0, 0), (10, 10, 10)))
+    child_name = db2.requests()[0].child
+    assert list(db2.stores()) == ["parent", child_name]
+    got = db2.store(child_name).read_field_box("field", 0.0, Cube((0, 0, 0), (10, 10, 10)))
     assert got.mean() == 1.0
     with pytest.raises(NotFoundError):
         db2.store("nope")

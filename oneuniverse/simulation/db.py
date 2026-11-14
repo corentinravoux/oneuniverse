@@ -125,14 +125,10 @@ class SimDatabase:
         self.save()
         return req
 
-    def _set(self, request: SimulationRequest, *, sync: SimulationRequest | None = None,
-             **changes) -> SimulationRequest:
+    def _set(self, request: SimulationRequest, **changes) -> SimulationRequest:
         new = replace(request, **changes)
         self._requests[self._requests.index(self._get(request.id))] = new
         self.save()
-        if sync is not None:  # keep the caller's frozen handle in step (e.g. ``req.child``)
-            for k, v in changes.items():
-                object.__setattr__(sync, k, v)
         return new
 
     def _get(self, request_id: str) -> SimulationRequest:
@@ -155,11 +151,10 @@ class SimDatabase:
         equal to the outer side length, ``parent`` set, and ``lineage`` holding the
         request id and region (``outer.lo`` is the child origin in parent
         coordinates).  On success the request becomes ``ingested`` and a lineage row
-        is appended; the passed ``request`` handle is updated in place to match
-        (status, child, error).  On any engine or ingest error the request becomes ``failed``
+        is appended; the passed ``request`` is left untouched (read the updated one
+        from ``requests()``).  On any engine or ingest error the request becomes ``failed``
         with ``error`` set, nothing is published, and the exception is re-raised.
         """
-        caller = request
         request = self._get(request.id)
         parent = self.store(request.parent)
         name = child_name or f"{request.parent}__{request.id}"
@@ -168,7 +163,7 @@ class SimDatabase:
         pm = parent.manifest
         region = request.region
         outer = region.outer
-        request = self._set(request, sync=caller, status="running")
+        request = self._set(request, status="running")
         try:
             field, z = engine(request, parent)
             field = np.asarray(field)
@@ -187,10 +182,10 @@ class SimDatabase:
                 write_manifest(tmp / MANIFEST_FILENAME, manifest)
                 ingest_field(tmp, "field", z, field, tile_cells=tile_cells, plan=ExecutionPlan())
         except BaseException as exc:
-            self._set(request, sync=caller, status="failed", error=f"{type(exc).__name__}: {exc}")
+            self._set(request, status="failed", error=f"{type(exc).__name__}: {exc}")
             raise
         self._stores[name] = read_manifest(self.root / name / MANIFEST_FILENAME)
         self._lineage.append({"parent": request.parent, "child": name, "request_id": request.id,
                               "created_utc": _now()})
-        self._set(request, sync=caller, status="ingested", child=name)
+        self._set(request, status="ingested", child=name)
         return SimStore(self.root / name)
