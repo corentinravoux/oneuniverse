@@ -59,7 +59,7 @@ def make_native_sim(out, *, n_particles=50_000, n_grid=32, box_size=100.0,
           "z": rng.uniform(0, 1.5, n_lc), "mass": 10 ** rng.uniform(11, 15, n_lc)}
     pq.write_table(pa.table(lc), out / "lightcone.parquet")
     (out / "config.json").write_text(json.dumps({
-        "box_size": box_size, "n_grid": n_grid, "redshifts": list(redshifts), "seed": seed,
+        "box_size": box_size, "n_grid": n_grid, "redshifts": list(redshifts), "seed": seed, "fixture": True,
         "cosmology": dict(_COSMOLOGY)}))
     return out
 
@@ -148,7 +148,13 @@ class FixtureConverter(SimConverter):
 
     @classmethod
     def detect(cls, path) -> bool:
-        return (Path(path) / "config.json").is_file()
+        cfg = Path(path) / "config.json"
+        if not cfg.is_file():
+            return False
+        try:
+            return json.loads(cfg.read_text()).get("fixture") is True
+        except json.JSONDecodeError:
+            return False
 
     def manifest(self, path) -> OUFSimManifest:
         return native_manifest(path)

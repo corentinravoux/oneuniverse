@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, Literal
 
+from oneuniverse._core.errors import ValidationError
 from oneuniverse._core.registry import Registry
 from oneuniverse.simulation.execution import ExecutionPlan
 from oneuniverse.simulation.manifest import OUFSimManifest
@@ -36,11 +37,15 @@ class SimConverter(ABC):
         """Native products to put in the store."""
 
     def convert(self, path: Path, out: Path, *, plan: ExecutionPlan,
-                projection: Literal["reencode", "reference"] = "reencode") -> SimStore:
-        """Build the store at ``out`` (atomic) from the native simulation at ``path``."""
+                projection: Literal["reencode", "reference"] = "reencode",
+                **build_kw) -> SimStore:
+        """Build the store at ``out`` (atomic) from the native simulation at ``path``.
+
+        ``build_kw`` (``n_side``, ``tile_cells``, ``nside_part``) goes to ``build_store``.
+        """
         path = Path(path)
         return build_store(out, manifest=self.manifest(path), products=self.products(path),
-                           plan=plan, projection=projection)
+                           plan=plan, projection=projection, **build_kw)
 
 
 _REGISTRY: Registry[type[SimConverter]] = Registry("simulation converter", key=lambda c: c.code)
@@ -57,13 +62,17 @@ def get_converter(code: str) -> type[SimConverter]:
 
 
 def detect_converter(path) -> type[SimConverter] | None:
-    """First registered converter (by code order) whose ``detect`` accepts ``path``, else None."""
+    """The registered converter whose ``detect`` accepts ``path``; None if none does.
+
+    ``ValidationError`` naming every matching code when more than one matches.
+    """
     path = Path(path)
-    for code in _REGISTRY.names():
-        cls = _REGISTRY.get(code)
-        if cls.detect(path):
-            return cls
-    return None
+    hits = [_REGISTRY.get(code) for code in _REGISTRY.names() if _REGISTRY.get(code).detect(path)]
+    if len(hits) > 1:
+        raise ValidationError(
+            f"{path} matches several converters: {sorted(c.code for c in hits)}; "
+            f"pick one with get_converter(code)")
+    return hits[0] if hits else None
 
 
 def registered_codes() -> tuple[str, ...]:

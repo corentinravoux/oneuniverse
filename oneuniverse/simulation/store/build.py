@@ -56,9 +56,15 @@ def _native_batches(adapter: NativeReaderAdapter, path: Path, plan: ExecutionPla
         yield from adapter.read_rows(path, s, min(n, s + step)).to_batches()
 
 
+def _ref_n_side(n_side: int | None, src: Path) -> int:
+    if n_side is not None:
+        return n_side
+    return int(get_adapter("packed_npy").header(src)["n_side"])
+
+
 def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProduct],
                 plan: ExecutionPlan, projection: Literal["reencode", "reference"] = "reencode",
-                n_side: int = 8, tile_cells: int = 32, nside_part: int = 1) -> SimStore:
+                n_side: int | None = None, tile_cells: int = 32, nside_part: int = 1) -> SimStore:
     """Build a store at ``out`` (published atomically) from native products.
 
     ``reencode`` rewrites every product into store chunks/tiles/pixels.
@@ -68,6 +74,8 @@ def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProdu
     else (halos in parquet, lightcones, unsorted particle files) is re-encoded
     regardless.  Catalog rows come from ``NativeProduct.batches`` when given,
     otherwise from the native adapter in ``plan.batch_for``-sized slices.
+    ``n_side=None`` means 8 for re-encoded catalogs and the packed header's
+    ``n_side`` for reference catalogs (an explicit mismatch raises).
     ``manifest.products`` is ignored and rebuilt from the declarations (field
     ``n_grid`` taken from the native grid).
     """
@@ -85,7 +93,8 @@ def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProdu
                 if nat.kind_layout == "catalog":
                     if ref and nat.adapter_format == "packed_npy" and src is not None:
                         write_reference_catalog(tmp, decl.name, z, src, get_adapter("packed_npy"),
-                                                box_size=manifest.box_size, n_side=n_side)
+                                                box_size=manifest.box_size,
+                                                n_side=_ref_n_side(n_side, src))
                         continue
                     if nat.batches is not None:
                         batches = nat.batches(z)
@@ -94,7 +103,7 @@ def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProdu
                     else:
                         raise ValidationError(f"product {decl.name!r} z={z}: no batches and no source file")
                     write_catalog_product(tmp, decl.name, z, batches, box_size=manifest.box_size,
-                                          n_side=n_side, plan=plan)
+                                          n_side=8 if n_side is None else n_side, plan=plan)
                 elif nat.kind_layout == "field":
                     if src is None:
                         raise ValidationError(f"field {decl.name!r} z={z}: no source file")
