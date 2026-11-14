@@ -87,3 +87,69 @@ def test_request_region_validation(tmp_path):
         db.request_region("ghost", RegionSpec(Cube((0, 0, 0), (1, 1, 1))))
     with pytest.raises(ValidationError):
         db.request_region("parent", RegionSpec(Cube((0, 0, 0), (1, 2, 1))))
+
+
+def _engine(request, store):
+    sub = store.read_field_box("field", 0.0, request.region.outer)
+    return sub * 0 + 1.0, 0.0
+
+
+def test_crash_after_publish_is_reconciled(tmp_path, monkeypatch):
+    db, req = _db_with_request(tmp_path)
+    orig = SimDatabase._set
+
+    def crashy(self, request, **changes):
+        if changes.get("status") == "ingested":
+            raise RuntimeError("killed")
+        return orig(self, request, **changes)
+
+    monkeypatch.setattr(SimDatabase, "_set", crashy)
+    with pytest.raises(RuntimeError, match="killed"):
+        db.dispatch(req, _engine)
+    monkeypatch.undo()
+    db2 = SimDatabase(tmp_path / "db").scan()
+    r = db2.requests()[0]
+    assert r.status == "ingested" and r.child == f"parent__{req.id}"
+    assert db2.lineage().num_rows == 1 and db2.lineage().column("request_id")[0].as_py() == req.id
+    assert SimDatabase(tmp_path / "db").scan().requests()[0].status == "ingested"
+
+
+def test_running_without_child_reconciled_to_failed(tmp_path, monkeypatch):
+    db, req = _db_with_request(tmp_path)
+    orig = SimDatabase._set
+
+    def engine(request, store):
+        raise KeyboardInterrupt  # stands in for a hard kill: nothing else is persisted
+
+    with pytest.raises(KeyboardInterrupt):
+        monkeypatch.setattr(SimDatabase, "_set", lambda self, r, **c: orig(self, r, **c)
+                            if c.get("status") == "running" else r)
+        db.dispatch(req, engine)
+    monkeypatch.undo()
+    assert db.requests()[0].status == "running"
+    db2 = SimDatabase(tmp_path / "db").scan()
+    r = db2.requests()[0]
+    assert r.status == "failed" and r.error == "interrupted: no child store found at scan"
+    assert db2.lineage().num_rows == 0
+    assert SimDatabase(tmp_path / "db").scan().requests()[0].status == "failed"
+
+
+def test_dispatch_status_guard(tmp_path):
+    db, req = _db_with_request(tmp_path)
+    db.dispatch(req, _engine)
+    with pytest.raises(ValidationError):
+        db.dispatch(req, _engine, child_name="second")
+    assert db.lineage().num_rows == 1 and list(db.stores()) == ["parent", f"parent__{req.id}"]
+
+
+def test_failed_request_can_be_redispatched(tmp_path):
+    db, req = _db_with_request(tmp_path)
+
+    def bad(request, store):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        db.dispatch(req, bad)
+    db.dispatch(req, _engine)
+    r = db.requests()[0]
+    assert r.status == "ingested" and r.child == f"parent__{req.id}" and db.lineage().num_rows == 1

@@ -51,7 +51,15 @@ def _now() -> str:
 
 
 class SimDatabase:
-    """Stores under ``root`` with persisted requests and a parent-to-child lineage table."""
+    """Stores under ``root`` with persisted requests and a parent-to-child lineage table.
+
+    Child manifests are the source of truth for lineage: ``scan()`` rebuilds the
+    lineage table from the ``parent`` / ``lineage.request_id`` of the stores on
+    disk (``lineage.parquet`` is a cache rewritten then) and reconciles requests
+    left ``running`` by an interrupted dispatch: a request whose child store
+    exists becomes ``ingested``, one without becomes ``failed``.  The database
+    assumes a single writer.
+    """
 
     def __init__(self, root):
         self.root = Path(root)
@@ -75,7 +83,28 @@ class SimDatabase:
                 found[d.name] = read_manifest(d / MANIFEST_FILENAME)
         self._stores = found
         self.load()
+        self._reconcile()
         return self
+
+    def _reconcile(self) -> None:
+        rows = [{"parent": m.parent, "child": name, "request_id": m.lineage["request_id"],
+                 "created_utc": m.created_utc}
+                for name, m in self._stores.items()
+                if m.parent is not None and "request_id" in m.lineage]
+        by_request = {r["request_id"]: r["child"] for r in rows}
+        changed = rows != self._lineage
+        self._lineage = rows
+        for i, r in enumerate(self._requests):
+            if r.status != "running":
+                continue
+            if r.id in by_request:
+                self._requests[i] = replace(r, status="ingested", child=by_request[r.id])
+            else:
+                self._requests[i] = replace(
+                    r, status="failed", error="interrupted: no child store found at scan")
+            changed = True
+        if changed:
+            self.save()
 
     def load(self) -> SimDatabase:
         rpath, lpath = self._dir / REQUESTS_FILENAME, self._dir / LINEAGE_FILENAME
@@ -156,6 +185,10 @@ class SimDatabase:
         with ``error`` set, nothing is published, and the exception is re-raised.
         """
         request = self._get(request.id)
+        if request.status not in ("pending", "failed"):
+            raise ValidationError(
+                f"request {request.id} is {request.status!r}; only 'pending' or 'failed' "
+                f"requests can be dispatched")
         parent = self.store(request.parent)
         name = child_name or f"{request.parent}__{request.id}"
         if name in self._stores or (self.root / name).exists():
@@ -186,6 +219,6 @@ class SimDatabase:
             raise
         self._stores[name] = read_manifest(self.root / name / MANIFEST_FILENAME)
         self._lineage.append({"parent": request.parent, "child": name, "request_id": request.id,
-                              "created_utc": _now()})
+                              "created_utc": self._stores[name].created_utc})
         self._set(request, status="ingested", child=name)
         return SimStore(self.root / name)
