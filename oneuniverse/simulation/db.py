@@ -46,6 +46,14 @@ _LINEAGE_SCHEMA = pa.schema([("parent", pa.string()), ("child", pa.string()),
 Engine = Callable[[SimulationRequest, SimStore], "tuple[np.ndarray, float]"]
 
 
+def _check_child_name(name: str) -> None:
+    if (not name or "/" in name or "\\" in name or name in (".", "..")
+            or name.startswith("_") or is_staging(name)):
+        raise ValidationError(
+            f"invalid child store name {name!r}: must be a single path segment, not start "
+            f"with '_' and not end with '.tmp' / '.old'")
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -149,6 +157,10 @@ class SimDatabase:
         sides = [h - l for l, h in zip(outer.lo, outer.hi)]
         if not np.allclose(sides, sides[0], rtol=1e-9, atol=0.0):
             raise ValidationError(f"region.outer must be a cube with equal sides, got sides {sides}")
+        parent_box = float(self._stores[parent].box_size)
+        if sides[0] > parent_box * (1 + 1e-12):
+            raise ValidationError(
+                f"region.outer side {sides[0]} exceeds the box_size {parent_box} of {parent!r}")
         req = SimulationRequest(uuid.uuid4().hex[:12], parent, region, physics, ic_strategy)
         self._requests.append(req)
         self.save()
@@ -178,7 +190,7 @@ class SimDatabase:
         The child store ``child_name`` (default ``<parent>__<request.id>``) is built
         atomically with the parent's cosmology, units and provenance, ``box_size``
         equal to the outer side length, ``parent`` set, and ``lineage`` holding the
-        request id and region (``outer.lo`` is the child origin in parent
+        request id, region and ``origin`` (``outer.lo``, the child origin in parent
         coordinates).  On success the request becomes ``ingested`` and a lineage row
         is appended; the passed ``request`` is left untouched (read the updated one
         from ``requests()``).  On any engine or ingest error the request becomes ``failed``
@@ -191,6 +203,7 @@ class SimDatabase:
                 f"requests can be dispatched")
         parent = self.store(request.parent)
         name = child_name or f"{request.parent}__{request.id}"
+        _check_child_name(name)
         if name in self._stores or (self.root / name).exists():
             raise ValidationError(f"child store {name!r} already exists in {self.root}")
         pm = parent.manifest
@@ -199,17 +212,17 @@ class SimDatabase:
         request = self._set(request, status="running")
         try:
             field, z = engine(request, parent)
-            field = np.asarray(field)
-            if region.n_grid is not None and field.shape != (region.n_grid,) * 3:
+            if region.n_grid is not None and tuple(field.shape) != (region.n_grid,) * 3:
                 raise ValidationError(
-                    f"engine field has shape {field.shape}, request needs {(region.n_grid,) * 3}")
+                    f"engine field has shape {tuple(field.shape)}, request needs {(region.n_grid,) * 3}")
             manifest = OUFSimManifest(
                 pm.format_version, name, outer.hi[0] - outer.lo[0], pm.cosmology, pm.units,
                 replace(pm.provenance, extra={**pm.provenance.extra, "request_id": request.id,
                                               "note": f"resimulation of {request.parent}"}),
                 (), {"format": "ingested", "projection": "reencode", "request_id": request.id},
                 _now(), parent=request.parent,
-                lineage={"request_id": request.id, "region": region.to_dict()})
+                lineage={"request_id": request.id, "region": region.to_dict(),
+                         "origin": list(outer.lo)})
             with atomic_dir(self.root / name) as tmp:
                 atomic_write_json(tmp / LAYOUT_FILENAME, {"products": {}})
                 write_manifest(tmp / MANIFEST_FILENAME, manifest)
