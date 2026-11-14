@@ -166,3 +166,60 @@ def test_errors(store):
         st.read_field_box("particles", 0.0, cube)
     with pytest.raises(ValidationError, match="read_box"):
         st.read_cone("particles", Cone(0.0, 0.0, 1.0))
+
+
+def test_unknown_column_is_validation_error(store):
+    st, _ = store
+    with pytest.raises(ValidationError, match="nope"):
+        st.read_box("particles", 0.0, Cube((0, 0, 0), (10, 10, 10)), columns=["nope"])
+
+
+def test_read_field_box_oversized_cube(store):
+    st, _ = store
+    with pytest.raises(ValidationError, match="exceeds box_size"):
+        st.read_field_box("field", 0.0, Cube((0, 0, 0), (120, 10, 10)))
+
+
+def _oracle(raw, cube, box=100.0):
+    inside = np.zeros(len(raw), dtype=bool)
+    for piece in split_periodic(cube, box):
+        inside |= piece.contains(raw["x"], raw["y"], raw["z"])
+    return np.sort(np.stack([raw[a][inside] for a in "xyz"], axis=1), axis=0)
+
+
+def _rows(t):
+    return np.sort(np.stack([t[a].to_numpy() for a in "xyz"], axis=1), axis=0)
+
+
+def test_read_box_periodic_wrap_matches_raw(store):
+    st, src = store
+    raw = np.load(src / "particles_z0.000.npy")
+    for cube in (Cube((95, 95, 95), (105, 105, 105)),
+                 Cube((90, 0, 20), (110, 15, 60)),
+                 Cube((25, 50, 75), (50, 75, 100))):  # faces exactly on chunk edges
+        t = st.read_box("particles", 0.0, cube)
+        want = _oracle(raw, cube)
+        assert t.num_rows == len(want) > 0
+        np.testing.assert_array_equal(_rows(t), want)
+
+
+def test_read_box_particles_on_box_and_chunk_faces(tmp_path):
+    src = make_native_sim(tmp_path / "sim", n_particles=2_000)
+    path = src / "particles_z0.000.npy"
+    raw = np.load(path)
+    raw["x"][:4] = [0.0, 100.0, 25.0, 50.0]
+    raw["y"][:4] = [10.0, 10.0, 25.0, 75.0]
+    raw["z"][:4] = [10.0, 10.0, 25.0, 100.0]
+    np.save(path, raw)
+    st = build_store(tmp_path / "st", manifest=native_manifest(src), products=native_products(src),
+                     plan=ExecutionPlan(), n_side=4, tile_cells=16)
+    for cube in (Cube((0, 0, 0), (5, 20, 20)), Cube((95, 0, 0), (105, 20, 20)),
+                 Cube((99.5, 5, 5), (100.5, 15, 15)), Cube((25, 25, 25), (50, 75, 100)),
+                 Cube((10, 10, 10), (25, 25, 25))):
+        t = st.read_box("particles", 0.0, cube)
+        want = _oracle(raw, cube)
+        np.testing.assert_array_equal(_rows(t), want)
+    # the x=0 and x=100 particles are each returned exactly once by a cube spanning both
+    t = st.read_box("particles", 0.0, Cube((99.5, 9.5, 9.5), (100.5, 10.5, 10.5)))
+    xs = t["x"].to_numpy().tolist()
+    assert xs.count(0.0) == 1 and xs.count(100.0) == 1

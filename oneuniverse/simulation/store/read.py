@@ -124,7 +124,7 @@ class SimStore:
         names = self._schema_names(entry, product, z, kind)
         missing = [c for c in columns if c not in names]
         if missing:
-            raise SchemaError(f"product {product!r} has no columns {missing}; available: {names}")
+            raise ValidationError(f"column(s) {missing} not in schema of product {product!r}; available: {names}")
 
     def _schema_names(self, entry: dict, product: str, z: float, kind: str) -> list[str]:
         return self._schema(entry, product, z, kind).names
@@ -257,7 +257,10 @@ class SimStore:
         entry = self._typed_entry(name, z, "field", "read_field_box")
         n_grid, cell = int(entry["n_grid"]), self._box_size() / int(entry["n_grid"])
         axes = []
-        for lo, hi in zip(cube.lo, cube.hi):
+        for axis, (lo, hi) in enumerate(zip(cube.lo, cube.hi)):
+            if hi - lo > self._box_size() * (1 + 1e-12):
+                raise ValidationError(
+                    f"cube side {hi - lo} on axis {axis} exceeds box_size {self._box_size()}")
             a = int(np.floor(lo / cell))
             b = max(int(np.ceil(hi / cell)), a + 1)
             axes.append(np.arange(a, min(b, a + n_grid)) % n_grid)
