@@ -7,7 +7,6 @@ from oneuniverse.reference.fieldstats import cross_r, power_spectrum
 from oneuniverse.reference.linear import (
     gaussian_field,
     growth_factor,
-    linear_power,
     zeldovich,
 )
 from oneuniverse.reference.pm import (
@@ -33,7 +32,7 @@ def test_cic_deposit_conserves_mass_and_is_centred():
 
 def test_pm_force_is_gradient_of_potential_for_single_mode():
     n, box = 32, 100.0; x = (np.arange(n) + 0.5) * box / n; d = np.sin(2 * np.pi * x / box)[:, None, None] * np.ones((1, n, n)); fx, fy, fz = pm_force(d, box)
-    kf = 2 * np.pi / box; assert np.allclose(fx, -np.cos(2 * np.pi * x / box)[:, None, None] / kf, rtol=1e-6) and np.allclose(fy, 0) and np.allclose(fz, 0)
+    kf = 2 * np.pi / box; assert np.allclose(fx, np.cos(2 * np.pi * x / box)[:, None, None] / kf, rtol=1e-6) and np.allclose(fy, 0) and np.allclose(fz, 0)
 
 
 @pytest.mark.slow
@@ -41,8 +40,9 @@ def test_pm_linear_growth_ensemble():
     box, n = 256.0, 64; ratios, rs = [], []
     for seed in range(5):
         pos, vel, ic = zeldovich_pm_ic(COSMO, box=box, n_grid=n, z_start=9.0, seed=seed); out = run_pm(pos, vel, COSMO, box=box, n_grid=n, z_start=9.0, z_end=0.0, n_steps=20)
-        d = deposit_cic(out["pos"], n, box); d = d / d.mean() - 1; k, P = power_spectrum(d, box=box); sel = k < 0.05
-        ratios.append(np.mean(P[sel] / linear_power(k[sel], COSMO))); rs.append(np.mean(cross_r(d, ic, box=box)[1][sel]))
+        d = deposit_cic(out["pos"], n, box); d = d / d.mean() - 1; k, P = power_spectrum(d, box=box); sel = k < 0.05; _, P_ic = power_spectrum(ic, box=box)
+        # vs the same realisation grown linearly, not P_lin: cosmic variance (one k bin of 9 modes below 0.05 at box 256); owner decision 2026-11-14, design §9b deviation
+        ratios.append(np.mean(P[sel] / (growth_factor(0.0, COSMO) ** 2 * P_ic[sel]))); rs.append(np.mean(cross_r(d, ic, box=box)[1][sel]))
     assert abs(np.mean(ratios) - 1.0) < 0.05 and np.mean(rs) > 0.98
 
 
@@ -94,15 +94,15 @@ def test_isolated_force_of_point_mass_has_no_periodic_images():
     probe = (n - 3, 16, 16)                       # far side of the box along x
     r = (n - 3 - 2) * cell
     expected = cell ** 3 / (4 * np.pi * r ** 2)   # |∇φ| of ∇²φ = δ for the point "mass" δ·cell³
-    # pm_force returns ∇φ: it points away from the mass (the attraction is −∇φ)
-    assert fxi[probe] == pytest.approx(expected, rel=0.02)
+    # the force F = −∇φ is attractive: at the probe (x > mass) it points to −x, toward the mass
+    assert fxi[probe] == pytest.approx(-expected, rel=0.02)
     assert abs(fyi[probe]) < 1e-3 * expected and abs(fzi[probe]) < 1e-3 * expected
     # periodic solve: the nearest image (across the x boundary) dominates, sign flips
-    assert fxp[probe] < 0
+    assert fxp[probe] > 0
     # 1/r² fall-off: 4 cells from the mass vs 27 cells
     assert fxi[6, 16, 16] == pytest.approx(fxi[probe] * (27 / 4) ** 2, rel=1e-6)
-    # and on the other side of the mass it points the other way
-    assert fxi[0, 16, 16] < 0
+    # and on the other side of the mass it points the other way (+x, still toward the mass)
+    assert fxi[0, 16, 16] > 0
 
 
 def test_isolated_force_matches_periodic_for_compact_mode_in_large_box_centre():

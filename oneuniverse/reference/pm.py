@@ -16,31 +16,32 @@ Mesh and CIC
     is its exact adjoint: ``Σ_p w_p·interp(g)(x_p) = Σ_cells g·deposit(w)``.
 Poisson
     :func:`pm_force` solves ``∇²φ = δ`` (dimensionless source, ``φ_k =
-    −δ_k/k²``, k = 0 mode zeroed) and returns the three grids of
-    **∇φ** (``(∇φ)_k = i k φ_k``), the derivative along an axis being zero on
-    that axis' Nyquist plane for even ``n`` (as in ``linear``). This sign is
-    fixed by the single-mode test: ``δ = sin(kx)`` gives ``∂ₓφ =
-    −cos(kx)/k``. The *attractive* acceleration is ``−∇φ``; the cosmological
+    −δ_k/k²``, k = 0 mode zeroed) and returns the three grids of the
+    physical, attractive force **F = −∇φ** (``F_k = −i k φ_k = i k δ_k/k²``),
+    the derivative along an axis being zero on that axis' Nyquist plane for
+    even ``n`` (as in ``linear``). Single mode: ``δ = sin(kx)`` gives ``Fₓ =
+    +cos(kx)/k``, pointing toward the overdensity. The cosmological
     prefactor is applied by :func:`run_pm`, which kicks with
-    ``dp/da = −(3/2)·Ωm·∇φ/(a²·E(a))``.
+    ``dp/da = (3/2)·Ωm·F/(a²·E(a))``; callers get the physical force
+    directly and never negate it.
     ``deconvolve=True`` divides ``δ_k`` by one CIC window
     ``Π_i sinc²(k_i·cell/2)`` (off by default: the reference runs are
     validated on large scales, where the window is ≈ 1).
 Isolated Poisson
     :func:`pm_force_isolated` is the Hockney–Eastwood open-boundary solve:
     ``δ`` is embedded in a zero-padded ``(2n)³`` grid and cyclically convolved
-    with the free-space Green's-function gradient ``∇G(r) = r/(4π r³)``
-    (``G = −1/(4πr)`` solves ``∇²G = δ_D``), sampled at the minimum-image cell
-    offsets of the padded grid with ``∇G(0) = 0`` (no self-force); the
+    with the free-space force kernel ``−∇G(r) = −r/(4π r³)`` (``G =
+    −1/(4πr)`` solves ``∇²G = δ_D``), sampled at the minimum-image cell
+    offsets of the padded grid with value 0 at r = 0 (no self-force); the
     result is cropped back to ``n³``. Offsets up to ``±(n − 1)`` cells are
     represented without aliasing, so periodic images are absent. The gradient
     kernel is sampled directly (rather than differentiating a sampled ``G``
     spectrally), which keeps the cropped region free of wrap-around
-    artefacts. Same sign/units as :func:`pm_force` (returns ∇φ).
+    artefacts. Same sign/units as :func:`pm_force` (returns F = −∇φ).
 Time variable and momentum
     Units ``H0 = 1`` and lengths in Mpc/h. Time variable ``a``; canonical
     momentum ``p = a²·dx/dt = a³·E(a)·dx/da`` (``x`` comoving). Equations:
-    ``dx/da = p/(a³E)``, ``dp/da = −(3/2)Ωm·∇φ_δ/(a²E)``. Peculiar velocity
+    ``dx/da = p/(a³E)``, ``dp/da = (3/2)Ωm·F/(a²E)``, ``F = −∇φ_δ``. Peculiar velocity
     ``v = a·dx/dt = p/a`` in units of ``H0·(Mpc/h) = 100 km/s``, so the
     public ``vel`` arrays (input and output, km/s, the units of
     :func:`~oneuniverse.reference.linear.zeldovich`) are ``vel = 100·p/a``.
@@ -173,9 +174,9 @@ def _cic_window(n: int, box: float) -> np.ndarray:
 
 
 def pm_force(delta, box: float, *, deconvolve: bool = False):
-    """Periodic FFT Poisson: grids ``(∂ₓφ, ∂ᵧφ, ∂_zφ)`` of ``∇²φ = δ``.
+    """Periodic FFT Poisson: grids ``(Fₓ, F_y, F_z)`` of the attractive force ``F = −∇φ``, ``∇²φ = δ``.
 
-    Returns ∇φ (the attraction is ``−∇φ``); see the module docstring.
+    See the module docstring for units and the Nyquist convention.
     """
     d = _cubic(delta)
     n, box = _check_grid(d.shape[0], box)
@@ -192,7 +193,7 @@ def pm_force(delta, box: float, *, deconvolve: bool = False):
         kd = kc.copy()
         if n % 2 == 0:
             kd[_nyq_index(kd.shape, n)] = 0.0
-        out.append(np.fft.ifftn(1j * kd * phi_k).real)
+        out.append(np.fft.ifftn(-1j * kd * phi_k).real)
     return tuple(out)
 
 
@@ -203,7 +204,7 @@ def _nyq_index(shape: tuple[int, ...], n: int) -> tuple[int, ...]:
 
 @lru_cache(maxsize=2)
 def _isolated_kernels(n: int, box: float):
-    """FFTs of ``∇G = r/(4π r³)·cell³`` on the zero-padded ``(2n)³`` grid."""
+    """FFTs of the force kernel ``−∇G = −r/(4π r³)·cell³`` on the zero-padded ``(2n)³`` grid."""
     m = 2 * n
     cell = box / n
     off = np.fft.fftfreq(m, d=1.0 / m) * cell           # minimum-image offsets, 0 first
@@ -214,14 +215,14 @@ def _isolated_kernels(n: int, box: float):
     inv[0, 0, 0] = 0.0                                  # no self-force
     kernels = []
     for comp in (x, y, z):
-        kk = np.fft.fftn(comp * inv)
+        kk = np.fft.fftn(-comp * inv)
         kk.flags.writeable = False
         kernels.append(kk)
     return tuple(kernels)
 
 
 def pm_force_isolated(delta, box: float):
-    """Open-boundary Poisson (zero-padded Hockney–Eastwood): ``∇φ`` of ``∇²φ = δ``, no images."""
+    """Open-boundary Poisson (zero-padded Hockney–Eastwood): force ``F = −∇φ`` of ``∇²φ = δ``, no images."""
     d = _cubic(delta)
     n, box = _check_grid(d.shape[0], box)
     m = 2 * n
@@ -272,7 +273,7 @@ def _delta(pos: np.ndarray, n: int, box: float) -> np.ndarray:
     return rho / rho.mean() - 1.0
 
 
-def _gradphi(pos: np.ndarray, n: int, box: float, force: str) -> np.ndarray:
+def _force(pos: np.ndarray, n: int, box: float, force: str) -> np.ndarray:
     solve = pm_force if force == "periodic" else pm_force_isolated
     grids = solve(_delta(pos, n, box), box)
     return np.stack([interpolate_cic(g, pos, box) for g in grids], axis=1)
@@ -316,7 +317,7 @@ def run_pm(pos, vel, cosmo: CosmologySpec, *, box: float, n_grid: int, z_start: 
 
     a_grid = np.linspace(a_start, a_end, n_steps + 1)
     a_grid[-1] = a_end
-    acc = -1.5 * om * _gradphi(x, n, box, force)
+    acc = 1.5 * om * _force(x, n, box, force)
     for i in range(n_steps):
         a0, a1 = float(a_grid[i]), float(a_grid[i + 1])
         ah = 0.5 * (a0 + a1)
@@ -327,7 +328,7 @@ def run_pm(pos, vel, cosmo: CosmologySpec, *, box: float, n_grid: int, z_start: 
                 out_snaps[zs] = _delta(xs, n, box)
                 del pending[zs]
         x = np.mod(x + p * _time_integral(a0, a1, om, 3), box)
-        acc = -1.5 * om * _gradphi(x, n, box, force)
+        acc = 1.5 * om * _force(x, n, box, force)
         p += acc * _time_integral(ah, a1, om, 2)
     x[x >= box] -= box
     for zs in pending:          # a_s == a_end (to rounding)
