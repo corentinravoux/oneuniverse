@@ -23,6 +23,7 @@ BOUNDARY_ROWS = [
     ("simulation", "simulation",
      {"oneuniverse.data", "oneuniverse.combine", "oneuniverse.measure",
       "oneuniverse.twin", "oneuniverse.reference"}),
+    ("simulation-no-reference", "simulation", {"oneuniverse.reference"}),
     ("measure", "measure",
      {"oneuniverse.simulation", "oneuniverse.reference", "oneuniverse.twin"}),
     ("twin/engine.py", "twin/engine.py", {"oneuniverse.reference"}),
@@ -212,6 +213,25 @@ def test_no_cosmology_in_layer(tree):
         pytest.skip(f"{tree} does not exist yet")
     found = cosmology_violations(root)
     assert not found, "cosmology in a cosmology-free layer:\n" + "\n".join(found)
+
+
+def test_simulation_imports_no_physics():
+    """No cosmology / physics package may be imported anywhere under simulation/."""
+    found = [v for v in cosmology_violations(PKG / "simulation", allow={})
+             if not any(f"'{i}'" in v for i in COSMO_IDENTIFIERS | COSMO_STRINGS)]
+    assert not found, "physics imports in simulation/:\n" + "\n".join(found)
+    assert violations(PKG / "simulation", COSMO_IMPORTS) == []
+
+
+def test_simulation_public_surface():
+    import oneuniverse.simulation as sim
+    expected = {"CosmologySpec", "UnitFrameSpec", "ProvenanceSpec", "ProductDecl", "RegionSpec",
+                "SimulationRequest", "OUFSimManifest", "read_manifest", "ExecutionMode",
+                "ExecutionPlan", "SimConverter", "register", "get_converter", "detect_converter",
+                "SimStore", "build_store", "NativeProduct", "ingest_field", "SimDatabase",
+                "Cube", "Cone", "SkyPatch"}
+    assert expected <= set(sim.__all__)
+    assert all(hasattr(sim, n) for n in sim.__all__)
 
 
 def test_allow_entries_exist():
