@@ -21,7 +21,6 @@ import pyarrow.parquet as pq
 from oneuniverse._core.errors import (
     FormatError,
     NotFoundError,
-    SchemaError,
     ValidationError,
 )
 from oneuniverse._core.geometry import Cone, Cube
