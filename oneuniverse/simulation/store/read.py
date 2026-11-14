@@ -1,9 +1,10 @@
 """Read side of the store: index access and selector reads (box, cone, field box).
 
 Every reader takes a selector; the only whole-product read is :meth:`SimStore.scan_full`.
-Catalog positions are stored wrapped into ``[0, box_size]``; a cube that crosses
-the box boundary is split (:func:`split_periodic`) and rows are returned with
-their stored (wrapped) positions.
+Catalog positions are stored as given (lossless); selection is periodic on the
+positions wrapped into ``[0, box_size)``.  A cube that crosses the box boundary
+is split (:func:`split_periodic`) and rows are returned with their stored
+positions.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import pyarrow.parquet as pq
 from oneuniverse._core.errors import (
     FormatError,
     NotFoundError,
+    SchemaError,
     ValidationError,
 )
 from oneuniverse._core.geometry import Cone, Cube
@@ -32,7 +34,11 @@ from oneuniverse.simulation.manifest import (
     OUFSimManifest,
     read_manifest,
 )
-from oneuniverse.simulation.store.index import overlapping_chunks, split_periodic
+from oneuniverse.simulation.store.index import (
+    overlapping_chunks,
+    split_periodic,
+    wrap_positions,
+)
 from oneuniverse.simulation.store.native import get_adapter
 
 INDEX_FILENAME = "_index.parquet"
@@ -154,7 +160,9 @@ class SimStore:
 
     def _filter_chunk(self, entry, product, z, cid, pieces, need) -> pa.Table:
         t = self._chunk_rows(entry, product, z, cid, need)
-        x, y, zz = (t.column(a).to_numpy(zero_copy_only=False) for a in _POS)
+        wrapped = wrap_positions(np.stack(
+            [t.column(a).to_numpy(zero_copy_only=False) for a in _POS], axis=1), self._box_size())
+        x, y, zz = wrapped[:, 0], wrapped[:, 1], wrapped[:, 2]
         mask = np.zeros(t.num_rows, dtype=bool)
         for piece in pieces:
             mask |= piece.contains(x, y, zz)
@@ -178,7 +186,7 @@ class SimStore:
         The cube is split at the box faces, only chunks whose bounding box meets
         a piece are read (threaded under ``plan.n_threads``, concatenated in
         ascending chunk id), and an exact filter is applied to the stored
-        positions, which are returned as stored (wrapped, not unwrapped).
+        positions wrapped into ``[0, box_size)``; rows are returned with their positions as stored.
         ``columns`` is applied after filtering.  With ``ExecutionMode.MPI`` the
         chunk ids are partitioned by rank (``ids[rank::size]``) and each rank
         returns only its own rows; nothing is gathered.  ``last_read_stats``
@@ -236,6 +244,9 @@ class SimStore:
         This is the only reader without a selector: it walks every chunk of the
         whole product, so on a large simulation it reads the entire dataset.
         Prefer :meth:`read_box` / :meth:`iter_box`.  Batches obey ``plan.batch_for``.
+        With ``ExecutionMode.MPI`` the chunk ids are partitioned by rank
+        (``ids[rank::size]``) as in :meth:`read_box`; the union over ranks is the
+        whole product.
         """
         columns = None if columns is None else list(columns)
         entry = self._typed_entry(product, z, "catalog", "scan_full")
@@ -244,6 +255,8 @@ class SimStore:
         index = self.index(product, z)
         rows = index.column("row_stop").to_numpy() - index.column("row_start").to_numpy()
         ids = [int(c) for c in index.column("chunk_id").to_numpy() if rows[c] > 0]
+        if plan.mode is ExecutionMode.MPI:
+            ids = ids[plan.mpi_comm.Get_rank()::plan.mpi_comm.Get_size()]
         return self._iter_chunks(entry, product, z, ids, index.num_rows, [], columns, columns, plan)
 
     def read_field_box(self, name: str, z: float, cube: Cube) -> np.ndarray:
@@ -296,6 +309,8 @@ class SimStore:
         index = self.index(product, z0)
         cover = cone_pixels(int(entry["nside_part"]), cone.ra, cone.dec, cone.radius)
         sel = index.filter(pc.is_in(index["pix"], pa.array(cover, pa.int32())))
+        if z_range is not None and "z" not in self._schema(entry, product, z0, "lightcone").names:
+            raise SchemaError(f"lightcone product {product!r} has no 'z' column; cannot apply z_range")
         need = None if columns is None else list(dict.fromkeys(
             [*columns, "ra", "dec", *(["z"] if z_range else [])]))
         tables = []

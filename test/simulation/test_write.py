@@ -355,3 +355,27 @@ def test_ingest_field_crash_then_retry(tmp_path, monkeypatch, target):
     assert st.manifest.product("delta").redshifts == (0.0,)
     with pytest.raises(FormatError):
         ingest_field(tmp_path / "s", "delta", 0.0, f)
+
+
+def test_later_batch_with_different_columns_is_refused(tmp_path):
+    a = pa.RecordBatch.from_pydict({"x": [1.0], "y": [1.0], "z": [1.0], "m": [1.0]})
+    reordered = pa.RecordBatch.from_pydict({"m": [2.0], "z": [2.0], "y": [2.0], "x": [2.0]})
+    write_catalog_product(tmp_path / "ok", "p", 0.0, [a, reordered], box_size=10.0, n_side=2)
+    for i, bad in enumerate((
+            pa.RecordBatch.from_pydict({"x": [1.0], "y": [1.0], "z": [1.0]}),
+            pa.RecordBatch.from_pydict({"x": [1.0], "y": [1.0], "z": [1.0], "m": [1.0], "e": [1.0]}))):
+        with pytest.raises(ValidationError, match="columns"):
+            write_catalog_product(tmp_path / f"s{i}", "p", 0.0, [a, bad], box_size=10.0, n_side=2)
+
+
+def test_reference_n_side_defaults_to_packed_header(tmp_path):
+    src = make_native_sim(tmp_path / "sim", n_particles=500)
+    packed = write_packed_native_fixture(src, n_side=4)
+    st = build_store(tmp_path / "ref", manifest=native_manifest(src),
+                     products=native_products(packed, adapter_format="packed_npy"),
+                     plan=ExecutionPlan(), projection="reference")
+    assert st.layout["products"]["particles"]["0.000"]["n_side"] == 4
+    with pytest.raises(ValidationError):
+        build_store(tmp_path / "ref2", manifest=native_manifest(src),
+                    products=native_products(packed, adapter_format="packed_npy"),
+                    plan=ExecutionPlan(), projection="reference", n_side=8)

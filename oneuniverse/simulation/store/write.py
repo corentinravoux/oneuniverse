@@ -51,6 +51,7 @@ from oneuniverse.simulation.store.index import (
     SKY_INDEX_SCHEMA,
     chunk_bbox,
     chunk_ids,
+    wrap_positions,
 )
 from oneuniverse.simulation.store.native import NativeReaderAdapter
 
@@ -127,6 +128,9 @@ def _rel_dir(name: str, tag: str) -> str:
 def _as_table(batch: pa.RecordBatch | pa.Table, schema: pa.Schema | None) -> pa.Table:
     table = batch if isinstance(batch, pa.Table) else pa.Table.from_batches([batch])
     if schema is not None and table.schema != schema:
+        if sorted(table.schema.names) != sorted(schema.names):
+            raise ValidationError(
+                f"batch columns {table.schema.names} differ from the first batch's {schema.names}")
         try:
             table = table.select(schema.names).cast(schema)
         except (KeyError, pa.ArrowInvalid, pa.ArrowTypeError) as exc:
@@ -258,8 +262,10 @@ def write_catalog_product(store_root, name: str, z: float, batches: Iterable[pa.
                           box_size: float, n_side: int, plan: ExecutionPlan | None = None) -> dict:
     """Stream ``batches`` into per-chunk parquet files plus ``_index.parquet``.
 
-    ``batches`` need float columns ``x``, ``y``, ``z`` (positions, wrapped into
-    the box).  Memory is bounded by one batch plus the open writers; with more
+    ``batches`` need float columns ``x``, ``y``, ``z`` (positions, stored as
+    given; chunking and chunk bounding boxes use the positions wrapped into
+    ``[0, box_size)``, and positions outside ``[-box_size, 2*box_size)`` are
+    refused).  Memory is bounded by one batch plus the open writers; with more
     than ``_MAX_OPEN`` chunks a two-pass key-range bucketing keeps open files
     bounded.  Returns the layout entry.
     """
@@ -272,17 +278,22 @@ def write_catalog_product(store_root, name: str, z: float, batches: Iterable[pa.
 
     def positions(batch: pa.RecordBatch) -> np.ndarray:
         try:
-            return np.stack([batch.column(a).to_numpy(zero_copy_only=False).astype(np.float64)
-                             for a in "xyz"], axis=1)
+            pos = np.stack([batch.column(a).to_numpy(zero_copy_only=False).astype(np.float64)
+                            for a in "xyz"], axis=1)
         except KeyError:
             raise ValidationError(
                 f"catalog batches need position columns x, y, z; got {batch.schema.names}") from None
+        if len(pos) and not (np.all(pos >= -box_size) and np.all(pos < 2 * box_size)):
+            raise ValidationError(
+                f"catalog positions must lie in [-box_size, 2*box_size) = "
+                f"[{-box_size}, {2 * box_size}); got range [{np.nanmin(pos)}, {np.nanmax(pos)}]")
+        return pos
 
     def key_fn(batch: pa.RecordBatch) -> np.ndarray:
         return chunk_ids(positions(batch), box_size, n_side)
 
     def observe(batch: pa.RecordBatch, keys: np.ndarray) -> None:
-        pos = positions(batch)
+        pos = wrap_positions(positions(batch), box_size)
         order, uniq, start = _groups(keys)
         counts[uniq] += np.diff(np.append(start, len(order)))
         sp = pos[order]

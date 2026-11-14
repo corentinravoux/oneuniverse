@@ -4,8 +4,8 @@ Conventions
 -----------
 * Catalog chunks tile the periodic box in an ``n_side**3`` grid; the chunk id is
   ``(ix * n_side + iy) * n_side + iz`` (int32).  Positions are taken modulo the
-  box, so ``x == box_size`` falls in chunk 0 and a tiny negative ``x`` in the
-  last chunk.
+  box, so ``x == box_size`` falls in chunk 0 (as does a negative ``x`` that
+  rounds to ``box_size`` when wrapped).
 * Field tiles are index ranges over an ``n_grid**3`` grid: ``i0..i1`` is
   half-open in cells, and cell ``i`` covers ``[i * cell, (i + 1) * cell)`` with
   ``cell = box_size / n_grid``.  A closed cube edge lying exactly on a cell
@@ -42,13 +42,21 @@ def _check_box(box_size: float, n: int, what: str) -> float:
     return box
 
 
+def wrap_positions(pos: np.ndarray, box_size: float) -> np.ndarray:
+    """Positions wrapped into ``[0, box_size)`` (float64); rounding to ``box_size`` maps to 0."""
+    box = float(box_size)
+    w = np.mod(np.asarray(pos, dtype=np.float64), box)
+    w[w >= box] = 0.0
+    return w
+
+
 def chunk_ids(pos: np.ndarray, box_size: float, n_side: int) -> np.ndarray:
     """Chunk id of each row of ``pos`` (n, 3); positions are wrapped into the box."""
     box = _check_box(box_size, n_side, "n_side")
     pos = np.asarray(pos, dtype=np.float64)
     if pos.ndim != 2 or pos.shape[1] != 3:
         raise ValidationError(f"pos must have shape (n, 3), got {pos.shape}")
-    cell = np.floor(np.mod(pos, box) / (box / n_side)).astype(np.int64)
+    cell = np.floor(wrap_positions(pos, box) / (box / n_side)).astype(np.int64)
     np.clip(cell, 0, n_side - 1, out=cell)
     return ((cell[:, 0] * n_side + cell[:, 1]) * n_side + cell[:, 2]).astype(np.int32)
 

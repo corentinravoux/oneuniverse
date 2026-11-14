@@ -181,9 +181,11 @@ def test_read_field_box_oversized_cube(store):
 
 
 def _oracle(raw, cube, box=100.0):
+    """Rows selected on positions wrapped into [0, box); returned with their stored positions."""
+    w = {a: np.mod(raw[a].astype(np.float64), box) for a in "xyz"}
     inside = np.zeros(len(raw), dtype=bool)
     for piece in split_periodic(cube, box):
-        inside |= piece.contains(raw["x"], raw["y"], raw["z"])
+        inside |= piece.contains(w["x"], w["y"], w["z"])
     return np.sort(np.stack([raw[a][inside] for a in "xyz"], axis=1), axis=0)
 
 
@@ -223,3 +225,88 @@ def test_read_box_particles_on_box_and_chunk_faces(tmp_path):
     t = st.read_box("particles", 0.0, Cube((99.5, 9.5, 9.5), (100.5, 10.5, 10.5)))
     xs = t["x"].to_numpy().tolist()
     assert xs.count(0.0) == 1 and xs.count(100.0) == 1
+
+
+def _write_oob_sim(tmp_path, x, n=2_000):
+    src = make_native_sim(tmp_path / "sim", n_particles=n)
+    path = src / "particles_z0.000.npy"
+    raw = np.load(path)
+    raw["x"][:len(x)] = x
+    raw["y"][:len(x)] = 10.0
+    raw["z"][:len(x)] = 10.0
+    np.save(path, raw)
+    return src, raw
+
+
+def test_read_box_out_of_box_positions_reencode(tmp_path):
+    src, raw = _write_oob_sim(tmp_path, [-0.1, 100.5, 100.0, 50.0, 150.0])
+    st = build_store(tmp_path / "st", manifest=native_manifest(src), products=native_products(src),
+                     plan=ExecutionPlan(), n_side=4, tile_cells=16)
+    whole = Cube((0, 0, 0), (100, 100, 100))
+    assert st.read_box("particles", 0.0, whole).num_rows == len(raw)
+    assert sum(t.num_rows for t in st.scan_full("particles", 0.0)) == len(raw)
+    for cube in (Cube((0, 0, 0), (1, 20, 20)), Cube((99, 0, 0), (101, 20, 20)),
+                 Cube((49, 0, 0), (51, 20, 20)), Cube((95, 5, 5), (105, 15, 15))):
+        np.testing.assert_array_equal(_rows(st.read_box("particles", 0.0, cube)),
+                                      _oracle(raw, cube))
+    t = st.read_box("particles", 0.0, Cube((0, 5, 5), (1, 15, 15)))
+    xs = t["x"].to_numpy()
+    assert all(v in xs for v in np.float32([100.0, 100.5])) and np.float32(-0.1) not in xs
+    t = st.read_box("particles", 0.0, Cube((99, 5, 5), (100, 15, 15)))
+    assert np.float32(-0.1) in t["x"].to_numpy()
+
+
+def test_read_box_out_of_box_positions_reference(tmp_path):
+    src, _ = _write_oob_sim(tmp_path, [-0.1, 100.5, 100.0])
+    packed = write_packed_native_fixture(src, n_side=4)
+    raw = np.load(packed / "particles_z0.000.npy")
+    st = build_store(tmp_path / "st", manifest=native_manifest(packed), products=native_products(packed, adapter_format="packed_npy"),
+                     plan=ExecutionPlan(), projection="reference", tile_cells=16)
+    for cube in (Cube((0, 0, 0), (100, 100, 100)), Cube((0, 5, 5), (1, 15, 15)),
+                 Cube((99, 5, 5), (101, 15, 15))):
+        np.testing.assert_array_equal(_rows(st.read_box("particles", 0.0, cube)),
+                                      _oracle(raw, cube))
+
+
+def test_write_refuses_garbage_positions(tmp_path):
+    for bad in (-100.5, 200.0):
+        src, _ = _write_oob_sim(tmp_path / f"b{bad}", [bad])
+        with pytest.raises(ValidationError, match="positions"):
+            build_store(tmp_path / f"st{bad}", manifest=native_manifest(src),
+                        products=native_products(src), plan=ExecutionPlan(), n_side=4)
+
+
+def test_read_box_empty_region_keeps_schema(tmp_path):
+    src, _ = _write_oob_sim(tmp_path, [10.0, 12.0, 14.0], n=3)
+    st = build_store(tmp_path / "st", manifest=native_manifest(src), products=native_products(src),
+                     plan=ExecutionPlan(), n_side=4, tile_cells=16)
+    cube = Cube((60, 60, 60), (70, 70, 70))
+    t = st.read_box("particles", 0.0, cube)
+    assert t.num_rows == 0 and t.column_names == st.read_box(
+        "particles", 0.0, Cube((0, 0, 0), (100, 100, 100))).column_names
+    p = st.read_box("particles", 0.0, cube, columns=["vx", "x"])
+    assert p.num_rows == 0 and p.column_names == ["vx", "x"]
+
+
+def test_scan_full_mpi_partition(store):
+    st, _ = store
+    whole = sum(b.num_rows for b in st.scan_full("particles", 0.0))
+    parts = [sum(b.num_rows for b in st.scan_full(
+        "particles", 0.0, plan=ExecutionPlan(mode=ExecutionMode.MPI, mpi_comm=_FakeComm(r, 3))))
+        for r in range(3)]
+    assert sum(parts) == whole and all(p < whole for p in parts)
+
+
+def test_read_cone_z_range_without_z_column(tmp_path):
+    from oneuniverse._core.errors import SchemaError
+    src = make_native_sim(tmp_path / "sim", n_particles=100)
+    prods = native_products(src)
+    for p in prods:
+        if p.kind_layout == "lightcone":
+            orig = p.batches
+            p.batches = lambda z, o=orig: (b.drop_columns(["z"]) for b in o(z))
+    st = build_store(tmp_path / "st", manifest=native_manifest(src), products=prods,
+                     plan=ExecutionPlan(), n_side=2, tile_cells=16)
+    with pytest.raises(SchemaError, match="'z'"):
+        st.read_cone("lightcone", Cone(10.0, 10.0, 60.0), z_range=(0.0, 1.0))
+    assert st.read_cone("lightcone", Cone(10.0, 10.0, 60.0)).num_rows > 0
