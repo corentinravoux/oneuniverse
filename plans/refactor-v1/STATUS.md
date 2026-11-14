@@ -12,6 +12,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R2 | 2026-11-12 | f1fefea | 459 / 4 | 40 s (`-n 6`); 140 s single-process | Versioned sidecar (crash-safe, µs version ids), pair-wise blocked cross-match (brute-force exact), ONEUID with position hydration + dataset-version guard, links with ONEUID-version guard, Database. Row-identity regression green; 2×1 M cross-match 13 s; sidecar crash test green. |
 | R3 | 2026-11-12 | e6813ff | 500 / 3 | 40 s (`-n 6`) | Weight primitives (full-name describe()), default registry, WeightedCatalog with ivar / best / mean / priority strategies; combine on 60 k rows ≈ 0.02 s. |
 | R4 | 2026-11-13 | 8565495 | 577 / 1 | 50 s (`-n 6`) | measure: atoms, Product/FieldMap/Sightline, MeasurementSet (shared-region check), build_pointset (with_position, uniform randoms truncated to the data z range, adaptive footprint), photo-z attachment by position, tomographic n(z), presets, versioned save/load. Exit criterion met. |
+| R5 | 2026-11-14 | 8f18c24 | 489 / 1 | 40 s (`-n 6`); 157 s single-process | Old simulation tree deleted. OUF-Sim 1.0: specs, manifest, ExecutionPlan, chunk/tile/sky index, native adapters (npy, packed_npy), streaming writers (≤ 256 open files, row-group buffers ≤ budget/4; 2 M-row write +231 MiB RSS), reencode and reference projections (read identically), SimStore partial reads with periodic wrap (raw-array oracle), converter registry, SimDatabase (requests, lineage from child manifests, crash reconcile). Exit criterion met. |
 
 ## Decisions taken during execution
 
@@ -98,3 +99,39 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 - **Notes for R6.** A simulation-derived `Product` must fill `source_row`,
   `partition`, `offset`, `region_id`; box positions go in extras — catalog `z`
   is redshift.
+- **R5 — catalog writer.** At most 256 parquet writers open at once; above
+  that a recursive bucketed pass (R1 pattern), so `n_side` 16 works under a
+  1024-fd limit. Row groups are buffered per chunk (≤ budget/4). Data files
+  keep default parquet options; only `_index.parquet` is compact.
+- **R5 — commit point.** `layout.json` is written last; a product dir or
+  manifest entry without a layout entry is an orphan that a retry overwrites.
+- **R5 — positions.** Stored positions are kept as given. Selection is
+  periodic on positions wrapped into [0, box) (x == box → 0); writers refuse
+  positions outside [-box, 2·box). Returned rows carry the stored values.
+- **R5 — converters.** `detect_converter` raises `ValidationError` when more
+  than one converter matches (R6 converters need exclusive `detect`).
+  `convert(**build_kw)` forwards `n_side`/`tile_cells`/`nside_part`;
+  `build_store(n_side=None)` = 8 for reencode, the packed header's value for
+  reference.
+- **R5 — SimDatabase.** Single writer. Child manifests are the source of
+  truth for lineage; `scan()` reconciles interrupted dispatches ("running" →
+  "ingested" if the child exists, else "failed: interrupted"). `dispatch`
+  takes only pending/failed requests and never mutates the caller's request.
+  Child store name = parent store dir name + `__<request id>`; child
+  `box_size` = outer side; lineage records `request_id`, `region`, `origin`
+  (outer.lo in parent coordinates). The engine returns a field sampling
+  `region.outer` on a regular grid (`n_grid`³ when set).
+- **Notes for R6.** Exclusive `detect` markers for the linear/packed
+  converters; the lightcone `z` column name (`read_cone` filters `z`); a
+  public store-creation helper for `run_engine_to_store` (dispatch builds one
+  inline); `read_cone` reads the first lightcone tag only; settle the
+  double-registration policy for import-time `@register` + entry points;
+  native ABC has four abstract methods and `build.py` hard-codes
+  `packed_npy` for reference catalogs; field tiles keep the input dtype
+  while `read_field_box` returns float32.
+- **Risk for R8 (grows).** Single-process default suite 157 s (simulation
+  tests ≈ 7 s). Also for R8: MPI at size 1 with real `mpi4py` in CI
+  (spec §6.8, never planned), adaptive chunk `n_side`, `read_field_box`
+  tile pruning via `overlapping_tiles`, docstrings on public db/manifest
+  functions, error sweep (`read_manifest` missing path, `load()` parquet
+  errors → `FormatError`).
