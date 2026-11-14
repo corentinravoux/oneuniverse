@@ -157,10 +157,10 @@ def _direct_write(batches: Iterable, key_fn, path_for, plan: ExecutionPlan, obse
     """One parquet file per key; rows are buffered per key and written as full row groups.
 
     A key is flushed when it holds a row group (``max(65_536, plan.batch_for(row
-    bytes))`` rows); when all buffers together exceed half the plan budget the
+    bytes))`` rows); when all buffers together exceed a quarter of the plan budget the
     largest buffers are flushed first.
     """
-    budget = plan.memory_budget_bytes // 2
+    budget = plan.memory_budget_bytes // 4
     schema: pa.Schema | None = None
     rg = 0
     bufs: dict[int, list[pa.Table]] = {}
