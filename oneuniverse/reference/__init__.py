@@ -3,8 +3,10 @@
 The single reference implementation of the toy physics used to exercise and
 validate the simulation substrate and the twin contracts: linear theory and
 Gaussian / Zel'dovich realisations (:mod:`.linear`) and the one P(k) / r(k)
-estimator (:mod:`.fieldstats`). Later modules (particle-mesh, resimulation,
-reconstruction, mocks, native fixture sims, engines) build on these
+estimator (:mod:`.fieldstats`), particle-mesh and resimulation
+(:mod:`.pm`, :mod:`.resim`), the mask-aware Wiener filter and seed-explicit
+constrained realisation (:mod:`.reconstruct`) and lognormal tracer mocks
+(:mod:`.mock`). Later modules (native fixture sims, engines) build on these
 conventions.
 
 Import the submodules explicitly, e.g. ``from oneuniverse.reference.linear
