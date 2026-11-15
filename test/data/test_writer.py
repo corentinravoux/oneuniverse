@@ -15,7 +15,7 @@ from fixtures.synthetic import (
 )
 
 from oneuniverse._core.errors import FormatError, SchemaError, ValidationError
-from oneuniverse._core.healpix import coarsen
+from oneuniverse._core.healpix import NSIDE_FINE, coarsen
 from oneuniverse.data import writer
 from oneuniverse.data.manifest import (
     LoaderInfo,
@@ -32,6 +32,30 @@ S, L = SurveyMeta("s", "test"), LoaderInfo("t", "1", {})
 
 def _w(data, out, **kw):
     return write_dataset(data, out, geometry=Geometry.POINT, survey=S, loader=L, **kw)
+
+
+@pytest.mark.full_stage
+def test_coarse_stage_buckets_give_identical_output(tmp_path, monkeypatch):
+    """The conftest speed-up (12 coarse stage buckets) writes exactly what production staging
+    writes: same files, rows and row-group layout, same partition index."""
+    write_synthetic_dataset(tmp_path / "prod", 20_000, 0, partition_nside=4)
+    monkeypatch.setattr(writer, "_BUCKET_SHIFT", 2 * int(np.log2(NSIDE_FINE)))
+    write_synthetic_dataset(tmp_path / "coarse", 20_000, 0, partition_nside=4)
+
+    def files(root):
+        return sorted(p.relative_to(root) for p in (root / "data").rglob("*.parquet"))
+
+    prod, coarse = tmp_path / "prod", tmp_path / "coarse"
+    assert files(prod) and files(prod) == files(coarse)
+    for rel in files(prod):
+        a, b = pq.ParquetFile(prod / rel), pq.ParquetFile(coarse / rel)
+        assert [a.metadata.row_group(i).num_rows for i in range(a.num_row_groups)] == \
+               [b.metadata.row_group(i).num_rows for i in range(b.num_row_groups)]
+        # dataset_uuid is stamped per publish; everything else must match
+        assert a.read().replace_schema_metadata(None).equals(b.read().replace_schema_metadata(None))
+    ia = pq.read_table(prod / "_index.parquet").replace_schema_metadata(None)
+    ib = pq.read_table(coarse / "_index.parquet").replace_schema_metadata(None)
+    assert ia.equals(ib)
 
 
 @pytest.mark.full_stage
@@ -122,9 +146,11 @@ def _rss_growth_mib(tmp_path, n_batches):
 @pytest.mark.full_stage
 def test_streaming_bounded_memory_50k(tmp_path):
     """Fast stand-in for the slow 500k/2M RSS tests: tracemalloc peak of data.writer.write_dataset
-    streaming 50k rows (5 batches of 10k) under production staging. The bound (150 MiB of Python/
-    Arrow allocations) is loose, well under the 48 MiB stage buffer x a few; the slow tests use a
-    400 MiB fresh-process RSS bound and check that growth stays flat as the input grows."""
+    streaming 50k rows (5 batches of 10k) under production staging. tracemalloc sees Python-heap
+    allocations only, not Arrow's memory pool, so this guards against Python-side accumulation
+    (e.g. holding every batch in a list); the 150 MiB bound is loose. Arrow buffers are bounded
+    by the slow tests, which use a 400 MiB fresh-process RSS bound and check that growth stays
+    flat as the input grows."""
     import tracemalloc
     tracemalloc.start()
     _w((synthetic_point_table(10_000, i).to_batches()[0] for i in range(5)), tmp_path / "ds")

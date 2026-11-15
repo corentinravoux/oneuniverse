@@ -49,6 +49,16 @@ jobs:
           pip install -e ".[dev]"
       - name: Test
         run: pytest -n auto
+      - name: Single-process time budget
+        # Default suite single-process: < 60 s on the dev machine; the CI
+        # runner budget is 120 s (see CLAUDE.md, test conventions).
+        if: matrix.python-version == '3.12'
+        run: |
+          start=$(date +%s)
+          pytest --durations=15
+          elapsed=$(( $(date +%s) - start ))
+          echo "default suite, single process: ${elapsed} s (budget 120 s)"
+          test "$elapsed" -le 120
 
   slow:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

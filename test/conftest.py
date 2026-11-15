@@ -51,8 +51,11 @@ def _coarse_stage_buckets(request, monkeypatch):
     """Stage the writer into 12 buckets instead of 768 (about 0.8 s saved per full-sky write).
 
     The bucket size is an internal staging detail whose output is invariant (row order,
-    partitions and statistics are pinned by tests). Tests marked ``full_stage`` keep the
-    production setting.
+    partitions and statistics are pinned by tests, and
+    ``test_coarse_stage_buckets_give_identical_output`` compares both settings). Tests marked
+    ``full_stage`` keep the production setting. Session- and module-scoped templates
+    (``_two_survey_template``, ``synthetic_view``, ...) are created before this
+    function-scoped patch applies, so they are written with production staging.
     """
     if request.node.get_closest_marker("full_stage") is None:
         from oneuniverse.data import writer
