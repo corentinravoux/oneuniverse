@@ -14,6 +14,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R4 | 2026-11-13 | 8565495 | 577 / 1 | 50 s (`-n 6`) | measure: atoms, Product/FieldMap/Sightline, MeasurementSet (shared-region check), build_pointset (with_position, uniform randoms truncated to the data z range, adaptive footprint), photo-z attachment by position, tomographic n(z), presets, versioned save/load. Exit criterion met. |
 | R5 | 2026-11-14 | 8f18c24 | 489 / 1 | 40 s (`-n 6`); 157 s single-process | Old simulation tree deleted. OUF-Sim 1.0: specs, manifest, ExecutionPlan, chunk/tile/sky index, native adapters (npy, packed_npy), streaming writers (≤ 256 open files, row-group buffers ≤ budget/4; 2 M-row write +231 MiB RSS), reencode and reference projections (read identically), SimStore partial reads with periodic wrap (raw-array oracle), converter registry, SimDatabase (requests, lineage from child manifests, crash reconcile). Exit criterion met. |
 | R6 | 2026-11-15 | c134093 | 632 / 0 (+10 slow) | 44 s (`-n 6`); 180 s single-process; slow suite 51 s (`-n 6`) | `oneuniverse.reference` (EH98, ΛCDM D and f from one integral, Gaussian fields, Zel'dovich with correct velocities, single P(k)/r(k), bincount-CIC PM with periodic/isolated force, periodic buffered resim + TreePM, mask-aware Wiener, seed-explicit constrained realisation, lognormal mock, linear fixture sim + packed layout + converters, four engines); `oneuniverse.twin` contracts (engine ABCs + registry, observe_from_view, run_engine_to_store); `create_field_store` shared with SimDatabase.dispatch. Six ensemble tests pass (two as decided by the owner, below); store→store chain runs; guards green. Exit criterion met. |
+| R7 | 2026-11-15 | ec4f097 | 664 / 0 (+10 slow) | 56 s (`-n 6`); 252 s single-process | DuckDB SQL face, views only: `data.sql.connect(root, as_of=)` (datasets/partitions/versions tables, one view per dataset over hive parquet, oneuid_/links_ views over versioned sidecars, `cone_where`) and `simulation.sql.connect` (sims/products/chunks/tiles, catalog chunk views, `box_where` with optional periodic split); duckdb imported only by the two modules (guard). Cone counts, n(z) bins and ONEUID joins equal the Python API; as_of resolves sidecar versions. Exit criterion met. |
 
 ## Decisions taken during execution
 
@@ -173,3 +174,24 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
   (TreePM duplicates the KDK loop), TreePM full-box arrays, coverage
   (deconvolve, odd n, Nyquist, self-force, native determinism, multi-z
   packed), test style cleanups.
+- **R7 — DuckDB 2.0.** `connect` returns the real `DuckDBPyConnection`.
+  DuckDB 2.0 relations have no `fetchone`, so the plan's tests use
+  `con.execute(q).fetchone()`; the `duckdb>=1.0` pin is believed honest
+  (every call used exists in 1.x) but was not run on 1.x (no 1.x wheel for
+  Python 3.14 here).
+- **R7 — as_of.** `data.sql` mirrors `Database.as_of`: a dataset not
+  readable at `as_of` (rewritten later; archived data files are not
+  retained) gets no view and no `datasets` row, keeps its rows in
+  `versions`; sidecar views are still built and may refer to rows of an
+  unreadable dataset version.
+- **R7 — interface change.** `partitions` gained `partition INT32` (the
+  `_index.parquet` row number). `oneuid_*.partition` joins
+  `partitions.partition`, not `cell`; `partition` and `offset` must be
+  quoted; `source_row` is the recommended join key.
+- **R7 — persistent `database=`.** On attach, views and tables in the main
+  schema that this connect does not recreate are dropped (documented).
+- **Risk for R8 (critical).** Single-process default suite 252 s (target
+  < 60 s): R1 writer/ONEUID tests (~110 s for test/data in R2), R6 observe
+  fixture (≈ 4.5 s saving available), R7 SQL tests 15 s (20 k-row fixture;
+  5 k likely enough). R8 must profile with `--durations` and slow-mark or
+  shrink fixtures.
