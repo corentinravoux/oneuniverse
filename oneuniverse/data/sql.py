@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 
-from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
+from oneuniverse._core.errors import NotFoundError, ValidationError
 from oneuniverse._core.geometry import Cone
 from oneuniverse._core.healpix import cone_pixels
 from oneuniverse.data.database import Database
@@ -39,8 +39,8 @@ _DATASETS = pa.schema([
     ("format_version", pa.string()), ("created_utc", pa.string()), ("version", pa.int64()),
     ("valid_from", pa.string()), ("valid_to", pa.string()), ("path", pa.string())])
 _PARTITIONS = pa.schema([
-    ("dataset", pa.string()), ("cell", pa.int32()), ("path", pa.string()),
-    ("n_rows", pa.int64()),
+    ("dataset", pa.string()), ("partition", pa.int32()), ("cell", pa.int32()),
+    ("path", pa.string()), ("n_rows", pa.int64()),
     ("ra_min", pa.float64()), ("ra_max", pa.float64()),
     ("dec_min", pa.float64()), ("dec_max", pa.float64()),
     ("z_min", pa.float64()), ("z_max", pa.float64())])
@@ -113,24 +113,6 @@ def _intervals(db: Database, name: str) -> list[tuple]:
     return out
 
 
-def _select(db: Database, name: str, as_of):
-    """Manifest interval live at *as_of* (the live one when None); None if none is."""
-    ivs = _intervals(db, name)
-    if as_of is None:
-        return ivs[-1]
-    live = [iv for iv in ivs
-            if _utc(iv[1]) <= as_of and (iv[2] is None or as_of < _utc(iv[2]))]
-    if not live:
-        return None
-    iv = live[-1]
-    if iv[2] is not None:
-        raise FormatError(
-            f"dataset {name!r} version {iv[0].validity.version} (live "
-            f"{iv[1]} .. {iv[2]}) was selected by as_of={as_of.isoformat()} but its data "
-            f"files no longer exist (only the current version's files are kept)")
-    return iv
-
-
 def _register(con, table_name: str, table: pa.Table) -> None:
     con.register("_ou_tmp", table)
     try:
@@ -142,8 +124,9 @@ def _register(con, table_name: str, table: pa.Table) -> None:
 def _sidecar_names(db: Database, kind: str, prefix: str, taken: dict[str, str]) -> dict[str, str]:
     out = {}
     for name in VersionedSidecar.names(db.root, kind):
-        _claim(taken, f"{prefix}_{re.sub(r'[^A-Za-z0-9_]', '_', name)}", f"{kind} sidecar {name!r}")
-        out[name] = f"{prefix}_{re.sub(r'[^A-Za-z0-9_]', '_', name)}"
+        view = f"{prefix}_{re.sub(r'[^A-Za-z0-9_]', '_', name)}"
+        _claim(taken, view, f"{kind} sidecar {name!r}")
+        out[name] = view
     return out
 
 
@@ -156,15 +139,35 @@ def _claim(taken: dict[str, str], view: str, what: str) -> None:
     taken[key] = what
 
 
+def _drop_stale(con, keep: set[str]) -> None:
+    """Drop every view and table of the main schema whose name is not in *keep*."""
+    rows = con.execute("SELECT table_name, table_type FROM information_schema.tables "
+                       "WHERE table_schema = 'main'").fetchall()
+    for name, kind in rows:
+        if name not in keep:
+            con.execute(f"DROP {'VIEW' if kind == 'VIEW' else 'TABLE'} {_q(name)}")
+
+
 def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
     """DuckDB connection with catalog tables and views over the database at *root*.
 
-    *as_of* (timezone-aware) selects, per dataset, the manifest live at that time and,
-    per sidecar, the version live then; datasets or sidecars that did not exist yet are
-    omitted. A selected dataset version whose files are gone raises ``FormatError``:
-    data files of archived versions are not retained (the ``versions`` table still
-    lists them). The ``oneuid_*`` column ``offset`` is a SQL keyword: quote it
-    (``"offset"``). Returns the real ``duckdb.DuckDBPyConnection``.
+    *as_of* (timezone-aware) mirrors ``Database.as_of``: a dataset is kept when its
+    live manifest was created at or before *as_of*; a dataset whose live version
+    postdates *as_of* gets no view and no ``datasets`` row (its archived rows stay in
+    ``versions``, whose data files are not retained). Sidecars (``oneuid_*``,
+    ``links_*``) select the version live at *as_of* and are always built, so an as_of
+    sidecar may refer to rows of a dataset version that is no longer readable.
+
+    ``oneuid_*.partition`` is the partition ordinal (row number in the dataset's
+    ``_index.parquet``), not the HEALPix cell: join it to ``partitions.partition``
+    (with ``dataset``), not to ``partitions.cell``. ``partition`` and ``offset`` are
+    SQL keywords: quote them (``"partition"``, ``"offset"``). ``source_row`` is the
+    recommended join key to a dataset view.
+
+    Glob characters (``[``, ``*``, ``?``) in *root* are interpreted by DuckDB in the
+    dataset view paths: avoid them. With a persistent *database* file, every view and
+    table of the main schema that this call does not recreate is dropped; an
+    in-memory database starts empty. Returns the real ``duckdb.DuckDBPyConnection``.
     """
     duckdb = _import_duckdb()
     _check_as_of(as_of)
@@ -173,12 +176,9 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
 
     taken: dict[str, str] = {t: f"catalog table {t!r}" for t in _CATALOG}
     chosen = {}
-    for name in db.names():
-        sel = _select(db, name, as_of)
-        if sel is None:
-            continue
+    for name in (db.as_of(as_of) if as_of is not None else db).names():
         _claim(taken, _view_name(name), f"dataset {name!r}")
-        chosen[name] = sel
+        chosen[name] = _intervals(db, name)[-1]
     oneuids = _sidecar_names(db, "oneuid", "oneuid", taken)
     links = _sidecar_names(db, "links", "links", taken)
 
@@ -194,10 +194,11 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
         idx = read_partition_index(p / INDEX_FILENAME).to_pydict()
         n = len(idx["cell"])
         part_rows.append(pa.table({
-            "dataset": [name] * n, "cell": idx["cell"],
+            "dataset": [name] * n, "partition": list(range(n)), "cell": idx["cell"],
             "path": [str(p / x) for x in idx["path"]], "n_rows": idx["n_rows"],
             **{c: idx[c] for c in ("ra_min", "ra_max", "dec_min", "dec_max", "z_min", "z_max")},
         }, schema=_PARTITIONS))
+    for name in db.names():
         for hm, hfrom, hto in _intervals(db, name):
             if as_of is not None and _utc(hfrom) > as_of:
                 continue
@@ -206,6 +207,7 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
                              "valid_to": hto})
 
     con = duckdb.connect(database)
+    created = set(_CATALOG)
     _register(con, "datasets", pa.Table.from_pylist(ds_rows, schema=_DATASETS))
     _register(con, "partitions",
               pa.concat_tables(part_rows) if part_rows else _PARTITIONS.empty_table())
@@ -213,6 +215,7 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
 
     for name in chosen:
         glob = db.path(name) / DATA_DIR / "*" / "*.parquet"
+        created.add(_view_name(name))
         con.execute(f"CREATE OR REPLACE VIEW {_q(_view_name(name))} AS SELECT * FROM "
                     f"read_parquet({_lit(str(glob))}, hive_partitioning = true)")
 
@@ -224,6 +227,7 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
             except NotFoundError:
                 continue  # did not exist at as_of
             table = sc.dir / meta["version"] / "table.parquet"
+            created.add(view)
             con.execute(f"CREATE OR REPLACE VIEW {_q(view)} AS SELECT {select} "
                         f"FROM read_parquet({_lit(str(table))})")
 
@@ -232,4 +236,6 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
                   '"offset", ra, dec, z, CAST(z_type AS VARCHAR) AS z_type')
     sidecar_views("links", links,
                   "parent_oneuid, child_oneuid, sep_arcsec, dz, confidence")
+    if database != ":memory:":
+        _drop_stale(con, created)
     return con

@@ -11,11 +11,13 @@ import pytest
 pytest.importorskip("duckdb")
 
 from fixtures.synthetic import write_synthetic_dataset
-from fixtures.two_surveys import make_two_survey_db
+from fixtures.two_surveys import make_two_survey_db, pair_tables, write_survey
 
 import oneuniverse.data.sql
-from oneuniverse._core.errors import FormatError, ValidationError
+from oneuniverse._core.errors import ValidationError
 from oneuniverse._core.geometry import Cone
+from oneuniverse.data.database import Database
+from oneuniverse.data.links import SubobjectRules, load_links
 from oneuniverse.data.oneuid import CrossMatchRules
 from oneuniverse.data.pdf import PdfSpec
 from oneuniverse.data.sql import cone_where, connect
@@ -31,14 +33,25 @@ def test_catalog_tables(db):
     assert con.execute("SELECT count(*) FROM partitions WHERE dataset='a'").fetchone()[0] == db["a"].n_partitions
 
 
-def test_dataset_view_and_cone_matches_python(db):
-    con = connect(db.root); cone = Cone(185.0, 15.0, 5.0); v = db["a"]
+CONES = [Cone(185.0, 15.0, 5.0), Cone(0.5, 15.0, 5.0), Cone(359.5, 15.0, 5.0),
+         Cone(0.0, 89.5, 3.0), Cone(0.0, -89.5, 3.0), Cone(185.0, 15.0, 40.0),
+         Cone(185.0, 15.0, 0.01)]
+
+
+@pytest.mark.parametrize("cone", CONES, ids=lambda c: f"{c.ra}_{c.dec}_{c.radius}")
+def test_dataset_view_and_cone_matches_python(db, cone):
+    con = connect(db.root); v = db["a"]
     n_sql = con.execute(f"SELECT count(*) FROM a WHERE {cone_where(cone, v.nside)}").fetchone()[0]
     assert n_sql == v.table(cone=cone).num_rows
 
 
 def test_nz_groupby(db):
-    con = connect(db.root); rows = con.execute("SELECT floor(z*10)/10 AS zb, count(*) FROM a GROUP BY zb ORDER BY zb").fetchall(); assert sum(r[1] for r in rows) == 20_000
+    con = connect(db.root)
+    rows = con.execute("SELECT round(floor(z*10)/10, 1) AS zb, count(*) FROM a GROUP BY zb ORDER BY zb").fetchall()
+    z = db["a"].table(columns=["z"])["z"].to_numpy()
+    bins, counts = np.unique(np.round(np.floor(z * 10) / 10, 1), return_counts=True)
+    assert [r[0] for r in rows] == bins.tolist() and [r[1] for r in rows] == counts.tolist()
+    assert sum(r[1] for r in rows) == 20_000
 
 
 def test_oneuid_join_counts_multi(db):
@@ -95,16 +108,74 @@ def test_invalid_and_reserved_view_names(tmp_path):
         connect(tmp_path)
 
 
-def test_as_of_missing_files_raises_and_early_excludes(tmp_path):
+def test_as_of_dataset_rewritten_mirrors_python(tmp_path):
+    ta, tb = pair_tables(2000, 500)
+    write_survey(tmp_path, "a", ta); write_survey(tmp_path, "b", tb)
+    Database(tmp_path).build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
+    time.sleep(0.01); t1 = datetime.now(UTC); time.sleep(0.01)
+    write_survey(tmp_path, "b", tb.slice(0, 1500), overwrite=True)
+    con = connect(tmp_path, as_of=t1)
+    names = [r[0] for r in con.execute("SELECT name FROM datasets ORDER BY name").fetchall()]
+    assert names == Database(tmp_path).as_of(t1).names() == ["a"]
+    assert con.execute("SELECT count(*) FROM versions WHERE dataset='b'").fetchone()[0] == 1
+    assert con.execute("SELECT count(*) FROM oneuid_ab").fetchone()[0] == \
+        Database(tmp_path).load_oneuid("ab", as_of=t1).table.num_rows
+    live = connect(tmp_path)
+    assert live.execute("SELECT count(*) FROM b").fetchone()[0] == 1500
+    assert live.execute("SELECT count(*) FROM versions WHERE dataset='b'").fetchone()[0] == 2
+
+
+def test_as_of_inside_live_interval_keeps_dataset(tmp_path):
     t0 = datetime.now(UTC); time.sleep(0.01)
     write_synthetic_dataset(tmp_path / "p", 300, 0)
     assert connect(tmp_path, as_of=t0).execute("SELECT count(*) FROM datasets").fetchone()[0] == 0
-    time.sleep(0.01); t1 = datetime.now(UTC); time.sleep(0.01)
-    write_synthetic_dataset(tmp_path / "p", 400, 1, overwrite=True)
-    assert connect(tmp_path).execute("SELECT count(*) FROM p").fetchone()[0] == 400
-    assert connect(tmp_path).execute("SELECT count(*) FROM versions").fetchone()[0] == 2
-    with pytest.raises(FormatError, match="no longer exist"):
-        connect(tmp_path, as_of=t1)
+    time.sleep(0.01); t1 = datetime.now(UTC)
+    con = connect(tmp_path, as_of=t1)
+    assert con.execute("SELECT name FROM datasets").fetchall() == [("p",)]
+    assert con.execute("SELECT count(*) FROM p").fetchone()[0] == 300
+
+
+def test_partition_ordinal_joins_partitions_and_offset(db):
+    con = connect(db.root); v = db["a"]
+    ords = [r[0] for r in con.execute("SELECT partition FROM partitions WHERE dataset='a' ORDER BY partition").fetchall()]
+    assert ords == list(range(v.n_partitions))
+    paths = [r[0] for r in con.execute("SELECT path FROM partitions WHERE dataset='a' ORDER BY partition").fetchall()]
+    assert paths == [str(v.path / p) for p in v.index["path"].to_pylist()]
+    assert con.execute('SELECT count(*) FROM oneuid_ab o JOIN partitions p ON p.dataset=o.dataset '
+                       'AND p."partition"=o."partition" WHERE o.dataset=\'a\'').fetchone()[0] == 20_000
+    rows = con.execute('SELECT "partition", "offset", source_row FROM oneuid_ab WHERE dataset=\'a\' '
+                       'ORDER BY source_row LIMIT 500').fetchall()
+    got = v.take([r[0] for r in rows], [r[1] for r in rows], columns=["source_row"])["source_row"].to_pylist()
+    assert got == [r[2] for r in rows]
+
+
+def test_links_views_match_python(tmp_path):
+    make_two_survey_db(tmp_path, n_each=3000, n_common=1000)
+    db = Database(tmp_path); db.build_oneuid(["a", "b"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None, separate=(("a", "b"),)), name="ab")
+    links = db.build_links(parents=["a"], children=["b"], rules=SubobjectRules(
+        "galaxy", "galaxy", sky_tol_arcsec=1.0, dz_tol=None), name="ab", oneuid_name="ab")
+    con = connect(tmp_path)
+    assert [r[0] for r in con.execute("DESCRIBE links_ab").fetchall()] == [
+        "parent_oneuid", "child_oneuid", "sep_arcsec", "dz", "confidence"]
+    n = con.execute("SELECT count(*) FROM links_ab").fetchone()[0]
+    assert n == links.table.num_rows == load_links(db, "ab").table.num_rows > 0
+    assert con.execute("SELECT sum(parent_oneuid), sum(child_oneuid) FROM links_ab").fetchone() == (
+        int(links.table["parent_oneuid"].to_numpy().sum()), int(links.table["child_oneuid"].to_numpy().sum()))
+
+
+def test_persistent_database_drops_stale_objects(tmp_path):
+    root = tmp_path / "root"; root.mkdir()
+    write_synthetic_dataset(root / "p", 300, 0); write_synthetic_dataset(root / "q", 300, 1)
+    Database(root).build_oneuid(["p", "q"], rules=CrossMatchRules(), name="pq")
+    f = str(tmp_path / "x.duckdb")
+    con = connect(root, database=f)
+    assert con.execute("SELECT count(*) FROM oneuid_pq").fetchone()[0] > 0
+    con.close()
+    import shutil
+    shutil.rmtree(root / "q"); shutil.rmtree(root / "_oneuid")
+    con = connect(root, database=f)
+    names = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+    assert names == {"datasets", "partitions", "versions", "p"}
 
 
 def test_list_columns_are_native(tmp_path):
