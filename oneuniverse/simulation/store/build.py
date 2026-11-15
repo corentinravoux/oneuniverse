@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -23,6 +23,7 @@ from oneuniverse.simulation.specs import ProductDecl
 from oneuniverse.simulation.store.native import NativeReaderAdapter, get_adapter
 from oneuniverse.simulation.store.read import SimStore
 from oneuniverse.simulation.store.write import (
+    ingest_field,
     schema_row_bytes,
     write_catalog_product,
     write_field_product,
@@ -130,4 +131,31 @@ def build_store(out, *, manifest: OUFSimManifest, products: Sequence[NativeProdu
         native["projection"] = projection
         write_manifest(tmp / MANIFEST_FILENAME,
                        replace(manifest, products=tuple(decls), native=native))
+    return SimStore(out)
+
+
+def create_field_store(out, *, manifest: OUFSimManifest, fields: Mapping[str, np.ndarray], z: float,
+                       tile_cells: int = 32, plan: ExecutionPlan | None = None) -> SimStore:
+    """Create a store at ``out`` holding one cubic field product per entry of ``fields`` at ``z``.
+
+    ``manifest.products`` must be empty: the declarations are added by
+    :func:`~oneuniverse.simulation.store.write.ingest_field`, one per field (``n_grid`` from
+    the array).  The store is staged under ``<out>.tmp`` (layout, manifest, every field
+    ingested) and renamed into place only when complete.  ``ValidationError`` if ``out``
+    already exists, ``fields`` is empty or ``manifest.products`` is not empty; a failure
+    publishes nothing.
+    """
+    out = Path(out)
+    if out.exists():
+        raise ValidationError(f"store {out} already exists; refusing to overwrite")
+    if manifest.products:
+        raise ValidationError("create_field_store needs a manifest with products=()")
+    if not fields:
+        raise ValidationError("create_field_store needs at least one field")
+    plan = plan if plan is not None else ExecutionPlan()
+    with atomic_dir(out) as tmp:
+        atomic_write_json(tmp / LAYOUT_FILENAME, {"products": {}})
+        write_manifest(tmp / MANIFEST_FILENAME, manifest)
+        for name, field in fields.items():
+            ingest_field(tmp, name, z, field, tile_cells=tile_cells, plan=plan)
     return SimStore(out)

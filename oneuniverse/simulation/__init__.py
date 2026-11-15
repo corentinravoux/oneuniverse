@@ -30,7 +30,11 @@ from oneuniverse.simulation.specs import (
     SimulationRequest,
     UnitFrameSpec,
 )
-from oneuniverse.simulation.store.build import NativeProduct, build_store
+from oneuniverse.simulation.store.build import (
+    NativeProduct,
+    build_store,
+    create_field_store,
+)
 from oneuniverse.simulation.store.read import SimStore
 from oneuniverse.simulation.store.write import ingest_field
 
@@ -56,6 +60,7 @@ __all__ = [
     "SkyPatch",
     "UnitFrameSpec",
     "build_store",
+    "create_field_store",
     "detect_converter",
     "get_converter",
     "ingest_field",

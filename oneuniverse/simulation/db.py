@@ -20,22 +20,19 @@ import pyarrow.parquet as pq
 
 from oneuniverse._core.errors import FormatError, NotFoundError, ValidationError
 from oneuniverse._core.fs import (
-    atomic_dir,
     atomic_write_bytes,
     atomic_write_json,
     is_staging,
 )
 from oneuniverse.simulation.execution import ExecutionPlan
 from oneuniverse.simulation.manifest import (
-    LAYOUT_FILENAME,
     MANIFEST_FILENAME,
     OUFSimManifest,
     read_manifest,
-    write_manifest,
 )
 from oneuniverse.simulation.specs import RegionSpec, SimulationRequest
+from oneuniverse.simulation.store.build import create_field_store
 from oneuniverse.simulation.store.read import SimStore
-from oneuniverse.simulation.store.write import ingest_field
 
 SIMDB_DIRNAME = "_simdb"
 REQUESTS_FILENAME = "requests.json"
@@ -223,10 +220,8 @@ class SimDatabase:
                 _now(), parent=request.parent,
                 lineage={"request_id": request.id, "region": region.to_dict(),
                          "origin": list(outer.lo)})
-            with atomic_dir(self.root / name) as tmp:
-                atomic_write_json(tmp / LAYOUT_FILENAME, {"products": {}})
-                write_manifest(tmp / MANIFEST_FILENAME, manifest)
-                ingest_field(tmp, "field", z, field, tile_cells=tile_cells, plan=ExecutionPlan())
+            create_field_store(self.root / name, manifest=manifest, fields={"field": field}, z=z,
+                               tile_cells=tile_cells, plan=ExecutionPlan())
         except BaseException as exc:
             self._set(request, status="failed", error=f"{type(exc).__name__}: {exc}")
             raise
