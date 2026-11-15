@@ -30,3 +30,10 @@ def test_create_field_store_two_fields_and_refuses_existing(tmp_path):
     with pytest.raises(ValidationError):
         create_field_store(tmp_path / "e", manifest=_manifest(), fields={}, z=0.5)
     assert not (tmp_path / "e").exists()
+
+
+def test_failed_later_field_publishes_nothing(tmp_path):
+    f = np.random.default_rng(0).standard_normal((8, 8, 8))
+    with pytest.raises(ValidationError):
+        create_field_store(tmp_path / "s", manifest=_manifest(), fields={"a": f, "b": f[:4]}, z=0.5)
+    assert sorted(p.name for p in tmp_path.iterdir()) == []      # no target, no .tmp

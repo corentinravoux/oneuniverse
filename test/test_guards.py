@@ -296,3 +296,20 @@ def test_guard_extended_detection(tmp_path):
                    (6, "astropy.cosmology"), (7, "pyccl")], c
     v = violations(sub, {"oneuniverse.data"})
     assert sorted(int(s.split(":")[1]) for s in v) == [8, 9], v
+
+
+def _reference_rows():
+    """``reference`` imports nothing from data/combine/measure, and only ``engines.py`` may import ``twin``."""
+    rows = [("reference-no-pillar1", "reference",
+             {"oneuniverse.data", "oneuniverse.combine", "oneuniverse.measure"})]
+    for f in sorted((PKG / "reference").glob("*.py")):
+        if f.name != "engines.py":
+            rows.append((f"reference/{f.name}-no-twin", f"reference/{f.name}", {"oneuniverse.twin"}))
+    return rows
+
+
+@pytest.mark.parametrize("label,subpath,forbidden", _reference_rows(),
+                         ids=[r[0] for r in _reference_rows()])
+def test_reference_boundary(label, subpath, forbidden):
+    found = violations(PKG / subpath, forbidden)
+    assert not found, "forbidden imports:\n" + "\n".join(found)
