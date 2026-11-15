@@ -70,3 +70,18 @@ def test_observation_defaults(clean_registry):
     assert obs.meta is not other.meta
     with pytest.raises(dataclasses.FrozenInstanceError):
         obs.box = 1.0  # frozen
+
+
+def test_register_engine_rejects_non_engine_class(clean_registry):
+    class NotAnEngine:
+        name = "nope"
+    with pytest.raises(ValidationError):
+        register_engine(NotAnEngine)
+    with pytest.raises(ValidationError):
+        register_engine("linear")
+    assert "nope" not in registered_engines()
+
+
+def test_unknown_engine_hint_mentions_import():
+    with pytest.raises(NotFoundError, match="imported"):
+        get_engine("surely-not-registered")

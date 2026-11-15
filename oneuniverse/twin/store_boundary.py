@@ -35,8 +35,13 @@ def run_engine_to_store(engine: ForwardEngine, *, store_root, name: str, cosmo, 
     ``SimStore.read_field_box`` over the WHOLE box (an explicit whole-box read: an
     engine needs the full periodic IC); the new manifest then has
     ``parent = store.root.name`` and ``lineage = {"ic_from": {"store", "product", "z"}}``.
-    The source box must equal ``box``. ``ValidationError`` if ``engine`` is not a
-    ``ForwardEngine`` or the target exists.
+    The source box must equal ``box``.
+
+    Convention: the ic is the **z = 0 linear density contrast** on the cell-centred
+    ``n_grid`` mesh, in box units (every engine applies the growth itself), so
+    ``z_ic`` must be ``0.0``; any other value raises ``ValidationError`` rather than
+    silently applying the growth twice. ``ValidationError`` also if ``engine`` is not
+    a ``ForwardEngine`` or the target exists.
     """
     if not isinstance(engine, ForwardEngine):
         raise ValidationError(f"{type(engine).__name__} is not a ForwardEngine")
@@ -47,6 +52,10 @@ def run_engine_to_store(engine: ForwardEngine, *, store_root, name: str, cosmo, 
     lineage: dict = {}
     if ic_from is not None:
         src, product, z_ic = ic_from
+        if float(z_ic) != 0.0:
+            raise ValidationError(
+                f"ic must be the z=0 linear density contrast; got z_ic={z_ic} "
+                "(engines apply the growth themselves)")
         if abs(src.manifest.box_size - float(box)) > 1e-9 * float(box):
             raise ValidationError(
                 f"ic store box {src.manifest.box_size} differs from requested box {box}")

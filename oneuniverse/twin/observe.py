@@ -13,6 +13,7 @@ from oneuniverse._core.errors import ValidationError
 from oneuniverse.data.view import DatasetView
 from oneuniverse.measure.product import Product
 from oneuniverse.reference.pm import deposit_cic
+from oneuniverse.reference.reconstruct import _check_mask
 from oneuniverse.twin.engine import Observation
 
 
@@ -24,15 +25,16 @@ def _check_inside(pos: np.ndarray, box: float) -> None:
 
 
 def _product_positions(source: Product, cols) -> np.ndarray:
-    """Look each column up in ``extras`` first (the catalog ``z`` is a redshift), then the catalog."""
+    """Position columns of a ``Product``: all taken from ``extras`` (the catalog ``z`` is a redshift)."""
+    missing = [c for c in cols
+               if not (c in source.extras and isinstance(source.extras[c], np.ndarray))]
+    if missing:
+        raise ValidationError(
+            f"position column(s) {missing} missing from the product extras; a Product's "
+            "positions must all come from extras (its catalog `z` is a redshift)")
     arrays = []
     for c in cols:
-        if c in source.extras and isinstance(source.extras[c], np.ndarray):
-            a = source.extras[c]
-        elif c in source.catalog.column_names:
-            a = source.catalog[c].to_numpy()
-        else:
-            raise ValidationError(f"position column {c!r} found neither in extras nor in the catalog")
+        a = source.extras[c]
         if a.shape != (source.n,):
             raise ValidationError(f"position column {c!r} must have shape ({source.n},), got {a.shape}")
         arrays.append(np.asarray(a, dtype=np.float64))
@@ -69,12 +71,13 @@ def observe_from_view(source, *, box: float, n_grid: int, position_columns=("x",
     """Grid objects into ``delta_g = n/<n>_mask - 1`` (0 outside ``mask``; ``mask=None`` is all cells).
 
     ``source`` is a ``DatasetView`` (only ``position_columns`` are read, batch by batch)
-    or a measure ``Product`` (each column is taken from ``extras`` first, then the
-    catalog). ``nbar`` defaults to ``N / box**3`` over all objects when ``mask`` is None; with
+    or a measure ``Product`` (all position columns are taken from ``extras``; a missing
+    one raises, the catalog ``z`` is a redshift and is never read as a position). ``nbar`` defaults to ``N / box**3`` over all objects when ``mask`` is None; with
     a ``mask`` it defaults to the in-mask number density
     ``counts[mask].sum() / (mask.sum() * (box/n_grid)**3)`` (``delta_g`` is renormalised by
     the in-mask mean, so the Wiener noise term needs the in-mask density). Positions outside
-    ``[0, box)`` raise ``ValidationError``.
+    ``[0, box)`` raise ``ValidationError``, as does a ``mask`` that is not bool (or 0/1
+    valued) of shape ``(n_grid,) * 3`` or selects no cell.
     """
     box = float(box)
     if not box > 0:
@@ -86,9 +89,7 @@ def observe_from_view(source, *, box: float, n_grid: int, position_columns=("x",
     if mask is None:
         footprint = np.ones(counts.shape, dtype=bool)
     else:
-        footprint = np.asarray(mask, dtype=bool)
-        if footprint.shape != counts.shape:
-            raise ValidationError(f"mask shape {footprint.shape} != grid {counts.shape}")
+        footprint = _check_mask(mask, counts.shape)   # bool, or 0/1 values only; shape (n,)*3
     mean = counts[footprint].mean() if footprint.any() else 0.0
     if not mean > 0:
         raise ValidationError("no objects inside the mask: cannot form a count contrast")

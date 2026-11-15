@@ -13,13 +13,31 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from oneuniverse._core.errors import ValidationError
+from oneuniverse._core.errors import NotFoundError, ValidationError
 from oneuniverse._core.registry import Registry
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Observation:
-    """A gridded galaxy-count contrast field plus its survey description."""
+    """A gridded galaxy-count contrast field plus its survey description.
+
+    Fields:
+
+    - ``delta_g``: ``(n, n, n)`` galaxy count contrast ``n / <n>_mask - 1`` on the
+      cell-centred mesh of the periodic box, where ``<n>_mask`` is the mean count per
+      cell over the cells selected by ``mask``; it is 0 outside the mask.
+    - ``nbar``: mean number density inside the mask, in ``(h/Mpc)^-3`` (i.e. objects per
+      ``(Mpc/h)^3``). ``observe_from_view`` defaults it to ``N / box**3`` without a mask
+      and to the in-mask density with one.
+    - ``bias``: linear galaxy bias the contrast is to be read with.
+    - ``mask``: ``None`` (every cell observed) or a bool ``(n, n, n)`` grid, True where
+      the survey observes.
+    - ``box``: periodic box side in Mpc/h; 0.0 means unset (engines that need it refuse).
+    - ``meta``: free-form provenance of how the field was built.
+
+    ``eq=False``: the ndarray fields make field-wise ``==`` and hashing ill-defined,
+    so instances compare and hash by identity.
+    """
 
     delta_g: np.ndarray
     nbar: float
@@ -56,7 +74,12 @@ class ForwardEngine(ABC):
     @abstractmethod
     def forward(self, *, cosmo, box: float, n_grid: int, z: float,
                 seed: int | None = None, ic_field: np.ndarray | None = None) -> ProductBundle:
-        """Run the forward model and return its products at redshift ``z``."""
+        """Run the forward model and return its products at redshift ``z``.
+
+        ``ic_field``, when given, is the **z = 0 linear density contrast** on the
+        cell-centred ``n_grid`` mesh of the periodic box (units: Mpc/h box, no growth
+        applied); the engine applies the growth to ``z`` itself. It wins over ``seed``.
+        """
 
 
 _REGISTRY: Registry[type] = Registry("twin engine", key=lambda c: c.name)
@@ -78,8 +101,17 @@ def register_engine(cls: type) -> type:
 
 
 def get_engine(name: str) -> type:
-    """Engine class registered as ``name``; ``NotFoundError`` if unknown."""
-    return _REGISTRY.get(name)
+    """Engine class registered as ``name``; ``NotFoundError`` if unknown.
+
+    Engines register when the module that defines them is imported, so an empty or
+    incomplete list usually means the plugin module has not been imported yet.
+    """
+    try:
+        return _REGISTRY.get(name)
+    except NotFoundError as exc:
+        raise NotFoundError(
+            f"{exc.args[0] if exc.args else name} (engines register when their plugin "
+            f"module is imported: import the module that defines the engine first)") from exc
 
 
 def registered_engines() -> tuple[str, ...]:

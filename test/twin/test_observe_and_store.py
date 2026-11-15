@@ -87,3 +87,34 @@ def test_default_nbar_with_mask_is_in_mask_density(tmp_path):
     assert obs.nbar == pytest.approx(expect, rel=1e-12) and obs.nbar == pytest.approx(20_000 / 100.0**3, rel=0.05)
     given = observe_from_view(v, box=100.0, n_grid=16, position_columns=("x", "y", "zb"), mask=mask, nbar=3e-3)
     assert given.nbar == 3e-3
+
+
+def test_ic_from_nonzero_z_refused(tmp_path):
+    st = run_engine_to_store(get_engine("linear")(), store_root=tmp_path / "s", name="lin", cosmo=COSMO, box=64.0, n_grid=8, z=1.0, seed=0)
+    with pytest.raises(ValidationError, match="z=0 linear"):
+        run_engine_to_store(get_engine("linear")(), store_root=tmp_path / "s", name="child", cosmo=COSMO, box=64.0, n_grid=8, z=0.0, ic_from=(st, "delta", 1.0))
+    assert not (tmp_path / "s" / "child").exists()
+
+
+def test_product_positions_all_from_extras(tmp_path):
+    p = product_from_counts(np.ones((4, 4, 4), dtype=int), box=64.0, seed=0)
+    partial = type(p)(p.catalog, extras={"x": p.extras["x"], "y": p.extras["y"]}, provenance=dict(p.provenance))
+    with pytest.raises(ValidationError, match=r"\['z'\]"):
+        observe_from_view(partial, box=64.0, n_grid=4)
+    assert observe_from_view(p, box=64.0, n_grid=4).delta_g.shape == (4,) * 3
+
+
+def test_observe_mask_validated(tmp_path):
+    p = product_from_counts(np.ones((4, 4, 4), dtype=int), box=64.0, seed=0)
+    with pytest.raises(ValidationError):
+        observe_from_view(p, box=64.0, n_grid=4, mask=np.full((4,) * 3, 0.5))
+    with pytest.raises(ValidationError):
+        observe_from_view(p, box=64.0, n_grid=4, mask=np.ones((3,) * 3, dtype=bool))
+    ok = observe_from_view(p, box=64.0, n_grid=4, mask=np.ones((4,) * 3))      # 0/1 floats accepted
+    assert ok.mask.dtype == bool
+
+
+def test_observation_identity_semantics():
+    from oneuniverse.twin.engine import Observation
+    a = Observation(np.zeros((2, 2, 2)), 1e-3, 1.0)
+    assert a == a and a != Observation(np.zeros((2, 2, 2)), 1e-3, 1.0) and isinstance(hash(a), int)
