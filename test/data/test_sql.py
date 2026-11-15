@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("duckdb")
 
 from fixtures.synthetic import write_synthetic_dataset
-from fixtures.two_surveys import make_two_survey_db, pair_tables, write_survey
+from fixtures.two_surveys import pair_tables, write_survey
 
 import oneuniverse.data.sql
 from oneuniverse._core.errors import ValidationError
@@ -24,12 +24,12 @@ from oneuniverse.data.sql import cone_where, connect
 
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory):
-    root = tmp_path_factory.mktemp("sql"); db = make_two_survey_db(root, n_each=20_000, n_common=5_000); db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab"); return db
+def db(two_survey_db_large):
+    db = two_survey_db_large; db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab"); return db
 
 
 def test_catalog_tables(db):
-    con = connect(db.root); assert con.execute("SELECT name, n_rows FROM datasets ORDER BY name").fetchall() == [("a", 20_000), ("b", 20_000)]
+    con = connect(db.root); assert con.execute("SELECT name, n_rows FROM datasets ORDER BY name").fetchall() == [("a", 12_000), ("b", 12_000)]
     assert con.execute("SELECT count(*) FROM partitions WHERE dataset='a'").fetchone()[0] == db["a"].n_partitions
 
 
@@ -51,13 +51,13 @@ def test_nz_groupby(db):
     z = db["a"].table(columns=["z"])["z"].to_numpy()
     bins, counts = np.unique(np.round(np.floor(z * 10) / 10, 1), return_counts=True)
     assert [r[0] for r in rows] == bins.tolist() and [r[1] for r in rows] == counts.tolist()
-    assert sum(r[1] for r in rows) == 20_000
+    assert sum(r[1] for r in rows) == 12_000
 
 
 def test_oneuid_join_counts_multi(db):
     con = connect(db.root); n_multi = con.execute("SELECT count(*) FROM (SELECT oneuid FROM oneuid_ab GROUP BY oneuid HAVING count(*) > 1)").fetchone()[0]
     assert n_multi == db.load_oneuid("ab").n_multi
-    joined = con.execute("SELECT count(*) FROM oneuid_ab o JOIN a ON o.dataset='a' AND o.source_row=a.source_row").fetchone()[0]; assert joined == 20_000
+    joined = con.execute("SELECT count(*) FROM oneuid_ab o JOIN a ON o.dataset='a' AND o.source_row=a.source_row").fetchone()[0]; assert joined == 12_000
 
 
 def test_oneuid_columns_and_versions(db):
@@ -142,16 +142,15 @@ def test_partition_ordinal_joins_partitions_and_offset(db):
     paths = [r[0] for r in con.execute("SELECT path FROM partitions WHERE dataset='a' ORDER BY partition").fetchall()]
     assert paths == [str(v.path / p) for p in v.index["path"].to_pylist()]
     assert con.execute('SELECT count(*) FROM oneuid_ab o JOIN partitions p ON p.dataset=o.dataset '
-                       'AND p."partition"=o."partition" WHERE o.dataset=\'a\'').fetchone()[0] == 20_000
+                       'AND p."partition"=o."partition" WHERE o.dataset=\'a\'').fetchone()[0] == 12_000
     rows = con.execute('SELECT "partition", "offset", source_row FROM oneuid_ab WHERE dataset=\'a\' '
                        'ORDER BY source_row LIMIT 500').fetchall()
     got = v.take([r[0] for r in rows], [r[1] for r in rows], columns=["source_row"])["source_row"].to_pylist()
     assert got == [r[2] for r in rows]
 
 
-def test_links_views_match_python(tmp_path):
-    make_two_survey_db(tmp_path, n_each=3000, n_common=1000)
-    db = Database(tmp_path); db.build_oneuid(["a", "b"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None, separate=(("a", "b"),)), name="ab")
+def test_links_views_match_python(two_survey_db):
+    db = two_survey_db; tmp_path = db.root; db.build_oneuid(["a", "b"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None, separate=(("a", "b"),)), name="ab")
     links = db.build_links(parents=["a"], children=["b"], rules=SubobjectRules(
         "galaxy", "galaxy", sky_tol_arcsec=1.0, dz_tol=None), name="ab", oneuid_name="ab")
     con = connect(tmp_path)

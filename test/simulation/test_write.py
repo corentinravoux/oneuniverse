@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -66,6 +67,7 @@ def test_catalog_write_streams_under_budget(tmp_path):
     assert peak < 300 * 2**20
 
 
+@pytest.mark.slow
 def test_catalog_write_rss_growth_fresh_process(tmp_path):
     code = textwrap.dedent("""
         import sys, numpy as np, pyarrow as pa, pyarrow.parquet
@@ -269,10 +271,24 @@ def test_adapters_read_rows_and_regions(tmp_path):
         get_adapter("nope")
 
 
-def test_ingest_field_adds_product(tmp_path):
-    src = make_native_sim(tmp_path / "sim")
-    build_store(tmp_path / "s", manifest=native_manifest(src), products=native_products(src)[:1],
+@pytest.fixture(scope="module")
+def _particles_store_template(tmp_path_factory):
+    """Native store holding only the particles product, built once and copied per test."""
+    root = tmp_path_factory.mktemp("ingest_template")
+    src = make_native_sim(root / "sim")
+    build_store(root / "s", manifest=native_manifest(src), products=native_products(src)[:1],
                 plan=ExecutionPlan())
+    return root / "s"
+
+
+@pytest.fixture
+def particles_store(_particles_store_template, tmp_path):
+    shutil.copytree(_particles_store_template, tmp_path / "s")
+    return tmp_path
+
+
+def test_ingest_field_adds_product(particles_store):
+    tmp_path = particles_store
     ingest_field(tmp_path / "s", "delta_recon", 0.0, np.zeros((32, 32, 32), np.float32), tile_cells=16)
     store2 = SimStore(tmp_path / "s")
     assert "delta_recon" in store2.products and store2.manifest.product("delta_recon").kind == "field"
@@ -334,10 +350,8 @@ def test_build_store_without_products_opens(tmp_path):
 
 
 @pytest.mark.parametrize("target", ["write_manifest", "_merge_layout"])
-def test_ingest_field_crash_then_retry(tmp_path, monkeypatch, target):
-    src = make_native_sim(tmp_path / "sim")
-    build_store(tmp_path / "s", manifest=native_manifest(src), products=native_products(src)[:1],
-                plan=ExecutionPlan())
+def test_ingest_field_crash_then_retry(particles_store, monkeypatch, target):
+    tmp_path = particles_store
     real = getattr(W, target)
 
     def boom(*a, **k):

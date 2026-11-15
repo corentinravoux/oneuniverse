@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -22,7 +24,7 @@ def _write(root, name, kind, ra, dec, z, seed, **kw):
     for c, v in (("ra", ra), ("dec", dec), ("z", z)):
         t = t.set_column(t.schema.get_field_index(c), c, pa.array(v[src]))
     write_dataset(t, root / name, geometry=Geometry.POINT, survey=SurveyMeta(name, kind),
-                  loader=LoaderInfo("test", "1", {}), partition_nside=4, **kw)
+                  loader=LoaderInfo("test", "1", {}), partition_nside=2, **kw)
 
 
 def _make(root):
@@ -45,12 +47,20 @@ def _make(root):
     return Database(root), sra, sdec
 
 
-@pytest.fixture
-def db_hosts(tmp_path):
-    db, _, _ = _make(tmp_path)
+@pytest.fixture(scope="module")
+def _hosts_template(tmp_path_factory):
+    root = tmp_path_factory.mktemp("hosts_template")
+    db, _, _ = _make(root)
     # identity index with a tiny tolerance: every row is its own object
     db.build_oneuid(["hosts", "sne", "clusters"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None))
-    return db
+    return root
+
+
+@pytest.fixture
+def db_hosts(_hosts_template, tmp_path):
+    """Fresh private copy of the built database (tests mutate it)."""
+    shutil.copytree(_hosts_template, tmp_path / "db")
+    return Database(tmp_path / "db")
 
 
 def _sne_oneuids(db):
@@ -114,15 +124,14 @@ def test_strings_rejected_as_name_lists(db_hosts):
         db_hosts.chain([0], "host")
 
 
-def test_links_refuse_stale_dataset(tmp_path):
-    db, _, _ = _make(tmp_path)
-    db.build_oneuid(["hosts", "sne"], rules=CrossMatchRules(sky_tol_arcsec=0.01, dz_tol=None))
+def test_links_refuse_stale_dataset(db_hosts, tmp_path):
+    root = tmp_path / "db"
     rng = np.random.default_rng(1)
     n = 50
-    _write(tmp_path, "sne", "snia", rng.uniform(0, 360, n), rng.uniform(-10, 10, n),
+    _write(root, "sne", "snia", rng.uniform(0, 360, n), rng.uniform(-10, 10, n),
            rng.uniform(0.1, 0.2, n), 9, overwrite=True)
     with pytest.raises(FormatError, match="dataset sne changed since ONEUID default"):
-        Database(tmp_path).build_links(parents=["hosts"], children=["sne"],
+        Database(root).build_links(parents=["hosts"], children=["sne"],
                                        rules=SubobjectRules("galaxy", "snia", dz_tol=None))
 
 

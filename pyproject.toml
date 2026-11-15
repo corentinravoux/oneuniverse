@@ -64,4 +64,7 @@ include = ["oneuniverse*"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 addopts = "-q -m 'not slow'"
-markers = ["slow: ensemble / physics tests, run nightly"]
+markers = [
+    "slow: ensemble / physics tests, run nightly",
+    "full_stage: keep the production writer staging (768 buckets) instead of the coarse test default",
+]

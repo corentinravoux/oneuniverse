@@ -4,7 +4,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
-from fixtures.two_surveys import make_two_survey_db
 
 from oneuniverse._core.errors import NotFoundError, SchemaError, ValidationError
 from oneuniverse.combine import ConstantWeight, InverseVarianceWeight, WeightedCatalog
@@ -12,8 +11,8 @@ from oneuniverse.data.crossmatch import CrossMatchRules
 
 
 @pytest.fixture(scope="module")
-def built(tmp_path_factory):
-    db = make_two_survey_db(tmp_path_factory.mktemp("wc"))
+def built(two_survey_db_large):
+    db = two_survey_db_large
     idx = db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")
     return db, idx
 
@@ -26,7 +25,7 @@ def wc(built):
 
 def test_long_table_shape(wc):
     cat, _ = wc
-    assert cat.datasets == ["a", "b"] and cat.table.num_rows == 60_000
+    assert cat.datasets == ["a", "b"] and cat.table.num_rows == 24_000
     assert set(cat.table.column_names) >= {"oneuid", "dataset", "z", "z_err", "mag", "z_type"}
 
 
@@ -42,7 +41,7 @@ def test_weights_require_every_dataset(wc):
         cat.add_weight("a", ConstantWeight()).weights()
     cat.fill_defaults(db)
     w = cat.weights()
-    assert w.num_rows == 60_000 and (w["weight"].to_numpy() > 0).all()
+    assert w.num_rows == 24_000 and (w["weight"].to_numpy() > 0).all()
     assert w.column_names == ["oneuid", "dataset", "weight"]
 
 
@@ -75,7 +74,7 @@ def test_combine_ivar_matches_formula(wc):
     cat.add_weight("a", InverseVarianceWeight("z_err")).add_weight("b", InverseVarianceWeight("z_err"))
     out = cat.combine("z", variance="z_err")
     multi = out.filter(pc.field("n_sources") == 2)
-    assert out.num_rows == 50_000 and multi.num_rows == 10_000
+    assert out.num_rows == 20_000 and multi.num_rows == 4_000
     assert out.column_names == ["oneuid", "value", "variance", "n_sources", "best_dataset"]
     uid = out["oneuid"].to_numpy()
     assert (np.diff(uid) > 0).all()
@@ -92,7 +91,7 @@ def test_combine_best_and_mean(wc):
     best = cat.combine("z", variance="z_err", strategy="best")
     assert set(best["best_dataset"].to_pylist()) <= {"a", "b"}
     mean = cat.combine("mag", strategy="mean")
-    assert mean.num_rows == 50_000 and "variance" in mean.column_names
+    assert mean.num_rows == 20_000 and "variance" in mean.column_names
 
 
 def test_combine_is_vectorised_fast(wc):
@@ -199,7 +198,7 @@ def test_constructor_validates_datasets():
 def test_fill_defaults_uses_stored_db_and_requires_one(built):
     db, idx = built
     cat = WeightedCatalog.from_oneuid(idx, db, columns=["z", "z_err"]).fill_defaults()
-    assert cat.weights().num_rows == 60_000
+    assert cat.weights().num_rows == 24_000
     t = pa.table({"oneuid": pa.array([1], pa.int64()), "dataset": ["a"], "z_type": ["spec"]})
     with pytest.raises(ValidationError, match="Database"):
         WeightedCatalog(t, ["a"]).fill_defaults()

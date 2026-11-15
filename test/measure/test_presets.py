@@ -116,13 +116,15 @@ def test_cosmic_shear_deterministic_across_hash_seeds(tmp_path):
     import sys
     from pathlib import Path
     tdir = str(Path(__file__).resolve().parents[1])
+    procs = [subprocess.Popen([sys.executable, "-c", _DETERMINISM, tdir, str(tmp_path / f"d{i}")],
+                              env={**os.environ, "PYTHONHASHSEED": hs}, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+             for i, hs in enumerate(("1", "2"))]  # run side by side
     outs = []
-    for i, hs in enumerate(("1", "2")):
-        env = {**os.environ, "PYTHONHASHSEED": hs}
-        r = subprocess.run([sys.executable, "-c", _DETERMINISM, tdir, str(tmp_path / f"d{i}")],
-                           env=env, capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
-        outs.append(r.stdout.strip().splitlines()[-1])
+    for pr in procs:
+        out, err = pr.communicate()
+        assert pr.returncode == 0, err
+        outs.append(out.strip().splitlines()[-1])
     assert outs[0] == outs[1]
     prov = json.loads(outs[0])[1]
     assert prov["nz_method"] == "photoz_stack" and prov["tomo_edges"] == [0.2, 0.8, 2.0] and prov["n_draws"] == 2

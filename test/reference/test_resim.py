@@ -1,6 +1,7 @@
 """Periodic buffered resimulation and TreePM coupling (``oneuniverse.reference.resim``)."""
 import numpy as np
 import pytest
+from fixtures.cosmology import COSMO
 
 from oneuniverse._core.errors import ValidationError
 from oneuniverse._core.geometry import Cube
@@ -15,10 +16,6 @@ from oneuniverse.reference.resim import (
     run_full_reference_from_ic,
     run_treepm,
 )
-from oneuniverse.simulation.specs import CosmologySpec
-
-COSMO = CosmologySpec(0.6736, 0.3153, 0.0493, 0.8111, 0.9649)
-
 
 # ---- brief tests (verbatim) ------------------------------------------------
 

@@ -4,7 +4,11 @@ import pytest
 
 from oneuniverse._core.geometry import Cone, SkyPatch
 from oneuniverse._core.healpix import (
-    NSIDE_FINE, coarsen, cone_pixels, patch_pixels, radec_to_pix,
+    NSIDE_FINE,
+    coarsen,
+    cone_pixels,
+    patch_pixels,
+    radec_to_pix,
 )
 
 

@@ -17,12 +17,12 @@ from oneuniverse.data.writer import write_dataset
 @pytest.fixture(scope="module")
 def ds(tmp_path_factory):
     p = tmp_path_factory.mktemp("v") / "ds"
-    write_synthetic_dataset(p, 100_000, 0, partition_nside=8)
+    write_synthetic_dataset(p, 30_000, 0, partition_nside=4)
     return DatasetView.from_path(p)
 
 
 def test_properties(ds):
-    assert ds.n_rows == 100_000 and ds.nside == 8 and ds.n_partitions == ds.index.num_rows
+    assert ds.n_rows == 30_000 and ds.nside == 4 and ds.n_partitions == ds.index.num_rows
     assert "mag" in ds.columns and "cell" not in ds.columns
 
 
@@ -130,7 +130,7 @@ def test_sightline_geometry_round_trip(tmp_path):
     with pytest.raises(SchemaError, match="wavelength"): write_dataset(t.drop(["wavelength"]), tmp_path / "bad", geometry=Geometry.SIGHTLINE, survey=SurveyMeta("lya", "lyman_alpha"), loader=LoaderInfo("t", "1", {}))
 
 
-# ---- Task 5 review follow-ups ---------------------------------------
+# ---- boundary and row-group regressions ----------------------------
 def _boundary_points(rng, cone, n):
     """Points at angular distance exactly ``cone.radius`` (up to rounding) from the centre."""
     ra0, dec0, r = np.radians(cone.ra), np.radians(cone.dec), np.radians(cone.radius)
@@ -156,6 +156,7 @@ def test_cone_expr_boundary_agrees_with_cone_contains():
 
 def _multi_rg_dataset(tmp_path, monkeypatch, with_time=False, n=6_000):
     import numpy as _np
+
     from oneuniverse.data import writer
     monkeypatch.setattr(writer, "_ROW_GROUP", 32)
     monkeypatch.setattr(writer, "MAX_ROWS_PER_FILE", 32 * 1000)
@@ -277,3 +278,8 @@ def test_with_position_empty_keeps_schema(ds):
 def test_with_position_read_and_stale_guard(ds):
     df = ds.read(columns=["z"], z=(0.5, 0.6), with_position=True)
     assert list(df.columns) == ["z", "partition", "offset"]
+
+
+def test_shared_synthetic_view_fixture(synthetic_view):
+    assert synthetic_view.n_rows == 20_000 and synthetic_view.nside == 4
+    assert synthetic_view.table(columns=["z"]).num_rows == 20_000

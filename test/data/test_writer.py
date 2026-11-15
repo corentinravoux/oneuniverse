@@ -34,6 +34,7 @@ def _w(data, out, **kw):
     return write_dataset(data, out, geometry=Geometry.POINT, survey=S, loader=L, **kw)
 
 
+@pytest.mark.full_stage
 def test_layout_and_manifest(tmp_path):
     m = write_synthetic_dataset(tmp_path / "ds", 20_000, 0)
     assert (tmp_path / "ds/manifest.json").exists() and (tmp_path / "ds/_index.parquet").exists()
@@ -118,6 +119,7 @@ def _rss_growth_mib(tmp_path, n_batches):
     return float(growth)
 
 
+@pytest.mark.slow
 def test_streaming_bounded_memory_500k(tmp_path):
     assert _rss_growth_mib(tmp_path, 10) < 400  # MiB, fresh process
 
@@ -127,6 +129,14 @@ def test_streaming_bounded_memory_2m(tmp_path):
     assert _rss_growth_mib(tmp_path, 40) < 400  # MiB, fresh process
 
 
+def test_nside32_one_file_per_cell_small(tmp_path):
+    write_synthetic_dataset(tmp_path / "ds", 1_500, 0, partition_nside=32)
+    idx = read_partition_index(tmp_path / "ds/_index.parquet")
+    assert idx.num_rows == len(set(idx["cell"].to_pylist())) > 1_000
+    assert sum(idx["n_rows"].to_pylist()) == 1_500
+
+
+@pytest.mark.slow
 def test_nside32_one_file_per_cell(tmp_path):
     write_synthetic_dataset(tmp_path / "ds", 200_000, 0, partition_nside=32)
     idx = read_partition_index(tmp_path / "ds/_index.parquet")
@@ -147,7 +157,7 @@ def test_nside16_and_row_groups_full(tmp_path, monkeypatch):
         assert all(x == 100 for x in sizes[:-1]) and row["n_rows"] <= 400
         per_cell[row["cell"]] = per_cell.get(row["cell"], 0) + 1
     assert max(per_cell.values()) > 1  # rollover happened
-    write_synthetic_dataset(tmp_path / "ds16", 5_000, 1, partition_nside=16)
+    write_synthetic_dataset(tmp_path / "ds16", 1_000, 1, partition_nside=16)
     assert read_manifest(tmp_path / "ds16/manifest.json").partitioning.nside == 16
 
 
@@ -294,8 +304,8 @@ def _rows_by_file(root):
 
 
 def test_row_order_independent_of_batch_splits(tmp_path):
-    t = synthetic_point_table(30_000, 3)
-    for name, bs in (("a", 30_000), ("b", 2_500), ("c", 777)):
+    t = synthetic_point_table(6_000, 3)
+    for name, bs in (("a", 6_000), ("b", 500), ("c", 177)):
         _w(t, tmp_path / name, partition_nside=2, batch_size=bs)
     ref = _rows_by_file(tmp_path / "a")
     for name in ("b", "c"):

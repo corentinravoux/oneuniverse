@@ -5,7 +5,11 @@ import pytest
 
 from oneuniverse._core.errors import FormatError
 from oneuniverse._core.fs import (
-    atomic_dir, atomic_write_bytes, atomic_write_json, hash_bytes, hash_file,
+    atomic_dir,
+    atomic_write_bytes,
+    atomic_write_json,
+    hash_bytes,
+    hash_file,
 )
 
 
@@ -86,7 +90,9 @@ def test_atomic_dir_publish_failure_removes_tmp_and_restores(tmp_path, monkeypat
 
 
 def test_atomic_write_json_honours_umask(tmp_path, monkeypatch):
-    import os, stat
+    import os
+    import stat
+
     from oneuniverse._core import fs
     monkeypatch.setattr(fs, "_UMASK", 0o022)
     p = tmp_path / "m.json"; atomic_write_json(p, {"a": 1})
@@ -97,7 +103,9 @@ def test_atomic_write_json_honours_umask(tmp_path, monkeypatch):
 
 
 def test_atomic_dir_published_mode_follows_umask(tmp_path):
-    import os, stat
+    import os
+    import stat
+
     from oneuniverse._core import fs
     old = os.umask(0o022)
     try:

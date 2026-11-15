@@ -56,7 +56,7 @@ def test_source_row_contiguous_across_uneven_batches(tmp_path):
     src = write_fake_desi_dr1_fits(tmp_path, 3_001, 4)
     raw = fits.getdata(src, 1)
     expected = np.flatnonzero((np.char.strip(raw["SPECTYPE"]) == "QSO") & (raw["ZWARN"] == 0))
-    for bs in (7, 700, 1_333):
+    for bs in (31, 700, 1_333):
         t = _concat(get_loader("desi_qso").batches(src.parent, batch_size=bs))
         assert np.array_equal(t["source_row"].to_numpy(), expected)
         assert np.allclose(t["z"].to_numpy(), raw["Z_RR"][expected])

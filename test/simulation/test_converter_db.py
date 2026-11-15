@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 from fixtures.native_sim import make_native_sim
 
@@ -13,10 +15,22 @@ from oneuniverse.simulation.execution import ExecutionPlan
 from oneuniverse.simulation.specs import RegionSpec
 from oneuniverse.simulation.store.read import SimStore
 
+_PARENT_TEMPLATE: list = []
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _parent_store_template(tmp_path_factory):
+    """Convert the fixture simulation once; each test copies the resulting store."""
+    root = tmp_path_factory.mktemp("parent_template")
+    src = make_native_sim(root / "sim")
+    get_converter("fixture")().convert(src, root / "parent", plan=ExecutionPlan(), n_side=4)
+    _PARENT_TEMPLATE.append(root / "parent")
+    yield
+    _PARENT_TEMPLATE.clear()
+
 
 def _db_with_request(tmp_path, region=None):
-    src = make_native_sim(tmp_path / "sim")
-    get_converter("fixture")().convert(src, tmp_path / "db/parent", plan=ExecutionPlan(), n_side=4)
+    shutil.copytree(_PARENT_TEMPLATE[0], tmp_path / "db/parent")
     db = SimDatabase(tmp_path / "db").scan()
     req = db.request_region("parent", region or RegionSpec(Cube((10, 10, 10), (40, 40, 40)), buffer=5.0))
     return db, req
@@ -33,8 +47,7 @@ def test_converter_registry_and_convert(tmp_path):
 
 
 def test_simdatabase_scan_request_dispatch(tmp_path):
-    src = make_native_sim(tmp_path / "sim")
-    get_converter("fixture")().convert(src, tmp_path / "db/parent", plan=ExecutionPlan(), n_side=4)
+    shutil.copytree(_PARENT_TEMPLATE[0], tmp_path / "db/parent")
     db = SimDatabase(tmp_path / "db").scan()
     assert list(db.stores()) == ["parent"]
     req = db.request_region("parent", RegionSpec(Cube((10, 10, 10), (40, 40, 40)), buffer=5.0))

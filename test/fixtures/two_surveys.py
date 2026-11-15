@@ -1,4 +1,6 @@
 """Two overlapping point surveys "a" and "b" (shared objects jittered), as a Database."""
+import shutil
+
 import numpy as np
 import pyarrow as pa
 
@@ -10,9 +12,10 @@ from oneuniverse.data.writer import write_dataset
 
 
 def write_survey(root, name, table, **kw):
+    kw.setdefault("partition_nside", 4)
     return write_dataset(table, root / name, geometry=Geometry.POINT,
                          survey=SurveyMeta(name, "spectroscopic"), loader=LoaderInfo("test", "1", {}),
-                         partition_nside=4, extra_stats_columns=["mag"], **kw)
+                         extra_stats_columns=["mag"], **kw)
 
 
 def pair_tables(n, n_common, seed=0):
@@ -36,8 +39,14 @@ def pair_tables(n, n_common, seed=0):
     return ta, tb
 
 
-def make_two_survey_db(tmp_path, n_each=30_000, n_common=10_000, seed=0) -> Database:
+def make_two_survey_db(tmp_path, n_each=30_000, n_common=10_000, seed=0, **kw) -> Database:
     ta, tb = pair_tables(n_each, n_common, seed)
-    write_survey(tmp_path, "a", ta)
-    write_survey(tmp_path, "b", tb)
+    write_survey(tmp_path, "a", ta, **kw)
+    write_survey(tmp_path, "b", tb, **kw)
     return Database(tmp_path)
+
+
+def clone_database(template_root, dest) -> Database:
+    """Private copy of a built database root (cheap compared with rewriting it)."""
+    shutil.copytree(template_root, dest)
+    return Database(dest)

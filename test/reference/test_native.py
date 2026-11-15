@@ -2,15 +2,14 @@
 import json
 
 import pytest
+from fixtures.cosmology import COSMO
 from fixtures.native_sim import make_native_sim, write_packed_native_fixture
 
 from oneuniverse._core.errors import ValidationError
 from oneuniverse.reference.native import generate_linear_sim, write_packed_native
 from oneuniverse.simulation.converter import detect_converter, get_converter
 from oneuniverse.simulation.execution import ExecutionPlan
-from oneuniverse.simulation.specs import CosmologySpec, Cube
-
-COSMO = CosmologySpec(0.6736, 0.3153, 0.0493, 0.8111, 0.9649)
+from oneuniverse.simulation.specs import Cube
 
 
 def test_generate_and_convert_linear(tmp_path):

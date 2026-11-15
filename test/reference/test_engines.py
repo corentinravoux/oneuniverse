@@ -1,13 +1,11 @@
 """Reference engines registered on the twin contract."""
 import numpy as np
 import pytest
+from fixtures.cosmology import COSMO
 
 import oneuniverse.reference.engines  # noqa: F401  (registers the engines at collection time)
 from oneuniverse._core.errors import ValidationError
-from oneuniverse.simulation.specs import CosmologySpec
 from oneuniverse.twin.engine import get_engine, registered_engines
-
-COSMO = CosmologySpec(0.6736, 0.3153, 0.0493, 0.8111, 0.9649)
 
 
 def test_four_engines_registered():

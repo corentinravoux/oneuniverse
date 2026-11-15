@@ -2,6 +2,7 @@
 import numpy as np
 import pyarrow as pa
 import pytest
+from fixtures.cosmology import COSMO
 from fixtures.synthetic import synthetic_point_table
 from fixtures.twin_mock import product_from_counts
 
@@ -12,10 +13,7 @@ from oneuniverse.data.manifest import LoaderInfo
 from oneuniverse.reference.fieldstats import recover_metrics
 from oneuniverse.reference.linear import gaussian_field
 from oneuniverse.reference.mock import lognormal_tracers, mask_slab
-from oneuniverse.simulation.specs import CosmologySpec
 from oneuniverse.twin import get_engine, observe_from_view, run_engine_to_store
-
-COSMO = CosmologySpec(0.6736, 0.3153, 0.0493, 0.8111, 0.9649)
 
 
 def _view(tmp_path, n=20_000, hi=100.0):

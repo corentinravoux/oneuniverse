@@ -1,6 +1,7 @@
 """Particle-mesh of ``oneuniverse.reference.pm``: CIC, Poisson force, KDK driver."""
 import numpy as np
 import pytest
+from fixtures.cosmology import COSMO
 
 from oneuniverse._core.errors import ValidationError
 from oneuniverse.reference.fieldstats import cross_r, power_spectrum
@@ -18,10 +19,6 @@ from oneuniverse.reference.pm import (
     zeldovich_pm_ic,
     zeldovich_pm_ic_from_field,
 )
-from oneuniverse.simulation.specs import CosmologySpec
-
-COSMO = CosmologySpec(0.6736, 0.3153, 0.0493, 0.8111, 0.9649)
-
 
 # ---- brief tests (verbatim) ------------------------------------------------
 
@@ -161,7 +158,7 @@ def test_run_pm_plane_wave_follows_linear_growth_and_velocity_and_converges():
     assert abs(g32 - 1) < 0.5 * abs(g16 - 1) and abs(v32 - 1) < 0.5 * abs(v16 - 1)
 
 
-def test_run_pm_tracks_its_own_ic_phases_and_amplitude():
+def test_run_pm_tracks_its_own_ic_amplitude_and_correlation():
     # random field, coarse mesh: cross-correlation with the IC stays ~1 at the fundamental
     box, n = 256.0, 32
     pos, vel, ic = zeldovich_pm_ic(COSMO, box=box, n_grid=n, z_start=9.0, seed=0)
