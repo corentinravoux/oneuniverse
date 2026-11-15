@@ -28,18 +28,28 @@ def test_extract_buffered_wraps_periodically():
 
 
 @pytest.mark.slow
-def test_run_buffered_edge_equals_centre_ensemble():
+def test_run_buffered_periodic_shift_invariance_ensemble():
+    # Owner decision 2026-11-15 (deviation from design §9b / the brief's test): the
+    # buffered accuracy is region-dependent (cell_corr 0.20-0.61 at buffer 16), so
+    # the original edge-vs-different-centre comparison measured region variance, not
+    # periodicity. Here the SAME region is resimulated at the box edge and, after
+    # np.roll by +24 cells on every axis, at the box centre; each run is compared
+    # with the full reference of its own (unrolled / rolled) IC field.
     box, n = 128.0, 64; diffs = []
+    edge_cube, centre_cube = Cube((0, 0, 0), (32, 32, 32)), Cube((48, 48, 48), (80, 80, 80))
     for seed in range(5):
         ic = gaussian_field(COSMO, box=box, n_grid=n, seed=seed)
-        edge = run_buffered(COSMO, ic, box=box, cube=Cube((0, 0, 0), (32, 32, 32)), buffer=16.0, z_start=9.0, z_end=0.0, n_steps=10)
-        cen = run_buffered(COSMO, ic, box=box, cube=Cube((48, 48, 48), (80, 80, 80)), buffer=16.0, z_start=9.0, z_end=0.0, n_steps=10)
-        assert edge["n_particles"] == cen["n_particles"] == 32**3
-        full, _ = run_full_reference_from_ic(COSMO, ic, box=box, n_grid=n, z_start=9.0, z_end=0.0, n_steps=10)   # helper exported by resim
-        c_e = cell_corr(edge["inner"], inner_reference(full, box=box, cube=Cube((0, 0, 0), (32, 32, 32)))); c_c = cell_corr(cen["inner"], inner_reference(full, box=box, cube=Cube((48, 48, 48), (80, 80, 80))))
+        ic_rolled = np.roll(ic, (24, 24, 24), axis=(0, 1, 2))     # edge region -> [48, 80) Mpc/h
+        edge = run_buffered(COSMO, ic, box=box, cube=edge_cube, buffer=16.0, z_start=9.0, z_end=0.0, n_steps=10)
+        cen = run_buffered(COSMO, ic_rolled, box=box, cube=centre_cube, buffer=16.0, z_start=9.0, z_end=0.0, n_steps=10)
+        assert edge["n_particles"] == 32**3 and cen["n_particles"] == 32**3
+        full, _ = run_full_reference_from_ic(COSMO, ic, box=box, n_grid=n, z_start=9.0, z_end=0.0, n_steps=10)
+        full_rolled, _ = run_full_reference_from_ic(COSMO, ic_rolled, box=box, n_grid=n, z_start=9.0, z_end=0.0, n_steps=10)
+        c_e = cell_corr(edge["inner"], inner_reference(full, box=box, cube=edge_cube))
+        c_c = cell_corr(cen["inner"], inner_reference(full_rolled, box=box, cube=centre_cube))
         diffs.append(abs(c_e - c_c))
-        print(f"seed={seed} c_edge={c_e:.4f} c_centre={c_c:.4f} |diff|={diffs[-1]:.4f}")
-    print(f"mean |diff| = {np.mean(diffs):.4f}")
+        print(f"seed={seed} c_edge={c_e:.6f} c_shifted_centre={c_c:.6f} |diff|={diffs[-1]:.2e}")
+    print(f"mean |diff| = {np.mean(diffs):.2e}")
     assert np.mean(diffs) < 0.03
 
 
