@@ -12,7 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from _common import parse_args, pick, save, setup_style, synthetic_database
+from _common import parse_args, pick, save, setup_style, suptitle, synthetic_database
 
 from oneuniverse.data import CrossMatchRules, Database
 from oneuniverse.data.crossmatch import components, match_pair
@@ -52,7 +52,8 @@ def main() -> None:
         ax[1, 1].set_xticks(np.arange(1, len(counts)))
         ax[1, 1].set(xlabel="members per ONEUID", ylabel="objects", yscale="log",
                      title=f"{n_objects:,} objects, {n_multi:,} multi-survey")
-        fig.suptitle(f"Cross-match {names[0]} x {names[1]} ({len(sep):,} pairs)")
+        ax[1, 1].set_ylim(bottom=0.5)
+        suptitle(fig, f"Cross-match {names[0]} x {names[1]} ({len(sep):,} pairs)", args)
         fig.subplots_adjust(hspace=0.35, wspace=0.25, top=0.92)
         save(fig, args.out, "crossmatch_separations")
 

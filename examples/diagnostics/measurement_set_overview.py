@@ -11,7 +11,7 @@ from pathlib import Path
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
-from _common import parse_args, pick, point_table, save, setup_style, write_points
+from _common import parse_args, pick, point_table, save, setup_style, suptitle, write_points
 
 from oneuniverse.data import Database, DatasetView
 from oneuniverse.measure import galaxy_clustering
@@ -63,8 +63,8 @@ def main() -> None:
         m = np.where(win.mask > 0, win.mask, hp.UNSEEN)
         hp.mollview(m, nest=win.nest, fig=fig.number, sub=(2, 3, 6), notext=True, cbar=False,
                     title=f"window (nside={win.nside}, {win.area_sr * (180 / np.pi) ** 2:.0f} deg$^2$)")
-        fig.suptitle(f"MeasurementSet '{ms.spec.name}': tracers {list(ms.spec.tracers)}, "
-                     f"statistics {list(ms.spec.statistics)}")
+        suptitle(fig, f"MeasurementSet '{ms.spec.name}': tracers {list(ms.spec.tracers)}, "
+                 f"statistics {list(ms.spec.statistics)}", args)
         fig.subplots_adjust(hspace=0.35, wspace=0.3, top=0.92)
         save(fig, args.out, "measurement_set_overview")
 

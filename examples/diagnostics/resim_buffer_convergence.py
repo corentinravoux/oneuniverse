@@ -9,7 +9,7 @@ Usage: python examples/diagnostics/resim_buffer_convergence.py [--out DIR]
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
-from _common import parse_args, save, setup_style
+from _common import parse_args, save, setup_style, suptitle
 
 from oneuniverse.reference.linear import gaussian_field
 from oneuniverse.reference.resim import (
@@ -64,7 +64,7 @@ def main() -> None:
         im = a.imshow(f[:, :, mid].T, origin="lower", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
         a.set(title=title + ": inner-cube slice")
         fig.colorbar(im, ax=a, fraction=0.046)
-    fig.suptitle("Buffer convergence of the resimulation")
+    suptitle(fig, "Buffer convergence of the resimulation", args)
     fig.subplots_adjust(hspace=0.3, wspace=0.3, top=0.92)
     save(fig, args.out, "resim_buffer_convergence")
 

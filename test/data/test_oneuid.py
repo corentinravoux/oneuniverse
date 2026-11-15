@@ -102,7 +102,6 @@ def test_restrict_to_keeps_ids(db2):
 
 def test_rebuild_archives_and_as_of(two_survey_db):
     db = two_survey_db
-    tmp_path = db.root
     db.build_oneuid(["a"], rules=CrossMatchRules(), name="x")
     t0 = datetime.now(UTC)
     time.sleep(0.01)
@@ -163,7 +162,6 @@ def test_mixed_column_types_and_errors(tmp_path):
 
 def test_database_as_of_defaults_index_time(two_survey_db):
     db = two_survey_db
-    tmp_path = db.root
     assert db.as_of_time is None
     db.build_oneuid(["a"], rules=CrossMatchRules(), name="x")
     t0 = datetime.now(UTC)
@@ -178,7 +176,6 @@ def test_database_as_of_defaults_index_time(two_survey_db):
 
 def test_strings_rejected_as_sequences(two_survey_db):
     db = two_survey_db
-    tmp_path = db.root
     with pytest.raises(ValidationError, match="list of names"):
         db.build_oneuid("a", rules=CrossMatchRules())
     idx = db.build_oneuid(["a", "b"], rules=CrossMatchRules(), name="ab")

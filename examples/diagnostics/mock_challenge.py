@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
-from _common import parse_args, save, setup_style
+from _common import parse_args, save, setup_style, suptitle
 
 from oneuniverse.reference.mock import run_mock_challenge
 from oneuniverse.simulation import CosmologySpec
@@ -41,7 +41,7 @@ def main() -> None:
     ax[1, 1].set(xscale="log", xlabel="k [h/Mpc]", ylabel="r(k), T(k)", title="Wiener recovery of the truth")
     ax[1, 1].axvline(m.k_half, c="C3", ls=":", label=f"k_half = {m.k_half:.3g}")
     ax[1, 1].legend()
-    fig.suptitle(f"Mock challenge: box {BOX:g} Mpc/h, {N_GRID}^3, bias 1.5")
+    suptitle(fig, f"Mock challenge: box {BOX:g} Mpc/h, {N_GRID}^3, bias 1.5", args)
     fig.subplots_adjust(hspace=0.3, wspace=0.3, top=0.93)
     save(fig, args.out, "mock_challenge")
 

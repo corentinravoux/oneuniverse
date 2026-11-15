@@ -90,7 +90,6 @@ def test_atomic_dir_publish_failure_removes_tmp_and_restores(tmp_path, monkeypat
 
 
 def test_atomic_write_json_honours_umask(tmp_path, monkeypatch):
-    import os
     import stat
 
     from oneuniverse._core import fs
@@ -106,7 +105,6 @@ def test_atomic_dir_published_mode_follows_umask(tmp_path):
     import os
     import stat
 
-    from oneuniverse._core import fs
     old = os.umask(0o022)
     try:
         with atomic_dir(tmp_path / "ds") as d:

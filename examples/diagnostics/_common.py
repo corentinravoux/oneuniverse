@@ -45,6 +45,11 @@ def setup_style() -> None:
         plt.style.use(os.environ["PLT_STYLE"])
 
 
+def suptitle(fig, text: str, args: argparse.Namespace) -> None:
+    """Figure title, marked "(synthetic)" when no ``--data-root`` was given."""
+    fig.suptitle(text if getattr(args, "data_root", None) else f"{text} (synthetic)")
+
+
 def save(fig, out: Path, name: str) -> Path:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)

@@ -15,7 +15,7 @@ Everything is vectorised over rows.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal
 
 import numpy as np
 import pyarrow as pa

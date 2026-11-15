@@ -10,7 +10,7 @@ from pathlib import Path
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
-from _common import parse_args, pick, point_table, save, setup_style, write_points
+from _common import parse_args, pick, point_table, save, setup_style, suptitle, write_points
 
 from oneuniverse.data import Cone, Database, DatasetView
 
@@ -60,7 +60,8 @@ def main() -> None:
         ax.set(xscale="log", xlabel="cone radius [deg]", ylabel="percent",
                title="pruning versus radius")
         ax.legend()
-        fig.subplots_adjust(hspace=0.45, wspace=0.2, top=0.92)
+        suptitle(fig, f"Partition pruning of {view.n_rows:,} objects", args)
+        fig.subplots_adjust(hspace=0.45, wspace=0.2, top=0.88)
         save(fig, args.out, "partition_pruning")
 
 

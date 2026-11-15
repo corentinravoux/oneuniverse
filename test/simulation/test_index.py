@@ -20,7 +20,6 @@ from oneuniverse.simulation.store.index import (
     chunk_bbox,
     chunk_ids,
     overlapping_chunks,
-    overlapping_tiles,
     split_periodic,
 )
 
@@ -86,21 +85,6 @@ def test_overlapping_chunks_periodic():
     hit = overlapping_chunks(idx, Cube((95, 10, 10), (105, 20, 20)), 100.0)
     xs = {int(h) // 16 for h in hit}
     assert xs == {0, 3}
-
-
-def test_overlapping_tiles():
-    n_grid, tile = 16, 8
-    rows = []
-    for t, (i, j, k) in enumerate(np.ndindex(2, 2, 2)):
-        rows.append((t, "", i * tile, (i + 1) * tile, j * tile, (j + 1) * tile,
-                     k * tile, (k + 1) * tile))
-    cols = ["tile_id", "path", "i0", "i1", "j0", "j1", "k0", "k1"]
-    idx = pa.table({c: [r[n] for r in rows] for n, c in enumerate(cols)})
-    # box 16: cell = 1; cube [1, 7] stays in tile (0,0,0); hi == 8 touches cell 8
-    assert overlapping_tiles(idx, Cube((1, 1, 1), (7, 7, 7)), 16.0, n_grid).tolist() == [0]
-    assert len(overlapping_tiles(idx, Cube((1, 1, 1), (8, 7, 7)), 16.0, n_grid)) == 2
-    assert len(overlapping_tiles(idx, Cube((14, 14, 14), (18, 18, 18)), 16.0, n_grid)) == 8
-    assert overlapping_tiles(idx, Cube((1, 1, 1), (7, 7, 7)), 16.0, n_grid).dtype == np.int32
 
 
 def test_schemas():

@@ -109,18 +109,3 @@ def overlapping_chunks(index: pa.Table, cube: Cube, box_size: float) -> np.ndarr
     for part in split_periodic(cube, box_size):
         keep |= ((lo <= np.asarray(part.hi)) & (hi >= np.asarray(part.lo))).all(axis=1)
     return np.unique(cid[keep]).astype(np.int32)
-
-
-def overlapping_tiles(index: pa.Table, cube: Cube, box_size: float, n_grid: int) -> np.ndarray:
-    """Sorted unique tile ids whose cell ranges intersect ``cube`` (periodic)."""
-    box = _check_box(box_size, n_grid, "n_grid")
-    cell = box / n_grid
-    tid = index.column("tile_id").to_numpy()
-    start = np.stack([index.column(f"{a}0").to_numpy() for a in "ijk"], axis=1)
-    stop = np.stack([index.column(f"{a}1").to_numpy() for a in "ijk"], axis=1)
-    keep = np.zeros(len(tid), dtype=bool)
-    for part in split_periodic(cube, box_size):
-        first = np.clip(np.floor(np.asarray(part.lo) / cell), 0, n_grid - 1).astype(np.int64)
-        last = np.clip(np.floor(np.asarray(part.hi) / cell), 0, n_grid - 1).astype(np.int64)
-        keep |= ((start <= last) & (stop > first)).all(axis=1)
-    return np.unique(tid[keep]).astype(np.int32)

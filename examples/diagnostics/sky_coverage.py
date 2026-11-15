@@ -10,7 +10,7 @@ from pathlib import Path
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
-from _common import parse_args, pick, save, setup_style, synthetic_database
+from _common import parse_args, pick, save, setup_style, suptitle, synthetic_database
 
 from oneuniverse.data import Database
 
@@ -51,8 +51,8 @@ def main() -> None:
                     sub=(2, 2, 4), cmap="magma", cbar=True, notext=True)
         hp.projscatter(*np.array(hp.pix2ang(view.nside, cells, lonlat=True, nest=True)),
                        lonlat=True, s=6, c="cyan")
-        fig.suptitle(f"Sky coverage of {name}: {len(cells)} of {hp.nside2npix(view.nside)} "
-                     f"partition cells at nside={view.nside} (cyan)")
+        suptitle(fig, f"Sky coverage of {name}: {len(cells)} of {hp.nside2npix(view.nside)} "
+                 f"partition cells at nside={view.nside} (cyan)", args)
         fig.subplots_adjust(hspace=0.45, wspace=0.25, top=0.9)
         save(fig, args.out, "sky_coverage")
 
