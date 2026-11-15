@@ -9,8 +9,8 @@ pip install -e ".[dev,sql]"
 ```
 
 Python >= 3.11. The hard dependencies are numpy, pyarrow, pandas, healpy, scipy
-and astropy. Optional extras: `fits` (fitsio), `sql` (DuckDB), `mpi`, `dev`,
-`docs`.
+and astropy. Optional extras: `sql` (DuckDB), `mpi`, `dev`, `docs`; `fits`
+(fitsio) is reserved and unused in 2.0.
 
 ## Convert a survey
 

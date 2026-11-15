@@ -2,7 +2,7 @@
 oneuniverse — unified galaxy survey catalog package.
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 from oneuniverse import data  # noqa: E402
 from oneuniverse._core.geometry import Cone, SkyPatch, ZRange  # noqa: E402

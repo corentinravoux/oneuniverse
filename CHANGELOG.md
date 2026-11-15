@@ -1,19 +1,25 @@
 # Changelog
 
-## 1.0.0 — 2026-11-15
+## 2.0.0 — 2026-11-15
 
 Complete rewrite of the package.
 
+v1.0.0 (2026-07-28) was a GitHub/Zenodo release of the pre-rewrite 0.2.0
+code; 2.0.0 is the first release of the rewrite.
+
 ### Breaking
 
-- New public API: `oneuniverse.data`, `oneuniverse.measure`,
-  `oneuniverse.simulation`, `oneuniverse.reference`, `oneuniverse.twin`.
+- New public API: `oneuniverse.data`, `oneuniverse.combine`,
+  `oneuniverse.measure`, `oneuniverse.simulation`, `oneuniverse.reference`,
+  `oneuniverse.twin`.
 - OUF 3.0 on-disk format. There is no reader for OUF 2.x; reconvert from the
   survey files.
 - OUF-Sim 1.0 on-disk format. There is no reader for OUF-Sim 0.1.
-- Python 3.11 or newer.
-- `oneuniverse/_registry.py` (compatibility shim) is gone; use
-  `oneuniverse._core.registry`.
+- Python 3.11 or newer (was >= 3.9).
+- `oneuniverse/_registry.py` (compatibility shim) is gone. The `Registry`
+  class is internal (`oneuniverse._core.registry`); register survey loaders
+  with `oneuniverse.data.loaders.register` and engines with
+  `oneuniverse.twin.register_engine`.
 
 ### Fixed
 

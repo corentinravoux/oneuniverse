@@ -38,7 +38,7 @@ OUF 3.0 (`format_version` "3.0.0"), one dataset directory:
                             partitioning {nside, nest}, original_files (sha256), validity {version}, dataset_uuid, extensions
 <dataset>/_index.parquet    one row per partition: path, n_rows, cell, ra/dec/z min-max, extra stats
 <dataset>/data/cell=<n>/part-<i>.parquet   sorted by (hpix32, source_row); cell numbered at the manifest nside
-<dataset>/_history/<created_utc>.manifest.json   kept on overwrite; validity.version increments
+<dataset>/_history/<created_utc with ':' → '-'>.manifest.json   kept on overwrite; validity.version increments
 ```
 Sidecars (ONEUID, links): `<root>/_<kind>/<name>/<version>/{table.parquet,meta.json}` plus `current.json`; version id = UTC write time to the microsecond. Publishes go through `<path>.tmp` then rename (`atomic_dir`).
 
@@ -54,7 +54,7 @@ OUF-Sim 1.0 (`OUFSIM_FORMAT_VERSION` "1.0.0"): `<store>/manifest.json`, `layout.
 ## Test conventions
 
 - `test/` mirrors the package (`test/data/test_writer.py`; `test/core/` covers `_core`). No phase names in files or tests.
-- Default run is `-m "not slow"`, single process under 60 s: `pytest -p no:cacheprovider -q -n 6`. `slow` = ensemble physics tests (nightly CI). `full_stage` keeps the production writer staging; otherwise the autouse conftest fixture patches `writer._BUCKET_SHIFT` to 12 coarse buckets (output is invariant).
+- Default run is `-m "not slow"`: under 60 s single-process on the dev machine (CI budget 120 s, enforced on the 3.12 job); `-n auto` for speed. `slow` = ensemble physics, memory, real-data and example tests (nightly CI). `full_stage` keeps the production writer staging; otherwise the autouse conftest fixture patches `writer._BUCKET_SHIFT` to 12 coarse buckets (output is invariant).
 - Fixtures live in `test/fixtures/` and import as `fixtures.<module>` (no top-level `test/__init__.py`). Shared fixtures are in `test/conftest.py`: `two_survey_db`, `two_survey_db_large`, `synthetic_view`, `cosmo`; expensive databases are built once and cloned.
 - No binaries: fixtures synthesize FITS and sims in `tmp_path`. Real-data tests skip unless `ONEUNIVERSE_DATA_ROOT` is set. Ensemble tests use fixed seed lists.
 
@@ -69,4 +69,4 @@ OUF-Sim 1.0 (`OUFSIM_FORMAT_VERSION` "1.0.0"): `<store>/manifest.json`, `layout.
 
 ## Where the history is
 
-`docs/history/` holds the archived pre-1.0 plans and review (not maintained). `plans/2026-11-12-refactor-v1-design.md` is the 1.0 design; `plans/refactor-v1/STATUS.md` carries the decisions log. `research/` holds survey-format research notes.
+`docs/history/` holds the archived pre-rewrite plans and review (not maintained). `plans/2026-11-12-refactor-v1-design.md` is the 2.0 design; `plans/refactor-v1/STATUS.md` carries the decisions log. `research/` holds survey-format research notes.

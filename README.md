@@ -64,10 +64,10 @@ survey files.
 ## What is real and what is a stand-in
 
 - **Real.** Two survey loaders, eBOSS DR16Q (`eboss_qso`) and DESI DR1 QSO
-  (`desi_qso`), were validated on the real catalogs by gated tests
-  (`test/data/test_real_surveys.py`). They skip unless `ONEUNIVERSE_DATA_ROOT`
-  points at the survey files. Everything else is tested on synthetic data
-  generated in the test run.
+  (`desi_qso`), are tested on synthetic files that mimic both formats. Gated
+  real-catalog tests (`test/data/test_real_surveys.py`, enabled by
+  `ONEUNIVERSE_DATA_ROOT`) exist and have not yet been run for this release.
+  Everything else is tested on synthetic data generated in the test run.
 - **Stand-in.** `oneuniverse.reference` is a toy: Eisenstein-Hu linear theory,
   Zel'dovich and particle-mesh evolution, a Wiener filter, lognormal mocks. It
   exists to validate the pipelines and the engine contracts, not to produce
@@ -82,15 +82,15 @@ survey files.
 git clone https://github.com/corentinravoux/oneuniverse.git
 cd oneuniverse
 pip install -e ".[dev,sql]"      # tests, DuckDB SQL face
-pip install -e ".[fits]"         # optional: fitsio reader for large FITS files
 ```
 
 Python >= 3.11. Hard dependencies: numpy, pyarrow, pandas, healpy, scipy,
-astropy. Extras: `fits`, `sql`, `mpi`, `dev`, `docs`.
+astropy. Extras: `sql`, `mpi`, `dev`, `docs`; `fits` is reserved and unused
+in 2.0.
 
 ```bash
 pytest -p no:cacheprovider -q    # default run, skips the slow ensemble tests
-pytest -m slow                   # ensemble physics tests
+pytest -m slow                   # ensemble physics, memory, real-data and example tests
 ```
 
 ## Documentation
@@ -98,8 +98,8 @@ pytest -m slow                   # ensemble physics tests
 - Guide and API reference: <https://corentinravoux.github.io/oneuniverse/>
   (sources in `docs_site/`; build with `pip install -e ".[docs,sql]"` then
   `mkdocs build --strict`).
-- Design of the 1.0 rewrite: `plans/2026-11-12-refactor-v1-design.md`.
-- Archived pre-1.0 plans and review: [`docs/history/`](docs/history/README.md).
+- Design of the 2.0 rewrite: `plans/2026-11-12-refactor-v1-design.md`.
+- Archived pre-rewrite plans and review: [`docs/history/`](docs/history/README.md).
 
 ## Citation
 

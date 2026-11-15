@@ -11,7 +11,7 @@ reader checks it.
 <dataset>/manifest.json        identity of the dataset
 <dataset>/_index.parquet       one row per partition
 <dataset>/data/cell=<n>/part-<i>.parquet
-<dataset>/_history/<created_utc>.manifest.json
+<dataset>/_history/<created_utc, ':' replaced by '-'>.manifest.json
 ```
 
 - **`manifest.json`** holds the geometry (`point`, `sightline` or `lightcurve`),

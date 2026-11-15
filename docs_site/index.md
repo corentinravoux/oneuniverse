@@ -28,8 +28,9 @@ ships no estimators and no samplers.
 
 ## Real and stand-in
 
-Two loaders, eBOSS DR16Q and DESI DR1 QSO, were validated on the real catalogs
-by tests that skip without the data (`ONEUNIVERSE_DATA_ROOT`). The reference
+Two loaders, eBOSS DR16Q and DESI DR1 QSO, are tested on synthetic files that
+mimic both formats; gated real-catalog tests (`ONEUNIVERSE_DATA_ROOT`) exist and
+have not yet been run for this release. The reference
 engine in `oneuniverse.reference` is a toy for validating pipelines and engine
 contracts. Everything else is tested on synthetic data.
 
@@ -37,4 +38,4 @@ contracts. Everything else is tested on synthetic data.
 
 Cite the software through `CITATION.cff` in the repository (DOI
 [10.5281/zenodo.21653036](https://doi.org/10.5281/zenodo.21653036)). The
-archived pre-1.0 plans and review are in `docs/history/` in the repository.
+archived pre-rewrite plans and review are in `docs/history/` in the repository.

@@ -4,8 +4,7 @@ site_url: https://corentinravoux.github.io/oneuniverse/
 repo_url: https://github.com/corentinravoux/oneuniverse
 repo_name: corentinravoux/oneuniverse
 
-# The Sphinx sources live in ./docs; the MkDocs Material site (this one, matching
-# the sibling packages) uses ./docs_site so the two coexist.
+# Site sources live in ./docs_site; ./docs only holds the archived history.
 docs_dir: docs_site
 
 theme:
