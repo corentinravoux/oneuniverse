@@ -25,9 +25,14 @@ def test_linear_power_sigma8_normalised():
     s8 = np.sqrt(np.trapezoid(k**2 * P * W(k * 8.0)**2, k) / (2 * np.pi**2)); assert s8 == pytest.approx(0.8111, rel=1e-3)
 
 
-def test_growth_consistent_f_and_D():
-    z = 0.5; eps = 1e-3; a = 1 / (1 + z); Dp = growth_factor(1 / (a * (1 + eps)) - 1, COSMO); Dm = growth_factor(1 / (a * (1 - eps)) - 1, COSMO)
-    f_num = (np.log(Dp) - np.log(Dm)) / (2 * eps); assert growth_rate(z, COSMO) == pytest.approx(f_num, rel=1e-3) and growth_factor(0.0, COSMO) == 1.0
+@pytest.mark.parametrize("z", [0.0, 0.5])
+def test_growth_consistent_f_and_D(z):
+    """f equals dlnD/dlna of the same integral to 1e-5 (a gamma=0.55 f is off by 0.5 % at z=0, 0.1 % at z=0.5)."""
+    eps = 1e-3; a = 1 / (1 + z)
+    Dp = growth_factor(1 / (a * (1 + eps)) - 1, COSMO); Dm = growth_factor(1 / (a * (1 - eps)) - 1, COSMO)
+    f_num = (np.log(Dp) - np.log(Dm)) / (np.log1p(eps) - np.log1p(-eps))
+    assert growth_rate(z, COSMO) == pytest.approx(f_num, rel=1e-5)
+    assert growth_factor(0.0, COSMO) == 1.0
 
 
 def test_gaussian_field_variance_matches_power():
