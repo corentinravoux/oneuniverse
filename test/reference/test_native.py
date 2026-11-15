@@ -57,7 +57,7 @@ def test_detection_ignores_non_object_and_binary_config(tmp_path, content):
 
 
 def test_generate_and_pack_are_atomic_and_refuse_overwrite(tmp_path, monkeypatch):
-    import oneuniverse.reference.native as native
+    from oneuniverse.reference import native
     monkeypatch.setattr(native, "find_peaks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     with pytest.raises(RuntimeError):
         generate_linear_sim(tmp_path / "lin", COSMO, box=64.0, n_grid=16, redshifts=(0.0,), seed=0)

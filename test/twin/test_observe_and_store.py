@@ -117,4 +117,5 @@ def test_observe_mask_validated(tmp_path):
 def test_observation_identity_semantics():
     from oneuniverse.twin.engine import Observation
     a = Observation(np.zeros((2, 2, 2)), 1e-3, 1.0)
-    assert a == a and a != Observation(np.zeros((2, 2, 2)), 1e-3, 1.0) and isinstance(hash(a), int)
+    b = Observation(np.zeros((2, 2, 2)), 1e-3, 1.0)
+    assert a != b and a is not b and isinstance(hash(a), int) and {a: 1}[a] == 1

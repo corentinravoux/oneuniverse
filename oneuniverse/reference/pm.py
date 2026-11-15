@@ -255,7 +255,7 @@ def _padded_isolated_force(delta: np.ndarray, box: float, w=None):
 def pm_force_isolated(delta, box: float):
     """Open-boundary Poisson (zero-padded Hockney–Eastwood): force ``F = −∇φ`` of ``∇²φ = δ``, no images."""
     d = _cubic(delta)
-    n, box = _check_grid(d.shape[0], box)
+    _, box = _check_grid(d.shape[0], box)
     return _padded_isolated_force(d, box)
 
 
