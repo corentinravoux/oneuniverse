@@ -11,8 +11,8 @@ authors:
   - given-names: Corentin
     family-names: Ravoux
     email: corentin.ravoux.research@gmail.com
-version: "0.2.0"
-date-released: 2026-07-29
+version: "1.0.0"
+date-released: 2026-11-15
 license: MIT
 repository-code: "https://github.com/corentinravoux/oneuniverse"
 url: "https://corentinravoux.github.io/oneuniverse/"

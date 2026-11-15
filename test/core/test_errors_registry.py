@@ -13,14 +13,6 @@ def test_error_hierarchy():
         assert issubclass(cls, OneuniverseError)
 
 
-def test_registry_moved_and_shim_identical():
-    import oneuniverse._registry as old
-    from oneuniverse._core.registry import Registry
-    assert old.Registry is Registry
-    r = Registry("thing"); r.register(1, name="a")
-    assert r.get("a") == 1 and "a" in r and r.names() == ["a"]
-
-
 class _FakeEP:
     def __init__(self, name, obj):
         self.name = name

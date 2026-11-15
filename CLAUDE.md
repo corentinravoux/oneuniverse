@@ -28,7 +28,7 @@ Enforced by `test/test_guards.py` (AST walk, not docstrings), so a violation fai
 - `simulation/`: OUF-Sim: `specs`, `manifest`, `execution` (`ExecutionPlan`), `store/` (`SimStore`, `build_store`, `ingest_field`, native adapters), `converter` registry, `db` (`SimDatabase`, `dispatch`), `sql`.
 - `reference/`: the reference engine (EH98 linear theory, Zel'dovich, PM, TreePM resim, Wiener / constrained realisation, lognormal mock, linear fixture sim, four engines). Registers on import of `reference.engines` / `reference.native`; import submodules explicitly.
 - `twin/`: `ForwardEngine`/`ReconstructionEngine` ABCs and registry, `observe_from_view` (data to twin), `run_engine_to_store` (engine to store).
-- `oneuniverse/_registry.py` is a legacy shim; do not import it. Top level re-exports only `data`, `convert`, `DatasetView`, `Cone`, `SkyPatch`, `ZRange`.
+- Top level re-exports only `data`, `convert`, `DatasetView`, `Cone`, `SkyPatch`, `ZRange`.
 
 ## Formats
 
