@@ -74,3 +74,16 @@ def test_run_engine_to_store_refuses_existing_and_wrong_engine(tmp_path):
         run_engine_to_store(get_engine("linear")(), name="a", **kw)
     with pytest.raises(ValidationError):
         run_engine_to_store(get_engine("wiener")(), name="b", **kw)
+
+
+def test_default_nbar_with_mask_is_in_mask_density(tmp_path):
+    from oneuniverse.reference.pm import deposit_cic
+    v = _view(tmp_path)
+    mask = mask_slab(16, 0, 0.0, 0.5)
+    obs = observe_from_view(v, box=100.0, n_grid=16, position_columns=("x", "y", "zb"), mask=mask)
+    cols = v.table(columns=["x", "y", "zb"])
+    n = deposit_cic(np.stack([cols[c].to_numpy() for c in ("x", "y", "zb")], 1), 16, 100.0)
+    expect = n[mask].sum() / (mask.sum() * (100.0 / 16) ** 3)
+    assert obs.nbar == pytest.approx(expect, rel=1e-12) and obs.nbar == pytest.approx(20_000 / 100.0**3, rel=0.05)
+    given = observe_from_view(v, box=100.0, n_grid=16, position_columns=("x", "y", "zb"), mask=mask, nbar=3e-3)
+    assert given.nbar == 3e-3

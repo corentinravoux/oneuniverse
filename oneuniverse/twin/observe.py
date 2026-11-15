@@ -70,7 +70,10 @@ def observe_from_view(source, *, box: float, n_grid: int, position_columns=("x",
 
     ``source`` is a ``DatasetView`` (only ``position_columns`` are read, batch by batch)
     or a measure ``Product`` (each column is taken from ``extras`` first, then the
-    catalog). ``nbar`` defaults to ``N / box**3`` over all objects. Positions outside
+    catalog). ``nbar`` defaults to ``N / box**3`` over all objects when ``mask`` is None; with
+    a ``mask`` it defaults to the in-mask number density
+    ``counts[mask].sum() / (mask.sum() * (box/n_grid)**3)`` (``delta_g`` is renormalised by
+    the in-mask mean, so the Wiener noise term needs the in-mask density). Positions outside
     ``[0, box)`` raise ``ValidationError``.
     """
     box = float(box)
@@ -91,7 +94,8 @@ def observe_from_view(source, *, box: float, n_grid: int, position_columns=("x",
         raise ValidationError("no objects inside the mask: cannot form a count contrast")
     delta = np.where(footprint, counts / mean - 1.0, 0.0)
     if nbar is None:
-        nbar = total / box ** 3
+        nbar = (total / box ** 3 if mask is None
+                else counts[footprint].sum() / (footprint.sum() * (box / int(n_grid)) ** 3))
     meta.update(columns=list(cols), n_objects=int(total))
     return Observation(delta, float(nbar), float(bias), None if mask is None else footprint,
                        box, meta)
