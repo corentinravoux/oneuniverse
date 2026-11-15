@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self
 
 import numpy as np
 import pyarrow as pa
@@ -50,31 +49,6 @@ _VERSIONS = pa.schema([
     ("valid_from", pa.string()), ("valid_to", pa.string())])
 
 _IMPORT_MSG = "the SQL face needs duckdb: pip install oneuniverse[sql]"
-
-
-class SqlConnection:
-    """Thin wrapper over a ``duckdb.DuckDBPyConnection`` (available as :attr:`raw`).
-
-    Every other attribute is delegated to it. Only :meth:`sql` differs: DuckDB 2.0
-    relations no longer have ``fetchone``, so ``sql(q)`` runs *q* on a fresh cursor and
-    returns that cursor (``fetchone``, ``fetchall``, ``df``, ``arrow`` ...). Use
-    ``raw.sql(q)`` for a lazy relation.
-    """
-
-    def __init__(self, raw) -> None:
-        self.raw = raw
-
-    def sql(self, query: str, **kwargs):
-        return self.raw.cursor().execute(query, **kwargs)
-
-    def __getattr__(self, name: str):
-        return getattr(self.raw, name)
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.raw.close()
 
 
 def _import_duckdb():
@@ -187,7 +161,10 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
 
     *as_of* (timezone-aware) selects, per dataset, the manifest live at that time and,
     per sidecar, the version live then; datasets or sidecars that did not exist yet are
-    omitted. A selected dataset version whose files are gone raises ``FormatError``.
+    omitted. A selected dataset version whose files are gone raises ``FormatError``:
+    data files of archived versions are not retained (the ``versions`` table still
+    lists them). The ``oneuid_*`` column ``offset`` is a SQL keyword: quote it
+    (``"offset"``). Returns the real ``duckdb.DuckDBPyConnection``.
     """
     duckdb = _import_duckdb()
     _check_as_of(as_of)
@@ -255,4 +232,4 @@ def connect(root, *, as_of: datetime | None = None, database: str = ":memory:"):
                   '"offset", ra, dec, z, CAST(z_type AS VARCHAR) AS z_type')
     sidecar_views("links", links,
                   "parent_oneuid, child_oneuid, sep_arcsec, dz, confidence")
-    return SqlConnection(con)
+    return con
