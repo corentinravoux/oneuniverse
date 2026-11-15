@@ -13,6 +13,7 @@ engines need ``Observation.box`` to be set.
 """
 from __future__ import annotations
 
+import numbers
 from typing import Any
 
 import numpy as np
@@ -25,6 +26,7 @@ from oneuniverse.reference.pm import (
     zeldovich_pm_ic_from_field,
 )
 from oneuniverse.reference.reconstruct import (
+    _check_seed,
     constrained_realization,
     wiener_reconstruct,
 )
@@ -47,6 +49,8 @@ def _check_ic(ic_field, n_grid: int) -> np.ndarray:
 def _need_source(seed, ic_field) -> None:
     if seed is None and ic_field is None:
         raise ValidationError("forward needs a seed or an ic_field")
+    if seed is not None:
+        _check_seed(seed)     # a non-negative integer: 1.5 must not silently become 1
 
 
 def _provenance(name: str, parameters: dict[str, Any], seed, ic_field) -> dict[str, Any]:
@@ -81,6 +85,9 @@ class PMForwardEngine(ForwardEngine):
     name = "fastpm"
 
     def __init__(self, *, z_start: float = 9.0, n_steps: int = 20, force: str = "periodic"):
+        if (isinstance(n_steps, bool) or not isinstance(n_steps, numbers.Integral)
+                or n_steps < 1):
+            raise ValidationError(f"n_steps must be an integer >= 1, got {n_steps!r}")
         self.z_start, self.n_steps, self.force = float(z_start), int(n_steps), force
 
     def forward(self, *, cosmo, box, n_grid, z, seed=None, ic_field=None) -> ProductBundle:
@@ -123,7 +130,7 @@ class ConstrainedRealization(ReconstructionEngine):
     name = "constrained"
 
     def __init__(self, *, seed: int):
-        self.seed = int(seed)
+        self.seed = _check_seed(seed)
 
     def reconstruct(self, observation: Observation, *, cosmo, z: float = 0.0) -> np.ndarray:
         return constrained_realization(observation.delta_g, cosmo, box=_need_box(observation),

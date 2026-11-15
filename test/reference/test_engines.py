@@ -57,3 +57,18 @@ def test_reconstruction_needs_box():
     from oneuniverse.twin.engine import Observation
     with pytest.raises(ValidationError):
         get_engine("wiener")().reconstruct(Observation(np.zeros((8, 8, 8)), 1e-3, 1.0), cosmo=COSMO)
+
+
+@pytest.mark.parametrize("bad", [1.5, 2.0, "3", True, -1])
+def test_non_integer_seed_and_n_steps_refused(bad):
+    with pytest.raises(ValidationError):
+        get_engine("constrained")(seed=bad)
+    with pytest.raises(ValidationError):
+        get_engine("linear")().forward(cosmo=COSMO, box=64.0, n_grid=8, z=0.0, seed=bad)
+    with pytest.raises(ValidationError):
+        get_engine("fastpm")(n_steps=bad)
+
+
+def test_numpy_integers_accepted():
+    b = get_engine("linear")().forward(cosmo=COSMO, box=64.0, n_grid=8, z=0.0, seed=np.int64(4))
+    assert b.provenance["seed"] == 4 and get_engine("fastpm")(n_steps=np.int32(3)).n_steps == 3
