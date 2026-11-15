@@ -24,7 +24,10 @@ def _write(out: Path, arrays: dict[str, np.ndarray]) -> Path:
     return out
 
 
-def write_fake_desi_dr1_fits(out_dir: Path, n_rows: int = 5000, seed: int = 0) -> Path:
+def write_fake_desi_dr1_fits(out_dir: Path, n_rows: int = 5000, seed: int = 0, *,
+                             share_with: Path | None = None, n_shared: int = 500) -> Path:
+    """Fake DESI DR1 QSO file. With ``share_with`` (a fake eBOSS file), the first ``n_shared``
+    rows reuse its positions and redshifts with sub-arcsecond / 1e-4 jitter (cross-match test)."""
     rng = np.random.default_rng(seed)
     n = n_rows
     z = rng.uniform(0.8, 3.5, n)
@@ -58,6 +61,18 @@ def write_fake_desi_dr1_fits(out_dir: Path, n_rows: int = 5000, seed: int = 0) -
         "MORPHTYPE": np.full(n, "PSF", dtype="<U4"),
         "PHOTSYS": np.where(dec > 32.0, "N", "S").astype("<U1"),
     }
+    if share_with is not None:
+        with fits.open(share_with) as hdul:
+            src = hdul[1].data
+            k = min(n_shared, n, len(src))
+            jr = np.random.default_rng(seed + 1000)
+            dec_s = np.asarray(src["DEC"][:k], dtype="f8")
+            arr["RA"][:k] = np.asarray(src["RA"][:k], dtype="f8") + jr.uniform(-0.2, 0.2, k) / 3600 / np.cos(
+                np.radians(dec_s))
+            arr["DEC"][:k] = dec_s + jr.uniform(-0.2, 0.2, k) / 3600
+            arr["Z_RR"][:k] = np.asarray(src["Z"][:k], dtype="f8") + jr.uniform(-1e-4, 1e-4, k)
+            arr["ZWARN"][:k] = 0
+            arr["SPECTYPE"][:k] = "QSO"
     return _write(Path(out_dir) / "QSO_full.dat.fits", arr)
 
 

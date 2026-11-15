@@ -16,11 +16,15 @@ def _block() -> str:
 
 def test_readme_example_runs(tmp_path):
     raw, db_root = tmp_path / "raw", tmp_path / "db"
-    write_fake_eboss_dr16q_fits(raw / "eboss_qso", 3000)
-    write_fake_desi_dr1_fits(raw / "desi_qso", 3000)
+    eboss = write_fake_eboss_dr16q_fits(raw / "eboss_qso", 3000)
+    write_fake_desi_dr1_fits(raw / "desi_qso", 3000, share_with=eboss, n_shared=500)
     ns = {"raw": raw, "db_root": db_root, "out_path": tmp_path / "gc"}
     exec(compile(_block(), "README.md", "exec"), ns)  # noqa: S102
     ms = ns["ms"]
     assert ms.products["gal"].randoms is not None
     assert len(ns["df"]) > 0
     assert ns["ms2"].spec == ms.spec
+    assert ns["idx"].n_multi > 0
+    both = ns["both"].to_pandas()
+    per = both.groupby("oneuid")["dataset"].nunique()
+    assert (per > 1).any(), "no object with rows from both surveys"
