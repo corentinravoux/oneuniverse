@@ -42,7 +42,7 @@ OUF 3.0 (`format_version` "3.0.0"), one dataset directory:
 ```
 Sidecars (ONEUID, links): `<root>/_<kind>/<name>/<version>/{table.parquet,meta.json}` plus `current.json`; version id = UTC write time to the microsecond. Publishes go through `<path>.tmp` then rename (`atomic_dir`).
 
-OUF-Sim 1.0 (`OUFSIM_FORMAT_VERSION` "1.0.0"): `<store>/manifest.json`, `layout.json` (written last: the commit point), `products/<name>/z=<z:.3f>/{_index.parquet, chunk_<id>.parquet | tile_<id>.npy | pix_<id>.parquet}`. Catalogs are chunked on an `n_side`^3 periodic grid, fields in tiles, lightcones in NEST pixels. A `SimDatabase` root holds stores plus `_simdb/{requests.json, lineage.parquet}`. `measure.save` writes `MEASURE_FORMAT_VERSION` "1.0.0".
+OUF-Sim 1.0 (`OUFSIM_FORMAT_VERSION` "1.0.0"): `<store>/manifest.json`, `layout.json` (lists committed products: the per-product commit point, unlisted product dirs are orphans a retry replaces; the store directory itself is published atomically), `products/<name>/z=<z:.3f>/{_index.parquet, chunk_<id>.parquet | tile_<id>.npy | pix_<id>.parquet}`. Catalogs are chunked on an `n_side`^3 periodic grid, fields in tiles, lightcones in NEST pixels. A `SimDatabase` root holds stores plus `_simdb/{requests.json, lineage.parquet}`. `measure.save` writes `MEASURE_FORMAT_VERSION` "1.0.0".
 
 ## Identity
 
