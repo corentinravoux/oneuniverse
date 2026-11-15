@@ -20,6 +20,8 @@ Complete rewrite of the package.
 - ONEUID hydration returned the wrong objects (the row index did not match the
   source row). Hydration now uses explicit source rows and refuses a dataset
   changed since the index was built.
+- eBOSS DR16Q conversion: the loader wrote an int8 `z_type` that the converter
+  rejected, so the real catalog could not be converted.
 - Zel'dovich velocities were off by the factor `E(z)·h`; they follow
   `v = a·100·E(a)·f·ψ`.
 - Growth rate used the approximation `f = Ω_m^0.55`, inconsistent with the
