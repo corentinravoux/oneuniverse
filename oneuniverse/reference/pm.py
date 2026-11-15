@@ -67,7 +67,10 @@ Force modes
     ``force="periodic"`` uses :func:`pm_force`; ``"isolated"`` uses
     :func:`pm_force_isolated` on the same mesh (deposit and position wrapping
     stay periodic: the caller keeps particles inside the box, as the buffered
-    resimulation does).
+    resimulation does). The density contrast fed to the solver is always
+    ``ρ/⟨ρ⟩ − 1`` with ``⟨ρ⟩`` the mean of the mesh being solved, so in isolated
+    mode (a sub-volume) the sub-volume mean density is subtracted, not the
+    cosmic mean.
 """
 from __future__ import annotations
 
@@ -202,9 +205,17 @@ def _nyq_index(shape: tuple[int, ...], n: int) -> tuple[int, ...]:
     return tuple(n // 2 if s == n else 0 for s in shape)
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _isolated_kernels(n: int, box: float):
-    """FFTs of the force kernel ``−∇G = −r/(4π r³)·cell³`` on the zero-padded ``(2n)³`` grid."""
+    """Imaginary parts of ``rfftn`` of the force kernel ``−∇G = −r/(4π r³)·cell³`` on the padded ``(2n)³`` grid.
+
+    Each component is real and odd along its own axis, so its FFT is purely
+    imaginary and only that part is kept (float64, half spectrum: a quarter of the
+    memory of the full complex FFTs). The one sample at the Nyquist offset ``±n``
+    along the component's axis has no odd partner on the periodic padded grid; it
+    is separated by ``n`` cells, farther than any pair of cells of the ``n³`` input,
+    so it never contributes and is zeroed to make the kernel exactly odd.
+    """
     m = 2 * n
     cell = box / n
     off = np.fft.fftfreq(m, d=1.0 / m) * cell           # minimum-image offsets, 0 first
@@ -214,23 +225,38 @@ def _isolated_kernels(n: int, box: float):
     inv = cell ** 3 / (4.0 * np.pi * r2 ** 1.5)
     inv[0, 0, 0] = 0.0                                  # no self-force
     kernels = []
-    for comp in (x, y, z):
-        kk = np.fft.fftn(-comp * inv)
-        kk.flags.writeable = False
-        kernels.append(kk)
+    for axis, comp in enumerate((x, y, z)):
+        kern = -comp * inv
+        kern[(slice(None),) * axis + (n,)] = 0.0
+        im = np.fft.rfftn(kern).imag.copy()
+        im.flags.writeable = False
+        kernels.append(im)
     return tuple(kernels)
+
+
+def _padded_isolated_force(delta: np.ndarray, box: float, w=None):
+    """Isolated force of the cubic ``delta`` (zero-padded to ``(2n)³``); optional radial filter ``w``.
+
+    ``w`` is a real full-FFT-layout ``(2n)³`` filter (a function of ``|k|``) applied to the
+    padded density before the kernel. Returns three ``(n, n, n)`` arrays that own their memory.
+    """
+    n = delta.shape[0]
+    m = 2 * n
+    pad = np.zeros((m, m, m), dtype=np.float64)
+    pad[:n, :n, :n] = delta
+    pad_k = np.fft.rfftn(pad)
+    del pad
+    if w is not None:
+        pad_k *= w[..., : m // 2 + 1]
+    return tuple(np.fft.irfftn(pad_k * (1j * kern), s=(m, m, m), axes=(0, 1, 2))[:n, :n, :n].copy()
+                 for kern in _isolated_kernels(n, box))
 
 
 def pm_force_isolated(delta, box: float):
     """Open-boundary Poisson (zero-padded Hockney–Eastwood): force ``F = −∇φ`` of ``∇²φ = δ``, no images."""
     d = _cubic(delta)
     n, box = _check_grid(d.shape[0], box)
-    m = 2 * n
-    pad = np.zeros((m, m, m), dtype=np.float64)
-    pad[:n, :n, :n] = d
-    pad_k = np.fft.fftn(pad)
-    return tuple(np.fft.ifftn(pad_k * kern).real[:n, :n, :n].copy()
-                 for kern in _isolated_kernels(n, box))
+    return _padded_isolated_force(d, box)
 
 
 # --------------------------------------------------------------------------

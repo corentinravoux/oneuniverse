@@ -58,11 +58,11 @@ def bin_edges_kf(n_grid: int, box: float) -> np.ndarray:
     return kf * (np.arange((n + 1) // 2) + 0.5)
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=4)
 def _binning(n: int, box: float):
     edges = bin_edges_kf(n, box)
     _, _, _, kmag = k_grid(n, box)
-    idx = np.digitize(kmag.ravel(), edges) - 1
+    idx = (np.digitize(kmag.ravel(), edges) - 1).astype(np.int32)
     nb = len(edges) - 1
     valid = (idx >= 0) & (idx < nb)
     idx = idx[valid]

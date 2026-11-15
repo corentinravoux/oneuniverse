@@ -51,6 +51,8 @@ Buffered run (:func:`run_buffered`)
     re-enters through the opposite one — both are boundary errors the buffer
     must absorb. Super-tile modes (tides and bulk flows beyond the tile) are
     absent: this is the irreducible truncation the TreePM coupling removes.
+    CIC deposits and samples inside the tile wrap at the tile faces (the mesh is
+    periodic), so mass near a face leaks to the opposite face; the buffer absorbs it.
 Refinement (``resolution_factor = r > 1``)
     The *whole parent* IC field is Fourier-interpolated to ``n·r`` cells
     (zero-padding its periodic spectrum, the even-``n`` Nyquist coefficient
@@ -83,6 +85,10 @@ TreePM run (:func:`run_treepm`)
     :func:`~.pm.run_pm` KDK scheme (``n_steps`` uniform in ``a``, the same
     time integrals), re-run here because :func:`~.pm.run_pm` takes no custom
     force.
+    Memory: the full-box ``pos``, ``vel``, ``q`` and displacement arrays
+    (``~12·n³`` float64) are built whatever the cube size, plus one ``(n·r)³`` grid
+    in the Fourier refinement and the ``(2n_sub·r)³`` padded transforms of the
+    short-range force. CIC deposits and samples wrap at the tile faces, as above.
 Benchmark (:func:`buffer_convergence`)
     One row per buffer: ``cell_corr`` (Pearson, :func:`~.fieldstats.cell_corr`)
     of the tile's inner field against :func:`inner_reference` of the full-box
@@ -110,7 +116,7 @@ from oneuniverse.reference.linear import (
     k_grid,
 )
 from oneuniverse.reference.pm import (
-    _isolated_kernels,
+    _padded_isolated_force,
     _time_integral,
     deposit_cic,
     interpolate_cic,
@@ -305,13 +311,7 @@ def run_buffered(cosmo: CosmologySpec, ic_field, *, box: float, cube: Cube, buff
 
 def _short_force(delta: np.ndarray, sub_box: float, w_high: np.ndarray):
     """Isolated force of ``delta`` with the high-pass ``w_high`` applied to the padded kernel."""
-    n = delta.shape[0]
-    m = 2 * n
-    pad = np.zeros((m, m, m), dtype=np.float64)
-    pad[:n, :n, :n] = delta
-    pad_k = np.fft.fftn(pad) * w_high
-    return tuple(np.fft.ifftn(pad_k * kern).real[:n, :n, :n]
-                 for kern in _isolated_kernels(n, sub_box))
+    return _padded_isolated_force(delta, sub_box, w_high)     # owns its memory (no (2n)³ views)
 
 
 def _sample(grids, pos: np.ndarray, box: float) -> np.ndarray:
