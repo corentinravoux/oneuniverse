@@ -56,6 +56,11 @@ def _coarse_stage_buckets(request, monkeypatch):
     """
     if request.node.get_closest_marker("full_stage") is None:
         from oneuniverse.data import writer
+        # Fail loudly if the internal knob is renamed or its production value changes:
+        # otherwise the speedup (or the patch) would silently stop doing what we think.
+        # Production staging stays covered by the ``full_stage`` tests in test/data/test_writer.py.
+        assert getattr(writer, "_BUCKET_SHIFT", None) == 2 * (int(np.log2(NSIDE_FINE)) - 3), (
+            "writer._BUCKET_SHIFT changed; update test/conftest.py and the full_stage tests")
         monkeypatch.setattr(writer, "_BUCKET_SHIFT", 2 * int(np.log2(NSIDE_FINE)))
 
 

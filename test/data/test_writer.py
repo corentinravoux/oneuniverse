@@ -119,6 +119,21 @@ def _rss_growth_mib(tmp_path, n_batches):
     return float(growth)
 
 
+@pytest.mark.full_stage
+def test_streaming_bounded_memory_50k(tmp_path):
+    """Fast stand-in for the slow 500k/2M RSS tests: tracemalloc peak of data.writer.write_dataset
+    streaming 50k rows (5 batches of 10k) under production staging. The bound (150 MiB of Python/
+    Arrow allocations) is loose, well under the 48 MiB stage buffer x a few; the slow tests use a
+    400 MiB fresh-process RSS bound and check that growth stays flat as the input grows."""
+    import tracemalloc
+    tracemalloc.start()
+    _w((synthetic_point_table(10_000, i).to_batches()[0] for i in range(5)), tmp_path / "ds")
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert read_manifest(tmp_path / "ds/manifest.json").n_rows == 50_000
+    assert peak < 150 * 2**20
+
+
 @pytest.mark.slow
 def test_streaming_bounded_memory_500k(tmp_path):
     assert _rss_growth_mib(tmp_path, 10) < 400  # MiB, fresh process
@@ -301,6 +316,20 @@ def _rows_by_file(root):
     idx = read_partition_index(root / "_index.parquet")
     return [(r["path"], pq.read_table(root / r["path"], columns=["source_row", "hpix32"]))
             for r in idx.to_pylist()]
+
+
+@pytest.mark.full_stage
+def test_row_order_independent_of_batch_splits_production_staging(tmp_path):
+    """Same checks as the test below, under the production 768-bucket staging."""
+    t = synthetic_point_table(1_500, 3)
+    for name, bs in (("a", 1_500), ("c", 177)):
+        _w(t, tmp_path / name, partition_nside=2, batch_size=bs)
+    ref, got = _rows_by_file(tmp_path / "a"), _rows_by_file(tmp_path / "c")
+    assert [p for p, _ in got] == [p for p, _ in ref]
+    assert all(x.equals(y) for (_, x), (_, y) in zip(got, ref, strict=True))
+    for _, tab in ref:
+        h, s = tab["hpix32"].to_numpy(), tab["source_row"].to_numpy()
+        assert np.all((np.diff(h) > 0) | ((np.diff(h) == 0) & (np.diff(s) > 0)))
 
 
 def test_row_order_independent_of_batch_splits(tmp_path):
