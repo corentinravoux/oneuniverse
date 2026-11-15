@@ -152,9 +152,10 @@ class FixtureConverter(SimConverter):
         if not cfg.is_file():
             return False
         try:
-            return json.loads(cfg.read_text()).get("fixture") is True
-        except json.JSONDecodeError:
+            data = json.loads(cfg.read_text())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return False
+        return isinstance(data, dict) and data.get("fixture") is True
 
     def manifest(self, path) -> OUFSimManifest:
         return native_manifest(path)

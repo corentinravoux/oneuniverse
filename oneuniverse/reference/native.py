@@ -32,6 +32,7 @@ Detection markers (exclusive): ``config.json`` with
 from __future__ import annotations
 
 import json
+import numbers
 import shutil
 from pathlib import Path
 
@@ -40,6 +41,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from oneuniverse._core.errors import FormatError, ValidationError
+from oneuniverse._core.fs import atomic_dir
 from oneuniverse.reference.linear import (
     find_peaks,
     gaussian_field,
@@ -62,6 +64,7 @@ PARTICLE_COLUMNS = ("x", "y", "z", "vx", "vy", "vz")
 LIGHTCONE_COLUMNS = ("ra", "dec", "z_shell", "radius")
 _BATCH = 50_000
 _CREATED = "2026-11-15T00:00:00Z"
+_CONFIG_KEYS = ("box_size", "n_grid", "redshifts", "seed", "cosmology")
 
 
 def _tag(z: float) -> str:
@@ -101,7 +104,8 @@ def generate_linear_sim(out, cosmo: CosmologySpec, *, box: float, n_grid: int,
                         redshifts, seed: int) -> Path:
     """Write a linear-theory native simulation directory at ``out`` and return it.
 
-    Arguments are validated before anything is written.
+    Arguments are validated before anything is written; the directory is published
+    atomically and an existing ``out`` is refused (``ValidationError``).
     """
     out = Path(out)
     zs = tuple(float(z) for z in redshifts)
@@ -112,79 +116,110 @@ def generate_linear_sim(out, cosmo: CosmologySpec, *, box: float, n_grid: int,
     if int(n_grid) != n_grid or n_grid < 2:
         raise ValidationError(f"n_grid must be an integer >= 2, got {n_grid}")
     n_grid = int(n_grid)
+    if out.exists():
+        raise ValidationError(f"destination {out} already exists")
     delta0 = gaussian_field(cosmo, box=box, n_grid=n_grid, z=0.0, seed=seed)
-    out.mkdir(parents=True, exist_ok=True)
-    halos_by_z: dict[float, pa.Table] = {}
-    for z in zs:
-        tag = _tag(z)
-        pos, vel = zeldovich(delta0, cosmo, box=box, z=z)
-        np.save(out / f"particles_z{tag}.npy", _particles(pos, vel, box))
-        field = delta0 * growth_factor(z, cosmo)
-        np.save(out / f"field_z{tag}.npy", field.astype(np.float32))
-        halos = find_peaks(field, box=box)
-        pq.write_table(halos, out / f"halos_z{tag}.parquet")
-        halos_by_z[z] = halos
-    pq.write_table(_sky_table(halos_by_z, box), out / "lightcone.parquet")
-    (out / "config.json").write_text(json.dumps({
-        "generator": GENERATOR, "box_size": float(box), "n_grid": n_grid,
-        "redshifts": list(zs), "seed": int(seed), "cosmology": cosmo.to_dict()}))
+    with atomic_dir(out) as tmp:
+        halos_by_z: dict[float, pa.Table] = {}
+        for z in zs:
+            tag = _tag(z)
+            pos, vel = zeldovich(delta0, cosmo, box=box, z=z)
+            np.save(tmp / f"particles_z{tag}.npy", _particles(pos, vel, box))
+            field = delta0 * growth_factor(z, cosmo)
+            np.save(tmp / f"field_z{tag}.npy", field.astype(np.float32))
+            halos = find_peaks(field, box=box)
+            pq.write_table(halos, tmp / f"halos_z{tag}.parquet")
+            halos_by_z[z] = halos
+        pq.write_table(_sky_table(halos_by_z, box), tmp / "lightcone.parquet")
+        (tmp / "config.json").write_text(json.dumps({
+            "generator": GENERATOR, "box_size": float(box), "n_grid": n_grid,
+            "redshifts": list(zs), "seed": int(seed), "cosmology": cosmo.to_dict()}))
     return out
 
 
+def _is_number(x) -> bool:
+    return isinstance(x, numbers.Real) and not isinstance(x, bool)
+
+
+def _is_int(x) -> bool:
+    return isinstance(x, numbers.Integral) and not isinstance(x, bool)
+
+
 def _read_config(path: Path) -> dict:
+    """Parsed and checked ``config.json``; ``FormatError`` if unreadable or malformed."""
     try:
-        return json.loads((Path(path) / "config.json").read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        cfg = json.loads((Path(path) / "config.json").read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FormatError(f"cannot read config.json in {path}: {exc}") from exc
+    if not isinstance(cfg, dict):
+        raise FormatError(f"config.json in {path} must be a JSON object, got {type(cfg).__name__}")
+    missing = [k for k in _CONFIG_KEYS if k not in cfg]
+    if missing:
+        raise FormatError(f"config.json in {path} lacks key(s) {missing}")
+    zs = cfg["redshifts"]
+    if not (_is_number(cfg["box_size"]) and cfg["box_size"] > 0
+            and _is_int(cfg["n_grid"]) and cfg["n_grid"] >= 2
+            and isinstance(zs, list) and zs and all(_is_number(z) for z in zs)
+            and isinstance(cfg["cosmology"], dict)):
+        raise FormatError(
+            f"config.json in {path}: box_size must be a positive number, n_grid an integer >= 2, "
+            "redshifts a non-empty list of numbers and cosmology an object")
+    return cfg
+
+
+def _load_json_object(file: Path) -> dict | None:
+    """The JSON object in ``file``, or ``None`` if it is missing, unreadable or not an object."""
+    try:
+        data = json.loads(file.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _is_linear_config(path: Path) -> bool:
-    cfg = path / "config.json"
-    if not cfg.is_file():
-        return False
-    try:
-        return json.loads(cfg.read_text()).get("generator") == GENERATOR
-    except json.JSONDecodeError:
-        return False
+    cfg = _load_json_object(path / "config.json")
+    return cfg is not None and cfg.get("generator") == GENERATOR
 
 
 def _header_layout(path: Path) -> str | None:
-    hdr = path / "header.json"
-    if not hdr.is_file():
-        return None
-    try:
-        return json.loads(hdr.read_text()).get("layout")
-    except json.JSONDecodeError:
-        return None
+    hdr = _load_json_object(path / "header.json")
+    return None if hdr is None else hdr.get("layout")
 
 
 def write_packed_native(linear_dir, out_dir, *, n_side: int) -> Path:
-    """Chunk-sort the particles of ``linear_dir`` into a packed native dir ``out_dir``."""
+    """Chunk-sort the particles of ``linear_dir`` into a packed native dir ``out_dir``.
+
+    Published atomically; ``ValidationError`` if ``out_dir`` exists or is ``linear_dir``.
+    """
     src, dst = Path(linear_dir), Path(out_dir)
     if int(n_side) != n_side or n_side < 1:
         raise ValidationError(f"n_side must be a positive integer, got {n_side}")
     if not _is_linear_config(src):
         raise ValidationError(f"{src} is not a linear fixture simulation (config.json generator)")
     cfg = _read_config(src)
+    if dst.resolve() == src.resolve():
+        raise ValidationError(f"destination {dst} is the source directory")
+    if dst.exists():
+        raise ValidationError(f"destination {dst} already exists")
     box = float(cfg["box_size"])
-    dst.mkdir(parents=True, exist_ok=True)
-    chunks = {}
-    for z in cfg["redshifts"]:
-        tag = _tag(z)
-        arr = np.load(src / f"particles_z{tag}.npy")
-        pos = np.stack([arr[c] for c in "xyz"], axis=1).astype(np.float64)
-        ids = chunk_ids(pos, box, int(n_side))
-        order = np.argsort(ids, kind="stable")
-        np.save(dst / f"particles_z{tag}.npy", arr[order])
-        uniq, start, count = np.unique(ids[order], return_index=True, return_counts=True)
-        chunks[tag] = [[int(c), int(a), int(a + n)] for c, a, n in zip(uniq, start, count)]
-        for name in (f"field_z{tag}.npy", f"halos_z{tag}.parquet"):
-            shutil.copy2(src / name, dst / name)
-    for name in ("lightcone.parquet", "config.json"):
-        shutil.copy2(src / name, dst / name)
-    (dst / "header.json").write_text(json.dumps({
-        "layout": "packed_npy", "box_size": box, "n_side": int(n_side),
-        "redshifts": cfg["redshifts"], "chunks": chunks}))
+    with atomic_dir(dst) as tmp:
+        chunks = {}
+        for z in cfg["redshifts"]:
+            tag = _tag(z)
+            arr = np.load(src / f"particles_z{tag}.npy")
+            pos = np.stack([arr[c] for c in "xyz"], axis=1).astype(np.float64)
+            ids = chunk_ids(pos, box, int(n_side))
+            order = np.argsort(ids, kind="stable")
+            np.save(tmp / f"particles_z{tag}.npy", arr[order])
+            uniq, start, count = np.unique(ids[order], return_index=True, return_counts=True)
+            chunks[tag] = [[int(c), int(a), int(a + n)] for c, a, n in zip(uniq, start, count)]
+            for name in (f"field_z{tag}.npy", f"halos_z{tag}.parquet"):
+                shutil.copy2(src / name, tmp / name)
+        for name in ("lightcone.parquet", "config.json"):
+            shutil.copy2(src / name, tmp / name)
+        (tmp / "header.json").write_text(json.dumps({
+            "layout": "packed_npy", "box_size": box, "n_side": int(n_side),
+            "redshifts": cfg["redshifts"], "chunks": chunks}))
     return dst
 
 

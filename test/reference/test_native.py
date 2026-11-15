@@ -46,3 +46,52 @@ def test_arguments_validated_before_writing(tmp_path):
     assert not (tmp_path / "p").exists()
     with pytest.raises(ValidationError):
         write_packed_native(tmp_path, tmp_path / "p", n_side=2)
+
+
+@pytest.mark.parametrize("content", [b"[1, 2]", b"\xff\xfe\x00binary", b'"text"', b"null"])
+def test_detection_ignores_non_object_and_binary_config(tmp_path, content):
+    d = tmp_path / "weird"; d.mkdir(); (d / "config.json").write_bytes(content)
+    assert detect_converter(d) is None
+    (d / "header.json").write_bytes(content)
+    assert detect_converter(d) is None
+
+
+def test_generate_and_pack_are_atomic_and_refuse_overwrite(tmp_path, monkeypatch):
+    import oneuniverse.reference.native as native
+    monkeypatch.setattr(native, "find_peaks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        generate_linear_sim(tmp_path / "lin", COSMO, box=64.0, n_grid=16, redshifts=(0.0,), seed=0)
+    assert not (tmp_path / "lin").exists() and not (tmp_path / "lin.tmp").exists()
+    monkeypatch.undo()
+    src = generate_linear_sim(tmp_path / "lin", COSMO, box=64.0, n_grid=16, redshifts=(0.0,), seed=0)
+    with pytest.raises(ValidationError):
+        generate_linear_sim(src, COSMO, box=64.0, n_grid=16, redshifts=(0.0,), seed=0)
+    before = sorted(p.name for p in src.iterdir())
+    with pytest.raises(ValidationError):
+        write_packed_native(src, src, n_side=2)
+    with pytest.raises(ValidationError):
+        write_packed_native(src, tmp_path / "lin" / ".." / "lin", n_side=2)
+    assert sorted(p.name for p in src.iterdir()) == before and not (tmp_path / "lin.tmp").exists()
+    (tmp_path / "taken").mkdir()
+    with pytest.raises(ValidationError):
+        write_packed_native(src, tmp_path / "taken", n_side=2)
+    monkeypatch.setattr(native, "chunk_ids", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        write_packed_native(src, tmp_path / "packed", n_side=2)
+    assert not (tmp_path / "packed").exists() and not (tmp_path / "packed.tmp").exists()
+
+
+@pytest.mark.parametrize("edit", [
+    lambda c: c.pop("box_size"), lambda c: c.pop("cosmology"), lambda c: c.pop("seed"),
+    lambda c: c.update(n_grid="16"), lambda c: c.update(n_grid=None), lambda c: c.update(redshifts=[]),
+    lambda c: c.update(redshifts="0.0"), lambda c: c.update(box_size="big"), lambda c: c.update(cosmology=[1]),
+])
+def test_malformed_config_is_format_error(tmp_path, edit):
+    from oneuniverse._core.errors import FormatError
+    src = generate_linear_sim(tmp_path / "lin", COSMO, box=64.0, n_grid=16, redshifts=(0.0,), seed=0)
+    cfg = json.loads((src / "config.json").read_text()); edit(cfg); (src / "config.json").write_text(json.dumps(cfg))
+    with pytest.raises(FormatError):
+        write_packed_native(src, tmp_path / "p", n_side=2)
+    with pytest.raises(FormatError):
+        get_converter("linear")().manifest(src)
+    assert not (tmp_path / "p").exists()
