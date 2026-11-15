@@ -18,8 +18,8 @@ python examples/diagnostics/<name>.py [--out examples/output] [--data-root DB --
 Without `--data-root` every script generates small synthetic inputs through the public API
 (`data.write_dataset` on random columns in a temporary directory, `reference.linear.gaussian_field`,
 `reference.mock`); nothing is read from `test/`. With `--data-root` (a `Database` root of real OUF
-datasets) the first dataset(s), or those named with `--dataset`, are used; `crossmatch_separations.py`
-then writes an ONEUID index named `diagnostic` into that database. `resim_buffer_convergence.py` and
+datasets) the first dataset(s), or those named with `--dataset`, are used. The scripts are read-only: nothing is
+written under `--data-root` (the cross-match uses `match_pair`, not `build_oneuid`). `resim_buffer_convergence.py` and
 `mock_challenge.py` are always synthetic. Each runs in a few seconds.
 
 Output goes to `examples/output/` (git-ignored; no figure is committed). The path of the PNG is printed.
