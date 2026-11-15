@@ -13,6 +13,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R3 | 2026-11-12 | e6813ff | 500 / 3 | 40 s (`-n 6`) | Weight primitives (full-name describe()), default registry, WeightedCatalog with ivar / best / mean / priority strategies; combine on 60 k rows ≈ 0.02 s. |
 | R4 | 2026-11-13 | 8565495 | 577 / 1 | 50 s (`-n 6`) | measure: atoms, Product/FieldMap/Sightline, MeasurementSet (shared-region check), build_pointset (with_position, uniform randoms truncated to the data z range, adaptive footprint), photo-z attachment by position, tomographic n(z), presets, versioned save/load. Exit criterion met. |
 | R5 | 2026-11-14 | 8f18c24 | 489 / 1 | 40 s (`-n 6`); 157 s single-process | Old simulation tree deleted. OUF-Sim 1.0: specs, manifest, ExecutionPlan, chunk/tile/sky index, native adapters (npy, packed_npy), streaming writers (≤ 256 open files, row-group buffers ≤ budget/4; 2 M-row write +231 MiB RSS), reencode and reference projections (read identically), SimStore partial reads with periodic wrap (raw-array oracle), converter registry, SimDatabase (requests, lineage from child manifests, crash reconcile). Exit criterion met. |
+| R6 | 2026-11-15 | c134093 | 632 / 0 (+10 slow) | 44 s (`-n 6`); 180 s single-process; slow suite 51 s (`-n 6`) | `oneuniverse.reference` (EH98, ΛCDM D and f from one integral, Gaussian fields, Zel'dovich with correct velocities, single P(k)/r(k), bincount-CIC PM with periodic/isolated force, periodic buffered resim + TreePM, mask-aware Wiener, seed-explicit constrained realisation, lognormal mock, linear fixture sim + packed layout + converters, four engines); `oneuniverse.twin` contracts (engine ABCs + registry, observe_from_view, run_engine_to_store); `create_field_store` shared with SimDatabase.dispatch. Six ensemble tests pass (two as decided by the owner, below); store→store chain runs; guards green. Exit criterion met. |
 
 ## Decisions taken during execution
 
@@ -135,3 +136,40 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
   tile pruning via `overlapping_tiles`, docstrings on public db/manifest
   functions, error sweep (`read_manifest` missing path, `load()` parquet
   errors → `FormatError`).
+- **R6 — owner decision (design §9b deviation), PM growth.** The ensemble
+  test compares P_pm with D(z_end)²·P_ic of the same realisation (5 %, k <
+  0.05, seeds 0–4, 64³, 20 steps unchanged): at box 256 only one k bin of
+  9 modes lies below 0.05, so P_lin is a cosmic-variance-limited reference
+  (initial fields alone gave 0.915). Measured 0.980, r 0.9987.
+- **R6 — owner decision (design §9b deviation), periodic buffers.** The
+  ensemble test compares the edge cube with the same region rolled to the
+  box centre (|Δcell_corr| < 0.03, n_particles exact): buffered accuracy is
+  region-dependent (cell_corr 0.20–0.61 at buffer 16), so edge vs a
+  different centre region measured region variance. Measured 1.8e-16.
+  The plan's 0.03 vs spec §9b 0.02 is moot (exact).
+- **R6 — blind §9b tests (kept verbatim).** The constrained-realisation and
+  masked-Wiener ensemble tests pass with the old defects too (lognormal
+  excess power; globally normalised data). The defect guards are
+  `test_constrained_realization_does_not_reproduce_truth_with_same_seed`
+  and `test_wiener_mask_renormalises_inside_and_ignores_outside`. The
+  growth-rate test was tightened to rel 1e-5 at z = 0 and 0.5 so it fails
+  on γ = 0.55.
+- **R6 — conventions.** P = |δ_k|²V/N²; cell centres (i+0.5)·cell; Nyquist
+  axis derivatives zeroed; D(0) = 1; momentum p = a²ẋ (H0 = 1), vel km/s;
+  `pm_force` returns the attractive force −∇φ (the plan's test sign was a
+  defect); flat ΛCDM only (w0 ≠ −1 or wa ≠ 0 → ValidationError).
+- **R6 — rulings.** Linear lightcone keeps `z_shell` (not physical; no `z`
+  column); converter detection by explicit markers (generator in
+  config.json, `layout` in header.json); `twin/observe.py` uses
+  `reference.pm.deposit_cic` (only `twin/engine.py` is barred from
+  reference); Product box positions live in extras (catalog `z` is a
+  redshift); default `nbar` with a mask is the in-mask density;
+  `run_engine_to_store` refuses an IC from z ≠ 0 (engines take the z = 0
+  linear δ); closed-loop test runs at box 256, z = 1 (σ_cell 0.77, inside
+  the lognormal regime; plan's 128/z=0 had σ 1.82).
+- **Risk for R8 (grows).** Single-process default suite 180 s. R8 items from
+  R6: module-scoped observe fixture (≈ −4.5 s), internal `_grid` module for
+  helpers shared by linear/pm/resim/mock, a `force=` hook in `run_pm`
+  (TreePM duplicates the KDK loop), TreePM full-box arrays, coverage
+  (deconvolve, odd n, Nyquist, self-force, native determinism, multi-z
+  packed), test style cleanups.
