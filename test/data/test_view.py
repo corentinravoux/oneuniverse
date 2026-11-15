@@ -131,9 +131,9 @@ def test_sightline_geometry_round_trip(tmp_path):
 
 
 # ---- boundary and row-group regressions ----------------------------
-def _boundary_points(rng, cone, n):
-    """Points at angular distance exactly ``cone.radius`` (up to rounding) from the centre."""
-    ra0, dec0, r = np.radians(cone.ra), np.radians(cone.dec), np.radians(cone.radius)
+def _boundary_points(rng, cone, n, scale=1.0):
+    """Points at angular distance ``scale * cone.radius`` (up to rounding) from the centre."""
+    ra0, dec0, r = np.radians(cone.ra), np.radians(cone.dec), np.radians(cone.radius * scale)
     b = rng.uniform(0, 2 * np.pi, n)
     dec = np.arcsin(np.sin(dec0) * np.cos(r) + np.cos(dec0) * np.sin(r) * np.cos(b))
     ra = ra0 + np.arctan2(np.sin(b) * np.sin(r) * np.cos(dec0),
@@ -142,16 +142,20 @@ def _boundary_points(rng, cone, n):
 
 
 def test_cone_expr_boundary_agrees_with_cone_contains():
+    """Points 1e-9 (relative) inside or outside the radius: pushdown and ``Cone.contains``
+    agree exactly, and both get the side right. Points exactly on the boundary are not
+    tested: Arrow's libm and numpy's SIMD ``sin``/``arcsin`` (AVX-512 builds) differ by a
+    few ulp, so their classification depends on the CPU."""
     rng = np.random.default_rng(7)
-    tot = bad = 0
     for _ in range(100):
         cone = Cone(rng.uniform(0, 360), rng.uniform(-80, 80), rng.uniform(0.5, 30))
-        ra, dec = _boundary_points(rng, cone, 2_000)
-        tab = pa.table({"ra": ra, "dec": dec, "i": np.arange(ra.size)})
-        got = np.zeros(ra.size, bool)
-        got[tab.filter(cone_expr(cone))["i"].to_numpy()] = True
-        bad += int(np.sum(got != cone.contains(ra, dec))); tot += ra.size
-    assert bad / tot <= 1e-4, (bad, tot)  # >= 99.99 % (ulp-level sin differences)
+        for scale, inside in ((1 - 1e-9, True), (1 + 1e-9, False)):
+            ra, dec = _boundary_points(rng, cone, 1_000, scale)
+            tab = pa.table({"ra": ra, "dec": dec, "i": np.arange(ra.size)})
+            got = np.zeros(ra.size, bool)
+            got[tab.filter(cone_expr(cone))["i"].to_numpy()] = True
+            assert (got == inside).all(), (cone, scale, int((got != inside).sum()))
+            assert (cone.contains(ra, dec) == inside).all(), (cone, scale)
 
 
 def _multi_rg_dataset(tmp_path, monkeypatch, with_time=False, n=6_000):

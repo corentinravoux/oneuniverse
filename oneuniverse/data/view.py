@@ -32,9 +32,10 @@ def cone_expr(cone: Cone) -> pc.Expression:
     """Closed haversine cone membership in float64, mirroring ``Cone.contains``.
 
     Same operation order as numpy. Exact agreement on points constructed *on* the
-    boundary is not achievable: Arrow's libm ``sin``/``pow`` and numpy's (possibly
-    SIMD) ``sin`` can differ by an ulp, so ~4e-5 of such adversarial points flip
-    (the property test asserts >= 99.99 % agreement). Generic points never differ.
+    boundary is not achievable: Arrow's libm ``sin``/``pow`` and numpy's SIMD
+    ``sin``/``arcsin`` differ by a few ulp, so such points flip at a CPU-dependent
+    rate (about 4e-5 without AVX-512, about 2 % with it). Points 1e-9 (relative)
+    off the boundary always agree (property test).
     """
     ra = _rad(pc.field("ra").cast(pa.float64()))
     dec = _rad(pc.field("dec").cast(pa.float64()))
