@@ -51,7 +51,7 @@ jobs:
         run: pytest -n auto
       - name: Single-process time budget
         # Default suite single-process: < 60 s on the dev machine; the CI
-        # runner budget is 120 s (see CLAUDE.md, test conventions).
+        # runner budget is 120 s.
         if: matrix.python-version == '3.12'
         run: |
           start=$(date +%s)

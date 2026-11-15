@@ -39,7 +39,7 @@ COSMO_STRINGS = {"comoving_distance", "r_comoving", "dist_mpc"}
 # Old-tree violations, keyed by path relative to oneuniverse/. Value is the
 # set of allowed identifiers, or {"*"} for everything in the file.
 ALLOW = {
-    # Product validation rejects these column names (design §4)
+    # Product validation rejects these column names
     "measure/product.py": {"comoving_distance", "r_comoving", "dist_mpc"},
 }
 

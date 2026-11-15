@@ -98,8 +98,6 @@ pytest -m slow                   # ensemble physics, memory, real-data and examp
 - Guide and API reference: <https://corentinravoux.github.io/oneuniverse/>
   (sources in `docs_site/`; build with `pip install -e ".[docs,sql]"` then
   `mkdocs build --strict`).
-- Design of the 2.0 rewrite: `plans/2026-11-12-refactor-v1-design.md`.
-- Archived pre-rewrite plans and review: [`docs/history/`](docs/history/README.md).
 
 ## Citation
 

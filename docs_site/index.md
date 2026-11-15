@@ -37,5 +37,4 @@ contracts. Everything else is tested on synthetic data.
 ## Citation
 
 Cite the software through `CITATION.cff` in the repository (DOI
-[10.5281/zenodo.21653036](https://doi.org/10.5281/zenodo.21653036)). The
-archived pre-rewrite plans and review are in `docs/history/` in the repository.
+[10.5281/zenodo.21653036](https://doi.org/10.5281/zenodo.21653036)).

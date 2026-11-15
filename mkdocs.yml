@@ -4,7 +4,6 @@ site_url: https://corentinravoux.github.io/oneuniverse/
 repo_url: https://github.com/corentinravoux/oneuniverse
 repo_name: corentinravoux/oneuniverse
 
-# Site sources live in ./docs_site; ./docs only holds the archived history.
 docs_dir: docs_site
 
 theme:
