@@ -1,42 +1,85 @@
-"""Photo-z kernel: P1's per-object p(z) attached as the measure atom."""
+"""Photo-z attachment and tomographic n(z) for point-set Products.
+
+Nothing here depends on a cosmology.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses
+from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 
-from oneuniverse.data.dataset_view import DatasetView
-from oneuniverse.data.pdf import ProbabilisticRedshift
+from oneuniverse._core.errors import FormatError, ValidationError
+from oneuniverse.data.pdf import PdfSpec
+from oneuniverse.data.view import DatasetView
+from oneuniverse.measure.atoms import Nz
+from oneuniverse.measure.product import Product
 
 
-def attach_photoz(view: DatasetView) -> ProbabilisticRedshift:
-    """Return the per-object photo-z kernel (qp) from an OUF PDF dataset."""
-    return view.load_pdf()
+def attach_photoz(product: Product, view: DatasetView, *, n_draws: int = 1,
+                  seed: int = 0) -> Product:
+    """Add ``z_draws`` (n, n_draws), ``z_pdf_mean`` and ``z_pdf_std`` (n,) extras.
+
+    PDFs are read back with ``view.take`` at the catalog's (partition, offset),
+    so extras row i is catalog row i whatever cuts the product went through.
+    The view must be the version the product was built from (FormatError if
+    not). Draws are deterministic for a seed.
+    """
+    if int(n_draws) < 1:
+        raise ValidationError("n_draws must be >= 1")
+    if list(view.version) != product.provenance.get("version"):
+        raise FormatError(
+            f"product built from another version of {product.provenance.get('dataset')!r}")
+    ext = view.manifest.extension("pdf")
+    if ext is None:
+        raise FormatError("dataset has no 'pdf' extension")
+    spec = PdfSpec.from_dict(ext)
+    cat = product.catalog
+    rows = view.take(cat["partition"].to_numpy(), cat["offset"].to_numpy(),
+                     columns=[spec.value_column])
+    pdf = view.load_pdf(rows)
+    return (product
+            .with_extra("z_draws", np.asarray(pdf.sample(int(n_draws), int(seed)), np.float64))
+            .with_extra("z_pdf_mean", np.asarray(pdf.mean(), np.float64))
+            .with_extra("z_pdf_std", np.asarray(pdf.std(), np.float64)))
 
 
-@dataclass
-class PhotozArrays:
-    """A light grid+values photo-z kernel view — the round-trippable form a
-    saved MeasurementSet restores (a full qp ``ProbabilisticRedshift`` needs the
-    source dataset; the grid + per-object p(z) are what estimators consume)."""
-    grid: np.ndarray            # (n_grid,)
-    values: np.ndarray          # (n_obj, n_grid) normalised p(z)
+def tomographic_nz(product: Product, *, bin_edges: Sequence[float], nz_edges: Sequence[float],
+                   by: Literal["z_pdf_mean", "z"] = "z_pdf_mean") -> tuple[Product, Nz]:
+    """Assign tomographic bins and stack the per-bin n(z) from the photo-z draws.
 
-    def mean(self) -> np.ndarray:
-        dz = np.gradient(self.grid)
-        return (self.values * self.grid[None, :] * dz[None, :]).sum(axis=1)
+    ``tomo_bin`` (int32) is the bin of the *by* quantity in *bin_edges*, -1 outside.
+    Nz counts have shape (n_bins, k): the catalog-weighted histogram of every draw
+    of the bin's members, divided by n_draws; method "photoz_stack".
+    Draws outside *nz_edges* are dropped from the stack.
+    Needs the ``z_draws`` extra (and ``z_pdf_mean`` when by="z_pdf_mean").
+    """
+    if by not in ("z_pdf_mean", "z"):
+        raise ValidationError(f"by must be 'z_pdf_mean' or 'z', got {by!r}")
+    if "z_draws" not in product.extras or (by == "z_pdf_mean" and "z_pdf_mean" not in product.extras):
+        raise ValidationError("tomographic_nz needs the photo-z extras z_draws (and z_pdf_mean): "
+                              "call attach_photoz first")
+    be = np.asarray(bin_edges, np.float64)
+    if be.ndim != 1 or be.size < 2 or np.any(np.diff(be) <= 0):
+        raise ValidationError("bin_edges must be strictly increasing with >= 2 values")
+    draws = np.asarray(product.extras["z_draws"], np.float64)
+    q = (product.catalog["z"].to_numpy() if by == "z"
+         else np.asarray(product.extras["z_pdf_mean"], np.float64))
+    n_bins = be.size - 1
+    inb = (q >= be[0]) & (q < be[-1])
+    tomo = np.where(inb, np.searchsorted(be, q, side="right") - 1, -1).astype(np.int32)
+    w = product.catalog["weight"].to_numpy()
+    ne = np.asarray(nz_edges, np.float64)
+    if ne.ndim != 1 or ne.size < 2 or np.any(np.diff(ne) <= 0):
+        raise ValidationError("nz_edges must be strictly increasing with >= 2 values")
+    counts = np.zeros((n_bins, ne.size - 1))
+    n_draws = draws.shape[1]
+    for b in range(n_bins):
+        m = tomo == b
+        if m.any():
+            counts[b] = np.histogram(draws[m].ravel(), ne,
+                                     weights=np.repeat(w[m], n_draws))[0] / n_draws
+    nz = Nz(ne, counts, "photoz_stack", tuple(range(n_bins)))
+    return dataclasses.replace(product.with_extra("tomo_bin", tomo), nz=nz), nz
 
-    def std(self) -> np.ndarray:
-        dz = np.gradient(self.grid)
-        m = self.mean()
-        var = (self.values * (self.grid[None, :] - m[:, None]) ** 2
-               * dz[None, :]).sum(axis=1)
-        return np.sqrt(np.clip(var, 0, None))
-
-    def sample(self, n_per: int, seed=None) -> np.ndarray:
-        rng = np.random.default_rng(seed)
-        cdf = np.cumsum(self.values, axis=1)
-        cdf = cdf / cdf[:, -1:]
-        u = rng.uniform(size=(self.values.shape[0], n_per))
-        idx = np.array([np.searchsorted(cdf[i], u[i]) for i in range(len(cdf))])
-        return self.grid[np.clip(idx, 0, len(self.grid) - 1)]

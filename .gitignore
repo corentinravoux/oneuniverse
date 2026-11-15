@@ -209,3 +209,12 @@ graphify-out/
 
 # MkDocs Material build output
 site/
+
+# test artefacts
+test/test_output/
+
+# Agent working files live in the owner's claude_config repository
+# (projects/oneuniverse/); CLAUDE.md is a symlink to it.
+CLAUDE.md
+.claude/
+.superpowers/

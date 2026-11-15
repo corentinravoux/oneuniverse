@@ -1,15 +1,10 @@
-"""oneuniverse.twin — the data <-> simulation coupling layer.
+"""Digital twin: engine contracts and registry (physics lives in ``oneuniverse.reference``).
 
-This is the third layer the ADR mandates: it may import BOTH
-``oneuniverse.simulation`` and ``oneuniverse.data`` (the coupling that
-neither pillar may host). ``oneuniverse.simulation`` stays Rule-1 clean;
-the no-Pillar-1-import guard scans ``simulation/`` only, not ``twin/``.
-
-MVP = the mock challenge: truth field -> mock-observe (biased Poisson
-tracers) -> constrain (Wiener filter) -> verify (cross-correlation r(k)).
-All linear theory + FFT, deterministic. The synthetic "data" is replaced
-by real Pillar-1 selection as the first data-side complexification.
+``observe_from_view`` is the data -> twin socket and ``run_engine_to_store`` the
+engine <-> store boundary; the reference engines register themselves when
+``oneuniverse.reference.engines`` is imported.
 """
+
 from oneuniverse.twin.engine import (
     ForwardEngine,
     Observation,
@@ -19,35 +14,17 @@ from oneuniverse.twin.engine import (
     register_engine,
     registered_engines,
 )
-from oneuniverse.twin.engines import (
-    LinearForwardEngine,
-    PMForwardEngine,
-    WienerReconstruction,
-)
-from oneuniverse.twin.mock_challenge import run_mock_challenge
-from oneuniverse.twin.mock_observe import mock_tracer_field
-from oneuniverse.twin.mock_survey import (
-    ball_mask,
-    radial_completeness,
-    slab_mask,
-)
-from oneuniverse.twin.constrained import constrained_realization
+from oneuniverse.twin.observe import observe_from_view
 from oneuniverse.twin.store_boundary import run_engine_to_store
-from oneuniverse.twin.metrics import (
-    RecoveryMetrics, recover_metrics, cross_correlation, power_ratio,
-)
-from oneuniverse.twin.wiener import wiener_reconstruct
-from oneuniverse.twin.observe_from_view import observe_from_view
 
 __all__ = [
-    "mock_tracer_field", "wiener_reconstruct",
-    "cross_correlation", "power_ratio", "run_mock_challenge",
-    "recover_metrics", "RecoveryMetrics",
-    "slab_mask", "ball_mask", "radial_completeness",
-    "constrained_realization",
-    "ReconstructionEngine", "ForwardEngine", "Observation", "ProductBundle",
-    "register_engine", "get_engine", "registered_engines",
-    "WienerReconstruction", "LinearForwardEngine", "PMForwardEngine",
-    "run_engine_to_store",
+    "ForwardEngine",
+    "Observation",
+    "ProductBundle",
+    "ReconstructionEngine",
+    "get_engine",
     "observe_from_view",
+    "register_engine",
+    "registered_engines",
+    "run_engine_to_store",
 ]

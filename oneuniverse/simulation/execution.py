@@ -1,72 +1,42 @@
-"""Execution model for heavy OUF-Sim steps.
+"""Execution plan: how much memory, how many threads, which parallel mode."""
 
-Optimisation is load-bearing (Pillar-3 Rule 5): every heavy-memory /
-heavy-CPU-time step runs sequential-streamed (bounded memory),
-MPI-collective, or GPU. An :class:`ExecutionPlan` declares the mode +
-a hard memory budget; the chunk size derives from the budget, never
-"the whole snapshot". The MPI communicator is intentionally NOT stored
-on the (frozen, serialisable) plan — it is passed at call time.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any
+
+from oneuniverse._core.errors import ValidationError
 
 
 class ExecutionMode(str, Enum):
-    SEQUENTIAL = "sequential"   # streamed, bounded working set
-    MPI = "mpi"                 # collective, per-rank-local
-    GPU = "gpu"                 # device-resident, GPUDirect where possible
+    STREAMED = "streamed"
+    MPI = "mpi"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecutionPlan:
-    """How a heavy step will run + its memory budget.
-
-    Parameters
-    ----------
-    mode
-        One of :class:`ExecutionMode`.
-    memory_budget_bytes
-        Hard cap on the per-process working set. Must be > 0.
-    batch_rows
-        Chunk size for SEQUENTIAL / GPU streaming. ``None`` = derive
-        from ``memory_budget_bytes`` at call time. If given, must be > 0.
-    device
-        e.g. ``"cuda:0"`` for GPU mode; ``None`` otherwise.
-    n_chunks_estimate
-        Estimated number of chunks (for progress / scheduling).
-    """
-
-    mode: ExecutionMode
-    memory_budget_bytes: int
-    batch_rows: Optional[int] = None
-    device: Optional[str] = None
-    n_chunks_estimate: int = 0
+    mode: ExecutionMode = ExecutionMode.STREAMED
+    memory_budget_bytes: int = 2**30
+    mpi_comm: Any = None
+    n_threads: int = 4
 
     def __post_init__(self) -> None:
-        if self.memory_budget_bytes <= 0:
-            raise ValueError(
-                f"ExecutionPlan.memory_budget_bytes must be > 0, "
-                f"got {self.memory_budget_bytes!r}"
-            )
-        if self.batch_rows is not None and self.batch_rows <= 0:
-            raise ValueError(
-                f"ExecutionPlan.batch_rows must be > 0 or None, "
-                f"got {self.batch_rows!r}"
-            )
+        try:
+            object.__setattr__(self, "mode", ExecutionMode(self.mode))
+        except ValueError:
+            raise ValidationError(f"unknown execution mode {self.mode!r}") from None
+        if int(self.memory_budget_bytes) != self.memory_budget_bytes or self.memory_budget_bytes <= 0:
+            raise ValidationError(f"memory_budget_bytes must be a positive integer, got {self.memory_budget_bytes!r}")
+        if int(self.n_threads) != self.n_threads or self.n_threads < 1:
+            raise ValidationError(f"n_threads must be >= 1, got {self.n_threads!r}")
+        if self.mode is ExecutionMode.MPI and self.mpi_comm is None:
+            raise ValidationError("ExecutionMode.MPI requires mpi_comm")
 
     def batch_for(self, bytes_per_row: int, *, safety: float = 0.5) -> int:
-        """Rows per streamed batch under the memory budget.
-
-        ``safety`` reserves headroom for transient copies (concat, masks).
-        An explicit ``batch_rows`` overrides the derivation.
-        """
+        """Rows per batch fitting ``safety`` x the memory budget (at least 1)."""
         if bytes_per_row <= 0:
-            raise ValueError(
-                f"bytes_per_row must be > 0, got {bytes_per_row!r}")
-        if self.batch_rows is not None:
-            return self.batch_rows
-        n = int(self.memory_budget_bytes * safety // bytes_per_row)
-        return max(1, n)
+            raise ValidationError(f"bytes_per_row must be > 0, got {bytes_per_row}")
+        if not 0 < safety <= 1:
+            raise ValidationError(f"safety must be in (0, 1], got {safety}")
+        return max(1, int(self.memory_budget_bytes * safety) // int(bytes_per_row))

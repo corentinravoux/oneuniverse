@@ -1,284 +1,207 @@
-"""
-oneuniverse.data.schema
-~~~~~~~~~~~~~~~~~~~~~~~
-Column definitions for the oneuniverse standardized catalog format.
-
-Every survey loader maps its native columns into this schema. Columns are
-grouped into a *core* set (mandatory for all surveys) and *extension* sets
-(spectroscopic, photometric, peculiar-velocity) that are survey-type
-dependent.
-
-The schema is defined as plain dataclasses — no heavy ORM, no metaclass
-magic. A loader declares which groups it provides, and validation checks
-that the mandatory columns are present with correct dtypes.
-"""
-
+"""OUF 3.0 column contracts, redshift-type registry and stable object ids."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+import hashlib
+import re
+from enum import Enum
 
 import numpy as np
-import pandas as pd
+import pyarrow as pa
 
-# ── Column descriptor ─────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class ColumnDef:
-    """Definition of a single catalog column."""
-
-    name: str
-    dtype: str  # numpy dtype string: "f8", "f4", "i8", "i1", "U32", …
-    unit: str  # astropy-compatible unit string, "" if dimensionless
-    description: str
-    required: bool = True  # within its group
-    # Phase 16 observational-metadata annotations. All optional. No
-    # cosmology assumption — only what the survey publishes.
-    frame: Optional[str] = None
-    # One of: "heliocentric", "cmb", "lsr", "galactocentric", "icrs",
-    # "galactic", "ecliptic", "observer", "AB", "Vega", … Loader-defined.
-    epoch: Optional[float] = None
-    # Decimal-year epoch for position columns (e.g. 2016.0 for GAIA DR3).
-    wavelength_convention: Optional[str] = None
-    # "vacuum" | "air" for spectral columns; None for non-spectral.
-    nullable: bool = False
-    # True if the column is allowed to contain NaN / missing rows.
+from oneuniverse._core.errors import SchemaError, ValidationError
 
 
-# ── Column groups ─────────────────────────────────────────────────────────
+class Geometry(str, Enum):
+    """Row geometry of a dataset."""
 
-CORE_COLUMNS: Tuple[ColumnDef, ...] = (
-    # Position — float64 for sub-arcsecond precision
-    ColumnDef("ra", "f8", "deg", "Right ascension ICRS J2000"),
-    ColumnDef("dec", "f8", "deg", "Declination ICRS J2000"),
-    # Redshift — required string tag: "spec" | "phot" | "pv" | "none"
-    ColumnDef("z", "f4", "", "Best available redshift"),
-    ColumnDef("z_type", "U8", "", "Redshift type: spec | phot | pv | none"),
-    ColumnDef("z_err", "f4", "", "Best-redshift 1-sigma uncertainty"),
-    # Identifiers
-    ColumnDef("galaxy_id", "i8", "", "Unique ID in oneuniverse"),
-    ColumnDef("survey_id", "U32", "", "Source survey name"),
-    # Phase 21: optional survey-published composite ID preserved
-    # verbatim (PLATE-MJD-FIBERID, KIDS_TILE+SeqNr, GAIA source_id, …).
-    ColumnDef("composite_id", "U64", "",
-              "Survey-published composite ID (PLATE-MJD-FIBERID, "
-              "KIDS_TILE+SeqNr, GAIA source_id, …); optional",
-              required=False),
-    # Technical / bookkeeping
-    ColumnDef("_original_row_index", "i8", "",
-              "Row index in the original survey file (for audit/join-back)"),
-    ColumnDef("_healpix32", "i4", "",
-              "HEALPix NESTED index at NSIDE=32 (spatial partition key)"),
-)
-
-# Allowed tags for the required ``z_type`` CORE column.
-Z_TYPE_VALUES: Tuple[str, ...] = ("spec", "phot", "phot_pdf", "pv", "none")
-
-SPECTROSCOPIC_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("z_spec", "f4", "", "Spectroscopic redshift"),
-    ColumnDef("z_spec_err", "f4", "", "Spectroscopic redshift uncertainty"),
-    ColumnDef("z_helio", "f4", "", "Heliocentric redshift", required=False,
-              frame="heliocentric"),
-    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", required=False,
-              frame="cmb"),
-    ColumnDef("cz_cmb", "f4", "km/s", "CMB-frame recession velocity",
-              required=False, frame="cmb"),
-    ColumnDef("w_fkp", "f4", "", "FKP weight", required=False),
-    ColumnDef("w_comp", "f4", "", "Angular completeness weight", required=False),
-    ColumnDef("w_cp", "f4", "", "Fiber collision weight", required=False),
-    ColumnDef("w_noz", "f4", "", "Redshift failure weight", required=False),
-    ColumnDef("w_sys", "f4", "", "Imaging systematic weight", required=False),
-    ColumnDef("w_tot", "f4", "", "Total analysis weight", required=False),
-)
-
-PHOTOMETRIC_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("z_phot", "f4", "", "Photometric redshift"),
-    ColumnDef("z_phot_err", "f4", "", "Photo-z 1-sigma uncertainty"),
-    ColumnDef("z_phot_l68", "f4", "", "Photo-z 68% lower bound", required=False),
-    ColumnDef("z_phot_u68", "f4", "", "Photo-z 68% upper bound", required=False),
-    ColumnDef("odds", "f4", "", "Photo-z quality (0-1)", required=False),
-)
-
-PV_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("v_pec", "f4", "km/s", "Peculiar velocity"),
-    ColumnDef("v_pec_err", "f4", "km/s", "Peculiar velocity uncertainty"),
-    ColumnDef("mu", "f4", "mag", "Distance modulus", required=False),
-    ColumnDef("mu_err", "f4", "mag", "Distance modulus uncertainty", required=False),
-    ColumnDef("mu_method", "U8", "", "TF/FP/SBF/SNIa", required=False),
-)
-
-QSO_COLUMNS: Tuple[ColumnDef, ...] = (
-    # Classification
-    ColumnDef("is_qso", "i1", "", "QSO classification flag (1=confirmed QSO)"),
-    ColumnDef("source_z", "U16", "", "Source of best redshift (VI, PIPE, etc.)", required=False),
-    ColumnDef("z_pipe", "f8", "", "Pipeline redshift", required=False),
-    ColumnDef("z_pca", "f8", "", "PCA redshift", required=False),
-    ColumnDef("z_vi", "f8", "", "Visual inspection redshift", required=False),
-    ColumnDef("z_conf", "i1", "", "Visual inspection confidence (0-3)", required=False),
-    ColumnDef("zwarning", "i4", "", "Pipeline ZWARNING flag (0=good)", required=False),
-    # BAL properties
-    ColumnDef("bal_prob", "f4", "", "BAL probability (0-1, -1=not assessed)", required=False),
-    ColumnDef("bi_civ", "f8", "km/s", "Balnicity index CIV", required=False),
-    # Emission line redshifts
-    ColumnDef("z_mgii", "f8", "", "MgII emission line redshift", required=False),
-    ColumnDef("z_ciii", "f8", "", "CIII] emission line redshift", required=False),
-    ColumnDef("z_civ", "f8", "", "CIV emission line redshift", required=False),
-    ColumnDef("z_lya", "f8", "", "Lyman-alpha emission line redshift", required=False),
-    # Photometry (ugriz PSF magnitudes)
-    ColumnDef("psfmag_u", "f4", "mag", "PSF magnitude u-band", required=False),
-    ColumnDef("psfmag_g", "f4", "mag", "PSF magnitude g-band", required=False),
-    ColumnDef("psfmag_r", "f4", "mag", "PSF magnitude r-band", required=False),
-    ColumnDef("psfmag_i", "f4", "mag", "PSF magnitude i-band", required=False),
-    ColumnDef("psfmag_z", "f4", "mag", "PSF magnitude z-band", required=False),
-    ColumnDef("extinction_u", "f4", "mag", "Galactic extinction u-band", required=False),
-    ColumnDef("extinction_g", "f4", "mag", "Galactic extinction g-band", required=False),
-    ColumnDef("extinction_r", "f4", "mag", "Galactic extinction r-band", required=False),
-    ColumnDef("extinction_i", "f4", "mag", "Galactic extinction i-band", required=False),
-    ColumnDef("extinction_z", "f4", "mag", "Galactic extinction z-band", required=False),
-    # Observation metadata
-    ColumnDef("plate", "i4", "", "SDSS plate number", required=False),
-    ColumnDef("mjd", "i4", "d", "Modified Julian Date of observation", required=False),
-    ColumnDef("fiberid", "i2", "", "SDSS fiber ID", required=False),
-    ColumnDef("sn_median", "f4", "", "Median S/N per pixel", required=False),
-    # DLA (stored as separate columns for up to N_DLA absorbers)
-    ColumnDef("n_dla", "i1", "", "Number of DLA systems detected", required=False),
-)
-
-PROBABILISTIC_REDSHIFT_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef(
-        "z_pdf_kind", "U8", "",
-        "PDF parameterisation tag: interp | quant | mixmod",
-    ),
-    ColumnDef(
-        "z_pdf_values", "f4", "",
-        "PDF values: interp p(z), quant z(q), or mixmod component means",
-    ),
-    ColumnDef(
-        "z_pdf_sigma", "f4", "",
-        "mixmod only: component std devs", required=False,
-    ),
-    ColumnDef(
-        "z_pdf_weights", "f4", "",
-        "mixmod only: component weights", required=False,
-    ),
-    ColumnDef("z_pdf_mean", "f4", "", "PDF first moment", required=False),
-    ColumnDef("z_pdf_std", "f4", "", "PDF standard deviation", required=False),
-    ColumnDef("z_pdf_median", "f4", "", "PDF median", required=False),
-    ColumnDef("z_pdf_mode", "f4", "", "PDF mode", required=False),
-    ColumnDef("z_pdf_l68", "f4", "", "PDF 16th percentile", required=False),
-    ColumnDef("z_pdf_u68", "f4", "", "PDF 84th percentile", required=False),
-)
+    POINT = "point"
+    SIGHTLINE = "sightline"
+    LIGHTCURVE = "lightcurve"
 
 
-SHEAR_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("e1", "f4", "", "First shear component", required=False),
-    ColumnDef("e2", "f4", "", "Second shear component", required=False),
-    ColumnDef("e1_err", "f4", "", "1σ on e1", required=False),
-    ColumnDef("e2_err", "f4", "", "1σ on e2", required=False),
-    ColumnDef("R11", "f4", "", "Metacal response ∂e1/∂γ1", required=False),
-    ColumnDef("R22", "f4", "", "Metacal response ∂e2/∂γ2", required=False),
-    ColumnDef("R12", "f4", "", "Metacal off-diagonal response", required=False),
-    ColumnDef("R21", "f4", "", "Metacal off-diagonal response", required=False),
-    ColumnDef("R_S", "f4", "", "Selection response", required=False),
-    ColumnDef("m_bias", "f4", "", "Multiplicative bias (lensfit)", required=False),
-    ColumnDef("c1_bias", "f4", "", "Additive bias e1 (lensfit)", required=False),
-    ColumnDef("c2_bias", "f4", "", "Additive bias e2 (lensfit)", required=False),
-    ColumnDef("shear_weight", "f4", "", "Per-object shape weight", required=False),
-)
+# ---------------------------------------------------------------- z types
+Z_TYPES: frozenset[str] = frozenset({"spec", "phot", "phot_pdf", "pv", "none"})
+_registered_z_types: set[str] = set(Z_TYPES)
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-SNIA_COLUMNS: Tuple[ColumnDef, ...] = (
-    ColumnDef("z_cmb", "f4", "", "CMB-frame redshift", frame="cmb"),
-    ColumnDef("mu", "f4", "mag", "Distance modulus"),
-    ColumnDef("mu_err", "f4", "mag", "Distance modulus uncertainty"),
-    ColumnDef("x1", "f4", "", "SALT2 stretch parameter", required=False),
-    ColumnDef("x1_err", "f4", "", "SALT2 stretch uncertainty", required=False),
-    ColumnDef("c", "f4", "", "SALT2 color parameter", required=False),
-    ColumnDef("c_err", "f4", "", "SALT2 color uncertainty", required=False),
-    ColumnDef("mb", "f4", "mag", "SALT2 peak B-band magnitude", required=False),
-    ColumnDef("mb_err", "f4", "mag", "SALT2 peak B-band magnitude uncertainty", required=False),
-)
+def z_types() -> frozenset[str]:
+    """All currently valid ``z_type`` values (built-in plus registered)."""
+    return frozenset(_registered_z_types)
 
-# Lookup by group name
-COLUMN_GROUPS: Dict[str, Tuple[ColumnDef, ...]] = {
-    "core": CORE_COLUMNS,
-    "spectroscopic": SPECTROSCOPIC_COLUMNS,
-    "photometric": PHOTOMETRIC_COLUMNS,
-    "peculiar_velocity": PV_COLUMNS,
-    "qso": QSO_COLUMNS,
-    "snia": SNIA_COLUMNS,
-    "probabilistic_redshift": PROBABILISTIC_REDSHIFT_COLUMNS,
-    "shear": SHEAR_COLUMNS,
+
+def register_z_type(name: str) -> None:
+    """Add a redshift type; raises ValidationError if invalid or already known."""
+    if not isinstance(name, str) or not _NAME_RE.match(name):
+        raise ValidationError(
+            f"z_type name must be a non-empty lowercase identifier, got {name!r}")
+    if name in _registered_z_types:
+        raise ValidationError(f"z_type {name!r} is already registered")
+    _registered_z_types.add(name)
+
+
+# ---------------------------------------------------------------- schemas
+_Z_TYPE = pa.dictionary(pa.int8(), pa.string())
+_SURVEY = pa.dictionary(pa.int16(), pa.string())
+
+CORE_POINT = pa.schema([
+    ("ra", pa.float64()), ("dec", pa.float64()), ("z", pa.float64()),
+    ("z_type", _Z_TYPE), ("z_err", pa.float32()),
+    ("object_id", pa.int64()), ("survey", _SURVEY),
+    ("source_row", pa.int64()), ("hpix32", pa.int32()),
+])
+
+CORE_SIGHTLINE = pa.schema([
+    ("sightline_id", pa.int64()), ("ra", pa.float64()), ("dec", pa.float64()),
+    ("z", pa.float64()), ("survey", _SURVEY), ("source_row", pa.int64()),
+    ("hpix32", pa.int32()),
+    ("wavelength", pa.list_(pa.float32())), ("delta", pa.list_(pa.float32())),
+    ("weight", pa.list_(pa.float32())),
+])
+
+CORE_LIGHTCURVE = pa.schema(list(CORE_POINT) + [
+    ("mjd", pa.list_(pa.float64())), ("flux", pa.list_(pa.float32())),
+    ("flux_err", pa.list_(pa.float32())),
+    ("band", pa.list_(pa.dictionary(pa.int8(), pa.string()))),
+])
+
+_CORE = {
+    Geometry.POINT: CORE_POINT,
+    Geometry.SIGHTLINE: CORE_SIGHTLINE,
+    Geometry.LIGHTCURVE: CORE_LIGHTCURVE,
 }
 
 
-# ── Validation ────────────────────────────────────────────────────────────
+def _f4(*names: str) -> list[tuple[str, pa.DataType]]:
+    return [(n, pa.float32()) for n in names]
 
 
-def get_required_columns(groups: List[str]) -> List[str]:
-    """Return names of all required columns for the given groups."""
-    required = []
-    for group in groups:
-        for col in COLUMN_GROUPS[group]:
-            if col.required:
-                required.append(col.name)
-    return required
+OPTIONAL_COLUMNS: dict[str, pa.Schema] = {
+    "spectroscopic": pa.schema(_f4(
+        "z_spec", "z_spec_err", "z_helio", "z_cmb", "cz_cmb",
+        "w_fkp", "w_comp", "w_cp", "w_noz", "w_sys", "w_tot")),
+    "photometric": pa.schema(_f4(
+        "z_phot", "z_phot_err", "z_phot_l68", "z_phot_u68", "odds")),
+    "peculiar_velocity": pa.schema(
+        _f4("v_pec", "v_pec_err", "mu", "mu_err") + [("mu_method", pa.string())]),
+    "snia": pa.schema(_f4(
+        "z_cmb", "mu", "mu_err", "x1", "x1_err", "c", "c_err", "mb", "mb_err")),
+    "shear": pa.schema(_f4(
+        "e1", "e2", "e1_err", "e2_err", "R11", "R22", "R12", "R21", "R_S",
+        "m_bias", "c1_bias", "c2_bias", "shear_weight")),
+    "pdf": pa.schema(
+        [("z_pdf_values", pa.list_(pa.float32())),
+         ("z_pdf_sigma", pa.list_(pa.float32())),
+         ("z_pdf_weights", pa.list_(pa.float32()))]
+        + _f4("z_pdf_mean", "z_pdf_std", "z_pdf_median", "z_pdf_mode",
+              "z_pdf_l68", "z_pdf_u68")),
+}
 
 
-def get_all_columns(groups: List[str]) -> Dict[str, ColumnDef]:
-    """Return a {name: ColumnDef} dict for all columns in the given groups."""
-    columns = {}
-    for group in groups:
-        for col in COLUMN_GROUPS[group]:
-            columns[col.name] = col
-    return columns
+def core_schema(geometry: Geometry) -> pa.Schema:
+    """Core column schema of *geometry*."""
+    return _CORE[Geometry(geometry)]
 
 
-def validate_dataframe(df, groups: List[str]) -> List[str]:
-    """Check that *df* satisfies the schema for *groups*.
+def _is_list(t: pa.DataType) -> bool:
+    return pa.types.is_list(t) or pa.types.is_large_list(t) \
+        or pa.types.is_fixed_size_list(t)
 
-    Returns a list of warning strings (empty if valid). Raises ValueError
-    if a required column is missing.
+
+def _is_text(t: pa.DataType) -> bool:
+    return pa.types.is_string(t) or pa.types.is_large_string(t)
+
+
+def _is_dict_of_text(t: pa.DataType) -> bool:
+    return pa.types.is_dictionary(t) and _is_text(t.value_type)
+
+
+def _family_ok(expected: pa.DataType, actual: pa.DataType) -> bool:
+    if pa.types.is_dictionary(expected):
+        return _is_dict_of_text(actual) or _is_text(actual)
+    if _is_list(expected):
+        return _is_list(actual)
+    if pa.types.is_floating(expected):
+        return pa.types.is_floating(actual)
+    if pa.types.is_integer(expected):
+        return pa.types.is_integer(actual)
+    if _is_text(expected):
+        return _is_text(actual) or _is_dict_of_text(actual)
+    return expected == actual
+
+
+def validate_schema(schema: pa.Schema, geometry: Geometry) -> None:
+    """Check *schema* against the core contract and typed optional columns.
+
+    Raises SchemaError on a missing core column or a wrong type family.
+    Extra columns are accepted; known optional names must have the right family.
     """
-    warnings = []
-    all_cols = get_all_columns(groups)
-
-    # Check required columns exist
-    for name, coldef in all_cols.items():
-        if coldef.required and name not in df.columns:
-            raise ValueError(
-                f"Required column '{name}' (group '{_group_of(name, groups)}') "
-                f"is missing from the DataFrame."
-            )
-
-    # Check dtypes (soft warning, not error — numeric promotion is fine)
-    for name in df.columns:
-        if name in all_cols:
-            expected = np.dtype(all_cols[name].dtype)
-            actual = df[name].dtype
-            # pandas stores strings as object dtype — skip for string columns
-            if expected.kind == "U" and (
-                actual == np.dtype("O") or isinstance(actual, pd.StringDtype)
-            ):
-                continue
-            try:
-                castable = np.can_cast(actual, expected, casting="same_kind")
-            except TypeError:  # pandas extension dtype numpy cannot reason about
-                continue
-            if not castable:
-                warnings.append(
-                    f"Column '{name}': expected dtype compatible with "
-                    f"{expected}, got {actual}"
-                )
-
-    return warnings
+    core = core_schema(geometry)
+    missing = [n for n in core.names if n not in schema.names]
+    if missing:
+        raise SchemaError(f"missing core column(s): {', '.join(missing)}")
+    for f in core:
+        actual = schema.field(f.name).type
+        if not _family_ok(f.type, actual):
+            raise SchemaError(
+                f"column {f.name!r} has type {actual}, expected {f.type} family")
+        if f.name in ("z_type", "survey") and pa.types.is_dictionary(actual) \
+                and not _is_text(actual.value_type):
+            raise SchemaError(
+                f"column {f.name!r} dictionary values must be strings, "
+                f"got {actual.value_type}")
+    core_names = set(core.names)
+    for group in OPTIONAL_COLUMNS.values():
+        for f in group:
+            if f.name in schema.names and f.name not in core_names:
+                actual = schema.field(f.name).type
+                if not _family_ok(f.type, actual):
+                    raise SchemaError(
+                        f"optional column {f.name!r} has type {actual}, "
+                        f"expected {f.type} family")
 
 
-def _group_of(col_name: str, groups: List[str]) -> Optional[str]:
-    """Return the group name that contains *col_name*."""
-    for group in groups:
-        for col in COLUMN_GROUPS[group]:
-            if col.name == col_name:
-                return group
-    return None
+def validate_z_type_values(array: pa.Array | pa.ChunkedArray) -> None:
+    """Raise SchemaError naming the first ``z_type`` value outside ``z_types()``."""
+    if isinstance(array, pa.ChunkedArray):
+        array = array.combine_chunks()
+    if pa.types.is_dictionary(array.type):
+        # only used dictionary entries count
+        values = array.dictionary
+        present = {values[i].as_py() for i in set(array.indices.drop_null().to_pylist())}
+    else:
+        present = set(array.drop_null().unique().to_pylist())
+    bad = sorted(v for v in present if v not in _registered_z_types)
+    if bad:
+        raise SchemaError(
+            f"z_type value {bad[0]!r} not in registered z_types "
+            f"{sorted(_registered_z_types)}")
+
+
+# ---------------------------------------------------------------- ids
+def stable_object_id(survey: str, source_row: np.ndarray) -> np.ndarray:
+    """``(hash32(survey) << 32) | source_row`` as int64 (computed in uint64)."""
+    rows = np.asarray(source_row)
+    if rows.dtype.kind not in "iu":
+        raise ValidationError(f"source_row must be an integer array, got dtype {rows.dtype}")
+    if rows.size and (rows.min() < 0 or rows.max() >= 2**32):
+        raise ValidationError("source_row must be in [0, 2**32)")
+    h = np.uint64(int(hashlib.sha256(survey.encode()).hexdigest()[:8], 16))
+    out = (h << np.uint64(32)) | rows.astype(np.uint64)
+    return out.view(np.int64)
+
+
+def cast_to_core(table: pa.Table, geometry: Geometry) -> pa.Table:
+    """Cast core columns to their contract types; other columns untouched."""
+    core = core_schema(geometry)
+    for f in core:
+        if f.name in table.schema.names:
+            i = table.schema.get_field_index(f.name)
+            col = table.column(i)
+            if col.type != f.type:
+                if pa.types.is_dictionary(f.type) and not pa.types.is_dictionary(col.type):
+                    col = col.dictionary_encode().cast(f.type)
+                else:
+                    col = col.cast(f.type)
+            table = table.set_column(i, f, col)
+    return table

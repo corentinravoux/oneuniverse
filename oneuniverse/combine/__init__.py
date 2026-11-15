@@ -1,43 +1,29 @@
-"""
-oneuniverse.combine
-~~~~~~~~~~~~~~~~~~~
-Cross-survey weighting and measurement combination.
-
-Quick start
------------
->>> from oneuniverse.combine import WeightedCatalog, default_weight_for
->>> wc = WeightedCatalog.from_oneuid(index, db)
->>> wc.add_weight("eboss", default_weight_for("spectroscopic", "spec"))
->>> combined = wc.combine(value_col="z", variance_col="z_var")
-"""
+"""Combine datasets: weights, default weights, weighted catalogs."""
 from oneuniverse.combine.catalog import WeightedCatalog
-from oneuniverse.combine.measurements import CombinedMeasurements
-from oneuniverse.combine.strategies import combine_weights
+from oneuniverse.combine.defaults import default_weight_for, register_default
 from oneuniverse.combine.weights import (
     ColumnWeight,
     ConstantWeight,
     FKPWeight,
+    HealpixMapWeight,
     InverseVarianceWeight,
-    PipBitweightWeight,
     ProductWeight,
     QualityMaskWeight,
     ShearWeight,
     Weight,
-    default_weight_for,
 )
 
 __all__ = [
-    "Weight",
-    "ProductWeight",
-    "ConstantWeight",
     "ColumnWeight",
-    "InverseVarianceWeight",
+    "ConstantWeight",
     "FKPWeight",
+    "HealpixMapWeight",
+    "InverseVarianceWeight",
+    "ProductWeight",
     "QualityMaskWeight",
-    "PipBitweightWeight",
     "ShearWeight",
-    "default_weight_for",
-    "combine_weights",
-    "CombinedMeasurements",
+    "Weight",
     "WeightedCatalog",
+    "default_weight_for",
+    "register_default",
 ]

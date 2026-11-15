@@ -1,7 +1,17 @@
-# `oneuniverse`
+# `oneuniverse` and `oneuniverse._core`
 
-Top-level package: `load_catalog`, `list_surveys`, selections, `convert_survey`, `export_sql`.
+The top-level package re-exports `data`, `convert`, `DatasetView`, `Cone`,
+`SkyPatch` and `ZRange`. The shared building blocks live in `oneuniverse._core`
+and are documented here by module: errors, selection geometry, the registry
+used by every plugin point, and HEALPix helpers. They are re-exported by the
+subpackages that use them (for example `oneuniverse.data.Cone`).
 
-The members below are the public API declared in the subpackage's `__all__`.
+::: oneuniverse._core.errors
 
-::: oneuniverse
+::: oneuniverse._core.geometry
+
+::: oneuniverse._core.registry
+
+::: oneuniverse._core.healpix
+
+::: oneuniverse._core.fs

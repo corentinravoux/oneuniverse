@@ -1,8 +1,10 @@
 # Architecture
 
 `oneuniverse` is the anchor of a three-pillar cosmology stack whose long-term
-goal is a **digital twin of the Universe** — a single posterior on the matter
-density + velocity field built by combining every cosmological observation.
+goal is a **digital twin of the Universe**: a single posterior on the matter
+density and velocity field built by combining every cosmological observation.
+This package is the data and orchestration substrate. It ships no estimators and
+no samplers.
 
 ```mermaid
 flowchart TD
@@ -24,57 +26,95 @@ flowchart TD
 
 | Pillar | Mission | Subpackage(s) | Owns cosmology? |
 |---|---|---|---|
-| **1 — Data, Combine, Measure** | Ingest catalogs → standardise → cross-match → combine → emit a `MeasurementSet` for downstream tools | [`data`](api/data.md), [`combine`](api/combine.md), [`measure`](api/measure.md) | **No** |
-| **2 — Estimators + Likelihoods** | Compute P(k), ξ(r), Cℓ, multi-tracer cross-correlations, fits, forecasts | *external (flip, p1desi, lyavoid, …)* | **Yes** (fiducial at call site) |
-| **3 — Simulation / Digital Twin** | Constrained Bayesian forward modelling, per-survey observation models, incremental updates | [`simulation`](api/simulation.md), [`twin`](api/twin.md) | **Yes** (in the IC prior and forward model) |
+| **1: data, combine, measure** | Ingest catalogs, standardise, cross-match, weight, emit a `MeasurementSet` | [`data`](api/data.md), [`combine`](api/combine.md), [`measure`](api/measure.md) | **No** |
+| **2: estimators and likelihoods** | P(k), xi(r), C_l, fits, forecasts | *external (flip, pycorr, picca, ...)* | **Yes** (fiducial at the call site) |
+| **3: simulation and digital twin** | Store simulation products, couple data and simulation | [`simulation`](api/simulation.md), [`twin`](api/twin.md), [`reference`](api/reference.md) | **Yes**, inside the engines |
 
 ### The cosmology rule
 
-Pillar 1 stores survey-delivered data **verbatim**, with observational metadata
-only (frame, epoch, wavelength convention). H₀ / Ωₘ / a fiducial baseline / a
-distance model **never** touch the catalog — they enter at Pillar 2 (per
-estimator call) and Pillar 3 (per inference run). This keeps the same prepared
-data reusable under any fiducial.
+`data`, `combine` and `measure` store survey-delivered data verbatim, with
+observational metadata only (frame, epoch, wavelength convention). H0, Omega_m,
+a fiducial baseline or a distance model never touch the catalog: they enter in
+the estimator call, or in a simulation engine. The same prepared data stay
+reusable under any fiducial. `test/test_guards.py` enforces this by walking the
+AST of the three subpackages, and `MeasurementSet` rejects cosmology-derived
+column names.
 
-## Pillar 1 — data → combine → measure
+## Pillar 1: data, combine, measure
 
-- **[`data`](api/data.md)** — fast loading of galaxy survey catalogs with a
-  standardised schema, spatial/redshift selections (`Cone`, `Shell`,
-  `SkyPatch`), cross-survey matching (ONEUID), sub-object links, and the on-disk
-  **OUF** format (HEALPix-partitioned Parquet + `manifest.json`). Column names
-  are lowercased and standardised; RA/Dec are stored in **degrees (ICRS)** with
-  no h-factor.
-- **[`combine`](api/combine.md)** — every weight (FKP, inverse variance, column,
-  quality mask, PIP bitweight, shear) and the cross-survey combination of
-  measurements. Public registration via `default_weight_for(...)`.
-- **[`measure`](api/measure.md)** — the P1→P2 connection. Builds the **Universal
-  DataProduct** (`MeasurementSet`, and the `PointSet` / `Sightline` / `FieldMap`
-  representations) from a prepared catalog: randoms, window, jackknife, n(z),
-  region map — all cosmology-free.
+- **[`data`](api/data.md)**: survey loaders and `convert`, the OUF 3.0 writer
+  and `DatasetView` (lazy, partial reads), `Database` (a root of datasets with
+  bitemporal `as_of`), cross-survey matching (ONEUID), sub-object links, photo-z
+  PDFs, and the DuckDB SQL face. RA and Dec are stored in degrees (ICRS).
+- **[`combine`](api/combine.md)**: `Weight` primitives (FKP, inverse variance,
+  column, quality mask, healpix map, shear) that compose with `*`, a registry of
+  default weights per survey kind and `z_type`, and `WeightedCatalog`, which
+  combines the measurements of one object across surveys.
+- **[`measure`](api/measure.md)**: `build_pointset` is the one spine from an OUF
+  view to a `Product`: select, clean, quality cut, weight, window, regions,
+  n(z), randoms, provenance. The presets `galaxy_clustering`, `cosmic_shear` and
+  `three_by_two` wrap it, and `MeasurementSet` bundles products with their spec
+  and jackknife regions.
 
-## Pillar 3 — simulation → twin
+## Pillar 3: simulation, twin, reference
 
-- **[`simulation`](api/simulation.md)** — **OUF-Sim**, a format-agnostic storage
-  and orchestration substrate for cosmological simulations (multi-backend
-  adapter registry, execution plans, backend capabilities, cosmology/unit-frame
-  specs, region selectors).
-- **[`twin`](api/twin.md)** — the data ↔ simulation coupling layer: mock tracer
-  fields, Wiener reconstruction, constrained realizations, mock-challenge
-  harness and recovery metrics.
+- **[`simulation`](api/simulation.md)**: OUF-Sim, a partial-access store for
+  simulation products (catalogs, fields, lightcones, checkpoints), a converter
+  registry for native formats, an `ExecutionPlan`, and `SimDatabase`, which holds
+  stores and a request/lineage catalog. Reads take a selector; a whole-box read
+  is the explicit `scan_full`.
+- **[`twin`](api/twin.md)**: the `ForwardEngine` and `ReconstructionEngine`
+  contracts with their registry, `observe_from_view` (a `DatasetView` to an
+  `Observation`) and `run_engine_to_store` (engine output to an OUF-Sim store).
+- **[`reference`](api/reference.md)**: the one shipped physics plugin, a toy for
+  validating the contracts: Eisenstein-Hu linear theory, Zel'dovich and
+  particle-mesh evolution, buffered resimulation, a mask-aware Wiener filter, a
+  constrained realisation (with an explicit seed), lognormal mocks, and four
+  engines. Importing `oneuniverse.reference.engines` registers the engines;
+  `oneuniverse.reference.native` registers the `linear` and `packed_npy`
+  converters.
 
-## Storage: the OUF format
+## Dependency rules
 
-On disk a survey lives under `{survey_path}/oneuniverse/`:
+```
+_core        imports no other oneuniverse subpackage
+data         -> _core
+combine      -> _core, data
+measure      -> _core, data, combine           (never simulation, reference, twin)
+simulation   -> _core                          (never data, combine, measure, twin, reference)
+twin         -> _core, data, measure, simulation; twin/observe.py also reference
+reference    -> _core, simulation, twin.engine
+```
 
-- a `manifest.json` describing the schema, weights and photo-z PDF spec;
-- HEALPix-NSIDE32-**NEST**-partitioned Parquet (auto-coarsened for small
-  catalogs).
+Two more rules: `simulation` and `twin/engine.py` never import `reference`
+(the reference plugin registers itself when imported), and `duckdb` is imported only by `data/sql.py`
+and `simulation/sql.py`, lazily. These are checked by AST guards in the test
+suite.
 
-**CORE columns:** `ra, dec, z, z_type, z_err, galaxy_id, survey_id,
-_original_row_index, _healpix32`. `z_type ∈ {spec, phot, phot_pdf, pv, none}`.
+## Identity and versioning
+
+- `source_row`, the row number in the original file, is the only row identity.
+  `object_id` is `(hash32(survey) << 32) | source_row`.
+- A ONEUID groups the rows of different surveys that are the same object under
+  `CrossMatchRules`. The index and the links are versioned sidecars that record
+  the version of every dataset they were built on; a changed dataset raises
+  `FormatError`.
+- Datasets and sidecars are bitemporal: `Database(root, as_of=...)` reads the
+  database as it was at a past time.
+
+Details are in [File formats](formats.md).
+
+## Errors and extension points
+
+Errors derive from `oneuniverse._core.errors`: `ValidationError` (a
+`ValueError`) for bad arguments, `NotFoundError` (a `KeyError`), `FormatError`
+and `SchemaError`. Extension points are registries: survey loaders
+(`data.register`, entry-point group `oneuniverse.survey_loaders`), `z_type`
+values (`data.register_z_type`), default weights (`combine.register_default`),
+simulation converters (`simulation.register`) and twin engines
+(`twin.register_engine`).
 
 ## Where to go next
 
-- [API reference](api/index.md) — the public API of each subpackage.
-- The in-repo `CLAUDE.md` and `plans/` hold the full phase roadmap and design
-  notes.
+- [File formats](formats.md) and [SQL face](sql.md).
+- [API reference](api/index.md).

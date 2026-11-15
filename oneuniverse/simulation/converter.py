@@ -1,91 +1,79 @@
-"""SimConverter ABC + registry — the Layer-3 extensibility surface.
+"""Converter registry: native simulation formats to OUF-Sim stores.
 
-A new simulation code is added by subclassing SimConverter and
-implementing four small methods (detect, declare_products,
-read_cosmology, read_unit_frame), then @register. The concrete
-``convert()`` orchestration (wrap native files + run Layer-1 index
-builders + emit manifest) lands in Phase S4; here it raises
-NotImplementedError so the contract is testable now.
+A converter describes one native format (detection, manifest, native products);
+the default :meth:`SimConverter.convert` hands those to ``build_store``.
 """
+
 from __future__ import annotations
 
-import abc
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import ClassVar, Dict, Optional, Tuple, Type
+from typing import ClassVar, Literal
 
-from oneuniverse.simulation.capabilities import BackendCapabilities
-from oneuniverse.simulation.cosmology import CosmologySpec
-from oneuniverse.simulation.product import ProductDecl
-from oneuniverse.simulation.unit_frame import UnitFrameSpec
+from oneuniverse._core.errors import ValidationError
+from oneuniverse._core.registry import Registry
+from oneuniverse.simulation.execution import ExecutionPlan
+from oneuniverse.simulation.manifest import OUFSimManifest
+from oneuniverse.simulation.store.build import NativeProduct, build_store
+from oneuniverse.simulation.store.read import SimStore
 
 
-class SimConverter(abc.ABC):
-    """Per-code converter (Layer 3). Subclasses set ``code`` /
-    ``sim_kind`` / ``capabilities`` and implement four methods."""
+class SimConverter(ABC):
+    """Base class of native-format converters; subclasses set ``code``."""
 
     code: ClassVar[str]
-    sim_kind: ClassVar[str]
-    capabilities: ClassVar[BackendCapabilities]
 
-    @abc.abstractmethod
-    def detect(self, path: Path) -> bool:
-        """Return True if this converter handles the dataset at ``path``."""
+    @classmethod
+    @abstractmethod
+    def detect(cls, path: Path) -> bool:
+        """True if ``path`` is a native simulation this converter reads."""
 
-    @abc.abstractmethod
-    def declare_products(self, src: Path) -> Tuple[ProductDecl, ...]:
-        """List products found at ``src`` + which Layer-1 indexers each needs."""
+    @abstractmethod
+    def manifest(self, path: Path) -> OUFSimManifest:
+        """Manifest of the native simulation, without products."""
 
-    @abc.abstractmethod
-    def read_cosmology(self, src: Path) -> CosmologySpec:
-        """Parse the run cosmology from ``src``."""
+    @abstractmethod
+    def products(self, path: Path) -> list[NativeProduct]:
+        """Native products to put in the store."""
 
-    @abc.abstractmethod
-    def read_unit_frame(self, src: Path) -> UnitFrameSpec:
-        """Parse the unit/frame declaration from ``src``."""
+    def convert(self, path: Path, out: Path, *, plan: ExecutionPlan,
+                projection: Literal["reencode", "reference"] = "reencode",
+                **build_kw) -> SimStore:
+        """Build the store at ``out`` (atomic) from the native simulation at ``path``.
 
-    def convert(self, src: Path, out: Path, *, projection: str = "native",
-                build_indexes: bool = True):
-        """Wrap native files + build indexes + emit manifest.
-
-        Concrete implementation lands in Phase S4 (needs the Layer-1
-        IndexBuilder toolkit + ManifestWriter). Until then this raises.
+        ``build_kw`` (``n_side``, ``tile_cells``, ``nside_part``) goes to ``build_store``.
         """
-        raise NotImplementedError(
-            "SimConverter.convert is implemented in Phase S4 "
-            "(needs the Layer-1 IndexBuilder toolkit)."
-        )
+        path = Path(path)
+        return build_store(out, manifest=self.manifest(path), products=self.products(path),
+                           plan=plan, projection=projection, **build_kw)
 
 
-from oneuniverse._registry import Registry
-
-_REG: "Registry[Type[SimConverter]]" = Registry("sim converter")
-#: Live internal dict (back-compat: detect_converter iterates it directly).
-_REGISTRY: Dict[str, Type[SimConverter]] = _REG.items_dict
+_REGISTRY: Registry[type[SimConverter]] = Registry("simulation converter", key=lambda c: c.code)
 
 
-def register(cls: Type[SimConverter]) -> Type[SimConverter]:
-    """Class decorator: register a converter by its ``code``."""
-    code = getattr(cls, "code", None)
-    if not code:
-        raise ValueError(
-            f"register: {cls.__name__} must set a non-empty class "
-            f"attribute `code`"
-        )
-    _REG.register(cls, name=code)
-    return cls
+def register(cls: type[SimConverter]) -> type[SimConverter]:
+    """Register a converter class under ``cls.code``; usable as a decorator."""
+    return _REGISTRY.register(cls)
 
 
-def get_converter(code: str) -> Type[SimConverter]:
-    return _REG.get(code)
+def get_converter(code: str) -> type[SimConverter]:
+    """Converter class for ``code``; ``NotFoundError`` if unknown."""
+    return _REGISTRY.get(code)
 
 
-def detect_converter(path: Path) -> Optional[Type[SimConverter]]:
-    """Return the first registered converter whose ``detect`` matches."""
-    for cls in _REGISTRY.values():
-        if cls().detect(Path(path)):
-            return cls
-    return None
+def detect_converter(path) -> type[SimConverter] | None:
+    """The registered converter whose ``detect`` accepts ``path``; None if none does.
+
+    ``ValidationError`` naming every matching code when more than one matches.
+    """
+    path = Path(path)
+    hits = [_REGISTRY.get(code) for code in _REGISTRY.names() if _REGISTRY.get(code).detect(path)]
+    if len(hits) > 1:
+        raise ValidationError(
+            f"{path} matches several converters: {sorted(c.code for c in hits)}; "
+            f"pick one with get_converter(code)")
+    return hits[0] if hits else None
 
 
-def registered_codes() -> Tuple[str, ...]:
-    return tuple(sorted(_REGISTRY))
+def registered_codes() -> tuple[str, ...]:
+    return tuple(_REGISTRY.names())
