@@ -15,6 +15,7 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
 | R5 | 2026-11-14 | 8f18c24 | 489 / 1 | 40 s (`-n 6`); 157 s single-process | Old simulation tree deleted. OUF-Sim 1.0: specs, manifest, ExecutionPlan, chunk/tile/sky index, native adapters (npy, packed_npy), streaming writers (≤ 256 open files, row-group buffers ≤ budget/4; 2 M-row write +231 MiB RSS), reencode and reference projections (read identically), SimStore partial reads with periodic wrap (raw-array oracle), converter registry, SimDatabase (requests, lineage from child manifests, crash reconcile). Exit criterion met. |
 | R6 | 2026-11-15 | c134093 | 632 / 0 (+10 slow) | 44 s (`-n 6`); 180 s single-process; slow suite 51 s (`-n 6`) | `oneuniverse.reference` (EH98, ΛCDM D and f from one integral, Gaussian fields, Zel'dovich with correct velocities, single P(k)/r(k), bincount-CIC PM with periodic/isolated force, periodic buffered resim + TreePM, mask-aware Wiener, seed-explicit constrained realisation, lognormal mock, linear fixture sim + packed layout + converters, four engines); `oneuniverse.twin` contracts (engine ABCs + registry, observe_from_view, run_engine_to_store); `create_field_store` shared with SimDatabase.dispatch. Six ensemble tests pass (two as decided by the owner, below); store→store chain runs; guards green. Exit criterion met. |
 | R7 | 2026-11-15 | ec4f097 | 664 / 0 (+10 slow) | 56 s (`-n 6`); 252 s single-process | DuckDB SQL face, views only: `data.sql.connect(root, as_of=)` (datasets/partitions/versions tables, one view per dataset over hive parquet, oneuid_/links_ views over versioned sidecars, `cone_where`) and `simulation.sql.connect` (sims/products/chunks/tiles, catalog chunk views, `box_where` with optional periodic split); duckdb imported only by the two modules (guard). Cone counts, n(z) bins and ONEUID joins equal the Python API; as_of resolves sidecar versions. Exit criterion met. |
+| R8 | 2026-11-15 | 1c60261 | 667 / 0 (+25 slow, 2 skipped) | 57.8 s single-process; 21 s (`-n 6`); slow suite 55 s (`-n 6`) | Test tree mirrors the package, six diagnostic examples + two CLI scripts (tested end to end), CLAUDE.md/README/MkDocs (strict) rewritten, old plans archived, shim removed, CHANGELOG. Released as **2.0.0** (owner decision: v1.0.0 is the 2026-07-28 release of the old code). Final review fix wave applied. Merge via PR `refactor-v1` → `main`, tag `v2.0.0` after green CI. |
 
 ## Decisions taken during execution
 
@@ -195,3 +196,30 @@ the history as rewritten by the owner on 2026-11-12 (author email change).
   fixture (≈ 4.5 s saving available), R7 SQL tests 15 s (20 k-row fixture;
   5 k likely enough). R8 must profile with `--durations` and slow-mark or
   shrink fixtures.
+
+## R8 — release decisions
+
+- **Version 2.0.0.** `v1.0.0` (tag → 2980841, 2026-07-28) is a published
+  GitHub/Zenodo release of the pre-rewrite 0.2.0 code; the rewrite ships as
+  2.0.0. Format versions are unchanged (OUF 3.0, OUF-Sim 1.0, measure 1.0).
+- **Real data.** The gated real-catalog tests have not run for 2.0.0 (no
+  survey data on the dev machine); README and docs say so.
+- **Archive layout.** `SurveyLoader.archive_path` is the single source of
+  each survey's default archive sub-directory (script and gated tests);
+  `convert_surveys.py --source NAME=PATH` overrides it.
+- **Time gate.** Default suite < 60 s single-process on the dev machine;
+  CI enforces 120 s on the 3.12 job. A fast test proves the conftest's
+  coarse stage buckets write identical output.
+- **`overlapping_tiles` deleted** (unused). `read_field_box` tile pruning,
+  if wanted later, re-adds it.
+
+### Deferred past 2.0.0
+
+MPI size-1 job with real `mpi4py` in CI; a `duckdb` 1.x floor job;
+adaptive chunk `n_side`; the `packed_npy` hard-code; `read_manifest`
+raising `FileNotFoundError` on a missing path; R6 debt (internal `_grid`
+module, `force=` hook in `run_pm`, TreePM full-box arrays); `read_cone`
+first-tag behaviour; positions for the combined `WeightedCatalog`
+(`build_pointset`); owner confirmation of `survey.kind`; a public errors
+module; the `as_of` unreadable-dataset caveat in `docs_site/sql.md`;
+deferred T1–T5 review minors (ledger).
