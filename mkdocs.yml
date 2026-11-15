@@ -1,5 +1,5 @@
 site_name: oneuniverse
-site_description: Unified galaxy survey catalog package for low-redshift cosmology
+site_description: One on-disk format and one cross-survey identity for cosmology survey catalogs, and a cosmology-free MeasurementSet
 site_url: https://corentinravoux.github.io/oneuniverse/
 repo_url: https://github.com/corentinravoux/oneuniverse
 repo_name: corentinravoux/oneuniverse
@@ -61,11 +61,14 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Architecture: architecture.md
+  - File formats: formats.md
+  - SQL face: sql.md
   - API reference:
       - Overview: api/index.md
-      - oneuniverse (core): api/core.md
-      - data (Pillar 1): api/data.md
-      - combine (Pillar 1): api/combine.md
-      - measure (P1→P2): api/measure.md
-      - simulation (Pillar 3): api/simulation.md
-      - twin (Pillar 3): api/twin.md
+      - data: api/data.md
+      - combine: api/combine.md
+      - measure: api/measure.md
+      - simulation: api/simulation.md
+      - twin: api/twin.md
+      - reference: api/reference.md
+      - core: api/core.md

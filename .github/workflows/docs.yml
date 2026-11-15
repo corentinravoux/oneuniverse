@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install documentation dependencies
-        run: pip install -r requirements-docs.txt
+        run: pip install -e ".[docs,sql]"
       - name: Build the documentation
         run: mkdocs build --strict
       - name: Upload the built site
