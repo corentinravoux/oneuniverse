@@ -12,11 +12,9 @@ import pytest
 from oneuniverse._core.geometry import Cone
 from oneuniverse.data import Database, DatasetView, convert
 from oneuniverse.data.crossmatch import CrossMatchRules
+from oneuniverse.data.loaders import get_loader
 
 pytestmark = pytest.mark.slow
-
-EBOSS = Path("spectroscopic/eboss/qso")            # holds DR16Q_Superset_v3.fits
-DESI = Path("spectroscopic/desi/dr1/qso")          # holds QSO_full.dat.fits
 
 
 def _data_root() -> Path:
@@ -26,18 +24,21 @@ def _data_root() -> Path:
     return Path(root)
 
 
-def _source(rel: Path, filename: str) -> Path:
-    src = _data_root() / rel
-    if not (src / filename).is_file():
-        pytest.skip(f"{src / filename} not found")
+def _source(survey: str) -> Path:
+    """Raw-file directory of *survey* in the archive layout (the loader's ``archive_path``,
+    shared with ``scripts/convert_surveys.py``)."""
+    loader = get_loader(survey)
+    src = _data_root() / loader.archive_path
+    if not (src / loader.filename).is_file():
+        pytest.skip(f"{src / loader.filename} not found")
     return src
 
 
 @pytest.fixture(scope="module")
 def converted(tmp_path_factory):
     """Both catalogues converted once into a temporary Database root."""
-    eboss = _source(EBOSS, "DR16Q_Superset_v3.fits")
-    desi = _source(DESI, "QSO_full.dat.fits")
+    eboss = _source("eboss_qso")
+    desi = _source("desi_qso")
     root = tmp_path_factory.mktemp("real_surveys")
     convert("eboss_qso", source=eboss, out=root / "eboss_qso")
     convert("desi_qso", source=desi, out=root / "desi_qso")

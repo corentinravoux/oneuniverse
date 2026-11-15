@@ -26,6 +26,7 @@ class DesiQso(FitsCatalogLoader):
         reference="DESI Collaboration 2025, DR1",
         url="https://data.desi.lbl.gov/doc/releases/dr1/")
     filename = "QSO_full.dat.fits"
+    archive_path = "spectroscopic/desi/dr1/qso"
     columns = {
         "RA": "ra", "DEC": "dec", "Z_RR": "z", "ZWARN": "zwarning", "SPECTYPE": "spectype",
         "SUBTYPE": "subtype", "DELTACHI2": "deltachi2", "TARGETID": "targetid",

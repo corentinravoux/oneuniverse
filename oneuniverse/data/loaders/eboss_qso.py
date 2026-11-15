@@ -18,6 +18,7 @@ class EbossQso(FitsCatalogLoader):
         reference="Lyke et al. 2020, ApJS 250 8",
         url="https://www.sdss.org/dr16/algorithms/qso-catalog/")
     filename = "DR16Q_Superset_v3.fits"
+    archive_path = "spectroscopic/eboss/qso"
     columns = {
         "RA": "ra", "DEC": "dec", "Z": "z", "IS_QSO_FINAL": "is_qso", "SOURCE_Z": "source_z",
         "Z_PIPE": "z_pipe", "Z_PCA": "z_pca", "Z_VI": "z_vi", "Z_QN": "z_qn", "Z_CONF": "z_conf",

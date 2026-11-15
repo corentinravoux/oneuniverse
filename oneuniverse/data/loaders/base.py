@@ -24,6 +24,10 @@ class SurveyLoader(ABC):
     z_type: ClassVar[str] = "spec"
     version: ClassVar[str] = "1"
     extensions: ClassVar[dict[str, dict]] = {}
+    #: Default sub-directory of a survey archive root holding the raw files
+    #: (``scripts/convert_surveys.py``, the gated real-data tests); ``None``:
+    #: the survey name.
+    archive_path: ClassVar[str | None] = None
 
     @abstractmethod
     def batches(self, source: Path, *, batch_size: int = 100_000, **kwargs) -> Iterator[pa.RecordBatch]:
