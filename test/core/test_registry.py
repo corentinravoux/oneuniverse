@@ -1,5 +1,6 @@
 import pytest
-from oneuniverse._registry import Registry
+
+from oneuniverse._core.registry import Registry
 
 
 def test_register_by_explicit_name_then_get():

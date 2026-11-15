@@ -1,6 +1,6 @@
 """Entry-point loader discovery. We monkeypatch importlib.metadata.entry_points
 so the test needs no external package installed."""
-from oneuniverse._registry import Registry
+from oneuniverse._core.registry import Registry
 
 
 class _FakeEP:

@@ -209,3 +209,6 @@ graphify-out/
 
 # MkDocs Material build output
 site/
+
+# test artefacts
+test/test_output/
