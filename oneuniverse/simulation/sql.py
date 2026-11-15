@@ -93,7 +93,7 @@ def box_where(cube: Cube, box_size: float | None = None) -> str:
     return parts[0] if len(parts) == 1 else "(" + " OR ".join(f"({p})" for p in parts) + ")"
 
 
-def _stores(root: Path) -> dict[str, Path]:
+def _stores(root: Path) -> dict[str | None, Path]:
     """``{sim name: store dir}``: the root itself, or its store subdirectories."""
     if not root.is_dir():
         raise NotFoundError(f"no simulation store or database at {root}")
@@ -132,6 +132,15 @@ def _cat(rows: list[pa.Table], schema: pa.Schema) -> pa.Table:
     return pa.concat_tables(rows) if rows else schema.empty_table()
 
 
+def _drop_stale(con, keep: set[str]) -> None:
+    """Drop every view and table of the main schema whose name is not in *keep*."""
+    rows = con.execute("SELECT table_name, table_type FROM information_schema.tables "
+                       "WHERE table_schema = 'main'").fetchall()
+    for name, kind in rows:
+        if name not in keep:
+            con.execute(f"DROP {'VIEW' if kind == 'VIEW' else 'TABLE'} {_q(name)}")
+
+
 def connect(store_root, *, database: str = ":memory:"):
     """DuckDB connection with catalog tables and chunk views over *store_root*.
 
@@ -139,8 +148,13 @@ def connect(store_root, *, database: str = ":memory:"):
     tag ``0.000`` with ``.`` replaced by ``_``); a ``SimDatabase`` root gives
     ``<sim>__<product>_z<tag>`` (characters outside ``[A-Za-z0-9_]`` become ``_``).
     Invalid identifiers and collisions raise ``ValidationError``. Chunks with no rows
-    (empty path) are in ``chunks`` but not in the views. Returns the real
-    ``duckdb.DuckDBPyConnection``.
+    (empty path) are in ``chunks`` but not in the views, and a product with no rows at
+    all gets no view. ``products.n_chunks`` holds the product's ``n_chunks``, ``n_tiles``
+    or ``n_pix`` (whichever its layout entry has). Glob characters (``[``, ``*``, ``?``)
+    in the store paths are interpreted by DuckDB in the view file lists: avoid them.
+    With a persistent *database* file, every view and table of the main schema that this
+    call does not recreate is dropped; an in-memory database starts empty. Returns the
+    real ``duckdb.DuckDBPyConnection``.
     """
     duckdb = _import_duckdb()
     root = Path(store_root)
@@ -180,6 +194,7 @@ def connect(store_root, *, database: str = ":memory:"):
                     views[view] = [p for p in paths if p]
 
     con = duckdb.connect(database)
+    created = set(_CATALOG)
     _register(con, "sims", pa.Table.from_pylist(sims, schema=_SIMS))
     _register(con, "products", pa.Table.from_pylist(products, schema=_PRODUCTS))
     _register(con, "chunks", _cat(chunks, _CHUNKS))
@@ -187,6 +202,9 @@ def connect(store_root, *, database: str = ":memory:"):
     for view, files in views.items():
         if not files:
             continue
+        created.add(view)
         flist = ", ".join(_lit(p) for p in files)
         con.execute(f"CREATE OR REPLACE VIEW {_q(view)} AS SELECT * FROM read_parquet([{flist}])")
+    if database != ":memory:":
+        _drop_stale(con, created)
     return con

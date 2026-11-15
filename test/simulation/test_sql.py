@@ -92,3 +92,20 @@ def test_uncommitted_product_hidden(built, tmp_path):
     (dst / "layout.json").write_text(json.dumps(lay))
     con = connect(dst)
     assert con.execute("SELECT count(*) FROM products WHERE name='halos'").fetchone()[0] == 0
+
+
+def test_persistent_database_drops_stale_objects(built, tmp_path):
+    import shutil
+    tmp, _, _ = built
+    dst = tmp_path / "s"
+    shutil.copytree(tmp / "store", dst)
+    f = str(tmp_path / "x.duckdb")
+    con = connect(dst, database=f)
+    assert con.execute("SELECT count(*) FROM halos_z0_000").fetchone()[0] > 0
+    con.close()
+    lay = json.loads((dst / "layout.json").read_text())
+    del lay["products"]["halos"]
+    (dst / "layout.json").write_text(json.dumps(lay))
+    con = connect(dst, database=f)
+    names = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+    assert "halos_z0_000" not in names and "particles_z1_000" in names
