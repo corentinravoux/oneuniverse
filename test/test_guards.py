@@ -313,3 +313,32 @@ def _reference_rows():
 def test_reference_boundary(label, subpath, forbidden):
     found = violations(PKG / subpath, forbidden)
     assert not found, "forbidden imports:\n" + "\n".join(found)
+
+
+DUCKDB_MODULES = {"data/sql.py", "simulation/sql.py"}
+
+
+def _duckdb_violations(pkg_root):
+    out = []
+    for f in _py_files(pkg_root):
+        if f.relative_to(pkg_root).as_posix() not in DUCKDB_MODULES:
+            out += violations(f, {"duckdb"})
+    return out
+
+
+def test_duckdb_only_in_sql_modules():
+    """duckdb is an optional extra: only the two SQL faces may import it."""
+    assert all((PKG / m).exists() for m in DUCKDB_MODULES)
+    found = _duckdb_violations(PKG)
+    assert not found, "duckdb imported outside the SQL modules:\n" + "\n".join(found)
+
+
+def test_duckdb_guard_detects_violations(tmp_path):
+    pkg = tmp_path / "oneuniverse"
+    (pkg / "data").mkdir(parents=True)
+    (pkg / "data" / "sql.py").write_text("import duckdb\n")
+    (pkg / "data" / "ok.py").write_text("import numpy\n")
+    (pkg / "data" / "bad.py").write_text("def f():\n    import duckdb.x\n")
+    (pkg / "bad2.py").write_text('import importlib\nimportlib.import_module("duckdb")\n')
+    v = _duckdb_violations(pkg)
+    assert sorted(x.split(":")[0] for x in v) == ["bad2.py", "data/bad.py"], v
